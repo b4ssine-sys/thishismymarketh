@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Cities: Skylines 1 runs on Unity Mono / .NET Framework 3.5 -->
+    <TargetFramework>net35</TargetFramework>
+    <AssemblyName>MyFirstMod</AssemblyName>
+
+    <!-- Mod version. Bump on each Workshop update and keep in step with Mod.Version. -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- Built and tested against Cities: Skylines 1.21.1-f9 -->
+
+    <!-- EDIT THIS to your Steam install path -->
+    <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines</GameDir>
+    <ManagedDir>$(GameDir)\Cities_Data\Managed</ManagedDir>
+    <ModsDir>$(LOCALAPPDATA)\Colossal Order\Cities_Skylines\Addons\Mods\$(AssemblyName)</ModsDir>
+  </PropertyGroup>
+
+  <!-- Reference the game's DLLs directly; never copy them into your output. -->
+  <ItemGroup>
+    <Reference Include="ICities">
+      <HintPath>$(ManagedDir)\ICities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ColossalManaged">
+      <HintPath>$(ManagedDir)\ColossalManaged.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Add more as you touch them, e.g. UnityEngine.CoreModule,
+         UnityEngine.IMGUIModule, UnityEngine.UI, ColossalBase, etc. -->
+  </ItemGroup>
+
+  <!-- Copy the built DLL straight into the game's Mods folder after each build. -->
+  <Target Name="Deploy" AfterTargets="Build">
+    <MakeDir Directories="$(ModsDir)" />
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(ModsDir)" />
+  </Target>
+
+</Project>
