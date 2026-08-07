@@ -37,7 +37,7 @@ namespace MyFirstMod
     {
         public static BondMarketPanel Instance;
 
-        private const float WIDTH = 720f;
+        private const float WIDTH = 800f;
         private const float HEIGHT = 520f;
         private const float HEADER_HEIGHT = 100f;
         private const float TAB_HEIGHT = 30f;
@@ -206,16 +206,16 @@ namespace MyFirstMod
 
                 _infoLabels[i] = _listPanel.AddUIComponent<UILabel>();
                 _infoLabels[i].autoSize = false;
-                _infoLabels[i].size = new Vector2(400f, ROW_HEIGHT);
-                _infoLabels[i].relativePosition = new Vector3(0f, y);
+                _infoLabels[i].size = new Vector2(460f, ROW_HEIGHT);
+                _infoLabels[i].relativePosition = new Vector3(4f, y);
                 _infoLabels[i].textScale = 0.75f;
                 _infoLabels[i].verticalAlignment = UIVerticalAlignment.Middle;
                 _infoLabels[i].text = "";
 
                 _priceLabels[i] = _listPanel.AddUIComponent<UILabel>();
                 _priceLabels[i].autoSize = false;
-                _priceLabels[i].size = new Vector2(140f, ROW_HEIGHT);
-                _priceLabels[i].relativePosition = new Vector3(400f, y);
+                _priceLabels[i].size = new Vector2(120f, ROW_HEIGHT);
+                _priceLabels[i].relativePosition = new Vector3(468f, y);
                 _priceLabels[i].textScale = 0.8f;
                 _priceLabels[i].textAlignment = UIHorizontalAlignment.Right;
                 _priceLabels[i].verticalAlignment = UIVerticalAlignment.Middle;
@@ -223,8 +223,8 @@ namespace MyFirstMod
 
                 int idx = i;
                 _actionButtons[i] = _listPanel.AddUIComponent<UIButton>();
-                _actionButtons[i].size = new Vector2(100f, ROW_HEIGHT - 4f);
-                _actionButtons[i].relativePosition = new Vector3(550f, y + 2f);
+                _actionButtons[i].size = new Vector2(80f, ROW_HEIGHT - 4f);
+                _actionButtons[i].relativePosition = new Vector3(600f, y + 2f);
                 _actionButtons[i].textScale = 0.8f;
                 _actionButtons[i].normalBgSprite = "ButtonMenu";
                 _actionButtons[i].hoveredBgSprite = "ButtonMenuHovered";
@@ -343,7 +343,7 @@ namespace MyFirstMod
                     int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
 
                     _infoLabels[i].text = string.Format(
-                        "{0}  Face:{1:N0}  Cpn:{2:F1}%  {3}d left",
+                        "{0}   Face: {1:N0}   {2:F1}%   {3}d left",
                         b.Name, b.FaceValue, b.CouponRate * 100f, daysLeft);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Buy";
@@ -400,8 +400,8 @@ namespace MyFirstMod
 
                     string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
                     _infoLabels[i].text = string.Format(
-                        "{0}  Paid:{1:N0}  P/L:{2}  {3}d left",
-                        b.Name, b.PurchasePrice, plStr, daysLeft);
+                        "{0}   {1:F1}%   Paid: {2:N0}   P/L: {3}   {4}d",
+                        b.Name, b.CouponRate * 100f, b.PurchasePrice, plStr, daysLeft);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
@@ -445,7 +445,7 @@ namespace MyFirstMod
                     float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
 
                     _infoLabels[i].text = string.Format(
-                        "{0}  Raise:{1:N0}  Rate:{2:F1}%  Term:{3}per  Cpn:{4:N0}/per",
+                        "{0}   {1:N0}   {2:F1}%   {3} per   {4:N0}/per",
                         tName, tFace, yieldPct, tPeriods, perPeriodCoupon);
                     _priceLabels[i].text = string.Format("{0:N0}", tFace);
                     _actionButtons[i].text = "Issue";

@@ -15,7 +15,7 @@ namespace MyFirstMod
         private const int MIN_MARKET_BONDS = 4;
         private const int INTERNAL_UNIT_SCALE = 100;
         private const int MAX_ISSUED_BONDS = 5;
-        private const float DEFAULT_YIELD_SPIKE = 0.12f;
+        private const float DEFAULT_YIELD_SPIKE = 0.012f;
         private const int DEFAULT_DECAY_PER_PERIOD = 1;
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
@@ -54,11 +54,11 @@ namespace MyFirstMod
         };
         private static readonly float[] ISSUE_FACES = new float[]
         {
-            5000f, 15000f, 40000f, 80000f, 150000f
+            7500f, 22500f, 60000f, 120000f, 225000f
         };
         private static readonly int[] ISSUE_PERIODS = new int[]
         {
-            2, 3, 4, 5, 6
+            4, 6, 8, 10, 12
         };
 
         public float GrossIncome { get { return _grossIncome; } }
@@ -446,12 +446,12 @@ namespace MyFirstMod
             lock (_lock)
             {
                 _marketBonds.Clear();
-                _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.03f, 1));
-                _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.045f, 2));
-                _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.05f, 3));
-                _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.055f, 4));
-                _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.06f, 5));
-                _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.065f, 6));
+                _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.03f, 2));
+                _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.045f, 4));
+                _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.05f, 6));
+                _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.055f, 8));
+                _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.06f, 10));
+                _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.065f, 12));
             }
         }
 
@@ -465,7 +465,7 @@ namespace MyFirstMod
             };
             float[] faces = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f };
             float[] coupons = new float[] { 0.03f, 0.04f, 0.045f, 0.05f, 0.055f, 0.06f };
-            int[] periods = new int[] { 1, 2, 3, 4, 5, 6 };
+            int[] periods = new int[] { 2, 4, 6, 8, 10, 12 };
 
             while (_marketBonds.Count < 6)
             {
