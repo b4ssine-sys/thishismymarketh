@@ -52,6 +52,7 @@ namespace MyFirstMod
         private UIButton _portfolioTabBtn;
         private UIButton _cityDebtTabBtn;
         private UIButton _sellAllBtn;
+        private UIButton _buy1MBtn;
         private int _activeTab;
 
         private UIPanel _listPanel;
@@ -183,6 +184,18 @@ namespace MyFirstMod
             _sellAllBtn.disabledBgSprite = "ButtonMenuDisabled";
             _sellAllBtn.eventClick += OnSellAllClick;
             _sellAllBtn.isVisible = false;
+
+            _buy1MBtn = AddUIComponent<UIButton>();
+            _buy1MBtn.size = new Vector2(110f, TAB_HEIGHT);
+            _buy1MBtn.relativePosition = new Vector3(WIDTH - 122f, tabY);
+            _buy1MBtn.text = "Buy 1M 5yr";
+            _buy1MBtn.textScale = 0.8f;
+            _buy1MBtn.normalBgSprite = "ButtonMenu";
+            _buy1MBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _buy1MBtn.pressedBgSprite = "ButtonMenuPressed";
+            _buy1MBtn.disabledBgSprite = "ButtonMenuDisabled";
+            _buy1MBtn.eventClick += OnBuy1MClick;
+            _buy1MBtn.isVisible = false;
 
             _activeTab = 0;
             UpdateTabHighlights();
@@ -326,6 +339,7 @@ namespace MyFirstMod
         private void RefreshMarket(BondMarketEngine engine)
         {
             _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = true;
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
@@ -366,6 +380,7 @@ namespace MyFirstMod
         {
             _sellAllBtn.isVisible = true;
             _sellAllBtn.isEnabled = engine.PortfolioCount > 0;
+            _buy1MBtn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
@@ -429,6 +444,7 @@ namespace MyFirstMod
         private void RefreshCityDebt(BondMarketEngine engine)
         {
             _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = false;
             _scrollHintLabel.text = "";
 
             int templateCount = engine.IssueTemplateCount;
@@ -526,6 +542,17 @@ namespace MyFirstMod
                 else
                     Debug.Log("[MyFirstMod] Buy failed - not enough funds or invalid index.");
             }
+        }
+
+        private void OnBuy1MClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            if (engine.Buy1MBond())
+                RefreshData();
+            else
+                Debug.Log("[MyFirstMod] Buy 1M 5yr failed - not enough funds.");
         }
 
         private void OnSellAllClick(UIComponent component, UIMouseEventParameter eventParam)

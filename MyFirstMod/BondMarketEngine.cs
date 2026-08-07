@@ -355,6 +355,28 @@ namespace MyFirstMod
             }
         }
 
+        public bool Buy1MBond()
+        {
+            lock (_lock)
+            {
+                float couponRate = _requiredYield;
+                int periods = 60;
+                _nextBondId++;
+                Bond bond = new Bond("B1M" + _nextBondId.ToString(), "1M Treasury Bond", 1000000f, couponRate, periods);
+                float price = BondPricing.PresentValue(bond, _requiredYield);
+
+                int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                if (!TrySpendCash(priceInternal))
+                    return false;
+
+                bond.PurchasePrice = price;
+                _portfolioBonds.Add(bond);
+
+                Debug.Log("[MyFirstMod] Bought 1M 5yr Treasury Bond for " + price.ToString("N0"));
+                return true;
+            }
+        }
+
         public bool BuyBond(int marketIndex)
         {
             lock (_lock)
