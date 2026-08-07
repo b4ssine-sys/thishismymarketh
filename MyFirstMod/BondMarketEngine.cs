@@ -366,6 +366,10 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em == null) return 0;
+                long remaining = em.LastCashAmount;
+
                 int bought = 0;
                 for (int i = 0; i < 10; i++)
                 {
@@ -375,8 +379,11 @@ namespace MyFirstMod
                     Bond bond = new Bond("B1M" + _nextBondId.ToString(), "1M Treasury Bond", 1000000f, couponRate, periods);
                     float price = BondPricing.PresentValue(bond, _requiredYield);
                     int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
-                    if (!TrySpendCash(priceInternal))
+                    if (remaining < priceInternal)
                         break;
+                    remaining -= priceInternal;
+                    em.FetchResource(EconomyManager.Resource.LoanPayment, priceInternal,
+                        ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                     bond.PurchasePrice = price;
                     _portfolioBonds.Add(bond);
                     bought++;
@@ -391,6 +398,10 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em == null) return 0;
+                long remaining = em.LastCashAmount;
+
                 int bought = 0;
                 for (int i = 0; i < 10; i++)
                 {
@@ -400,8 +411,11 @@ namespace MyFirstMod
                     Bond bond = new Bond("B10M" + _nextBondId.ToString(), "10M Treasury Bond", 10000000f, couponRate, periods);
                     float price = BondPricing.PresentValue(bond, _requiredYield);
                     int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
-                    if (!TrySpendCash(priceInternal))
+                    if (remaining < priceInternal)
                         break;
+                    remaining -= priceInternal;
+                    em.FetchResource(EconomyManager.Resource.LoanPayment, priceInternal,
+                        ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                     bond.PurchasePrice = price;
                     _portfolioBonds.Add(bond);
                     bought++;
