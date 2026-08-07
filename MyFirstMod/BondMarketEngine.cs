@@ -362,6 +362,30 @@ namespace MyFirstMod
             }
         }
 
+        public bool Buy1BBond()
+        {
+            lock (_lock)
+            {
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em == null) return false;
+
+                float couponRate = _requiredYield;
+                int periods = 60;
+                _nextBondId++;
+                Bond bond = new Bond("B1B" + _nextBondId.ToString(), "1B Treasury Bond", 1000000000f, couponRate, periods);
+                float price = BondPricing.PresentValue(bond, _requiredYield);
+                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
+                if (em.LastCashAmount < priceInternal)
+                    return false;
+                em.FetchResource(EconomyManager.Resource.LoanPayment, (int)Math.Min(priceInternal, int.MaxValue),
+                    ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+                bond.PurchasePrice = price;
+                _portfolioBonds.Add(bond);
+                Debug.Log("[MyFirstMod] Bought 1B 5yr Treasury Bond for " + price.ToString("N0"));
+                return true;
+            }
+        }
+
         public int Buy10x1MBonds()
         {
             lock (_lock)
