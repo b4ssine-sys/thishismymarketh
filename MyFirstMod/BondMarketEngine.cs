@@ -216,6 +216,25 @@ namespace MyFirstMod
             }
         }
 
+        public int SellAllBonds()
+        {
+            lock (_lock)
+            {
+                int count = 0;
+                for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
+                {
+                    Bond bond = _portfolioBonds[i];
+                    float price = BondPricing.PresentValue(bond, _requiredYield);
+                    int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                    AddCashToCity(priceInternal);
+                    _portfolioBonds.RemoveAt(i);
+                    count++;
+                }
+                Debug.Log("[MyFirstMod] Sold all bonds: " + count.ToString() + " positions liquidated");
+                return count;
+            }
+        }
+
         private bool TrySpendCash(int internalAmount)
         {
             EconomyManager em = Singleton<EconomyManager>.instance;

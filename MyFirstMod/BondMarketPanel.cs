@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ColossalFramework.UI;
 using UnityEngine;
@@ -49,17 +50,21 @@ namespace MyFirstMod
 
         private UIButton _marketTabBtn;
         private UIButton _portfolioTabBtn;
+        private UIButton _sellAllBtn;
         private bool _showingPortfolio;
 
         private UIPanel _listPanel;
         private UILabel[] _infoLabels;
         private UILabel[] _priceLabels;
         private UIButton[] _actionButtons;
+        private UILabel _scrollHintLabel;
 
         private UILabel _footerLabel;
 
         private float _refreshTimer;
         private const float REFRESH_INTERVAL = 4f;
+
+        private int _scrollOffset;
 
         private readonly List<Bond> _cachedBonds = new List<Bond>();
         private readonly List<float> _cachedPrices = new List<float>();
@@ -154,6 +159,18 @@ namespace MyFirstMod
             _portfolioTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _portfolioTabBtn.eventClick += OnPortfolioTab;
 
+            _sellAllBtn = AddUIComponent<UIButton>();
+            _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
+            _sellAllBtn.relativePosition = new Vector3(WIDTH - 102f, tabY);
+            _sellAllBtn.text = "Sell All";
+            _sellAllBtn.textScale = 0.85f;
+            _sellAllBtn.normalBgSprite = "ButtonMenu";
+            _sellAllBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _sellAllBtn.pressedBgSprite = "ButtonMenuPressed";
+            _sellAllBtn.disabledBgSprite = "ButtonMenuDisabled";
+            _sellAllBtn.eventClick += OnSellAllClick;
+            _sellAllBtn.isVisible = false;
+
             _showingPortfolio = false;
             UpdateTabHighlights();
         }
@@ -164,6 +181,7 @@ namespace MyFirstMod
             _listPanel = AddUIComponent<UIPanel>();
             _listPanel.size = new Vector2(WIDTH - 24f, ROW_HEIGHT * MAX_ROWS + 4f);
             _listPanel.relativePosition = new Vector3(12f, listY);
+            _listPanel.eventMouseWheel += OnScrollWheel;
 
             _infoLabels = new UILabel[MAX_ROWS];
             _priceLabels = new UILabel[MAX_ROWS];
@@ -203,6 +221,15 @@ namespace MyFirstMod
                 _actionButtons[i].isVisible = false;
                 _actionButtons[i].eventClick += delegate(UIComponent c, UIMouseEventParameter p) { OnActionClick(idx); };
             }
+
+            _scrollHintLabel = _listPanel.AddUIComponent<UILabel>();
+            _scrollHintLabel.autoSize = false;
+            _scrollHintLabel.size = new Vector2(WIDTH - 24f, 20f);
+            _scrollHintLabel.relativePosition = new Vector3(0f, ROW_HEIGHT * MAX_ROWS + 4f);
+            _scrollHintLabel.textScale = 0.7f;
+            _scrollHintLabel.textAlignment = UIHorizontalAlignment.Center;
+            _scrollHintLabel.verticalAlignment = UIVerticalAlignment.Middle;
+            _scrollHintLabel.text = "";
         }
 
         private void CreateFooter()
@@ -270,6 +297,9 @@ namespace MyFirstMod
 
         private void RefreshMarket(BondMarketEngine engine)
         {
+            _sellAllBtn.isVisible = false;
+            _scrollHintLabel.text = "";
+
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
 
             int count = _cachedBonds.Count;
@@ -304,23 +334,35 @@ namespace MyFirstMod
 
         private void RefreshPortfolio(BondMarketEngine engine)
         {
+            _sellAllBtn.isVisible = true;
+            _sellAllBtn.isEnabled = engine.PortfolioCount > 0;
+
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
 
-            int count = _cachedBonds.Count;
-            if (count > MAX_ROWS) count = MAX_ROWS;
+            int total = _cachedBonds.Count;
+            int maxOffset = Math.Max(0, total - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
 
             float totalValue = 0f;
             float totalLifetimePL = 0f;
 
+            for (int j = 0; j < total; j++)
+            {
+                float p = _cachedPrices[j];
+                Bond bj = _cachedBonds[j];
+                totalValue += p;
+                totalLifetimePL += (p + bj.CouponsReceived) - bj.PurchasePrice;
+            }
+
             for (int i = 0; i < MAX_ROWS; i++)
             {
-                if (i < count)
+                int bondIdx = _scrollOffset + i;
+                if (bondIdx < total)
                 {
-                    Bond b = _cachedBonds[i];
-                    float price = _cachedPrices[i];
+                    Bond b = _cachedBonds[bondIdx];
+                    float price = _cachedPrices[bondIdx];
                     float lifetimePL = (price + b.CouponsReceived) - b.PurchasePrice;
-                    totalValue += price;
-                    totalLifetimePL += lifetimePL;
 
                     string plStr = lifetimePL >= 0 ? "+" + lifetimePL.ToString("N0") : lifetimePL.ToString("N0");
                     _infoLabels[i].text = string.Format(
@@ -339,9 +381,31 @@ namespace MyFirstMod
                 }
             }
 
+            if (total > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total);
+            else
+                _scrollHintLabel.text = "";
+
             string totalPLStr = totalLifetimePL >= 0 ? "+" + totalLifetimePL.ToString("N0") : totalLifetimePL.ToString("N0");
             _footerLabel.text = string.Format("Portfolio Value: {0:N0}  |  Lifetime P/L: {1}  |  {2} bonds",
                 totalValue, totalPLStr, engine.PortfolioCount);
+        }
+
+        private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            if (!_showingPortfolio) return;
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int maxOffset = Math.Max(0, engine.PortfolioCount - MAX_ROWS);
+            if (eventParam.wheelDelta < 0f)
+                _scrollOffset = Math.Min(maxOffset, _scrollOffset + 1);
+            else if (eventParam.wheelDelta > 0f)
+                _scrollOffset = Math.Max(0, _scrollOffset - 1);
+
+            eventParam.Use();
+            RefreshData();
         }
 
         private void OnActionClick(int index)
@@ -351,10 +415,16 @@ namespace MyFirstMod
 
             if (_showingPortfolio)
             {
-                if (engine.SellBond(index))
+                int portfolioIdx = _scrollOffset + index;
+                if (engine.SellBond(portfolioIdx))
+                {
+                    int maxOffset = Math.Max(0, engine.PortfolioCount - MAX_ROWS);
+                    if (_scrollOffset > maxOffset)
+                        _scrollOffset = maxOffset;
                     RefreshData();
+                }
                 else
-                    Debug.Log("[MyFirstMod] Sell failed at index " + index.ToString());
+                    Debug.Log("[MyFirstMod] Sell failed at index " + portfolioIdx.ToString());
             }
             else
             {
@@ -365,6 +435,18 @@ namespace MyFirstMod
             }
         }
 
+        private void OnSellAllClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int sold = engine.SellAllBonds();
+            _scrollOffset = 0;
+            if (sold > 0)
+                Debug.Log("[MyFirstMod] Sold all " + sold.ToString() + " bonds");
+            RefreshData();
+        }
+
         private void OnCloseClick(UIComponent component, UIMouseEventParameter eventParam)
         {
             isVisible = false;
@@ -373,6 +455,7 @@ namespace MyFirstMod
         private void OnMarketTab(UIComponent component, UIMouseEventParameter eventParam)
         {
             _showingPortfolio = false;
+            _scrollOffset = 0;
             UpdateTabHighlights();
             RefreshData();
         }
@@ -380,6 +463,7 @@ namespace MyFirstMod
         private void OnPortfolioTab(UIComponent component, UIMouseEventParameter eventParam)
         {
             _showingPortfolio = true;
+            _scrollOffset = 0;
             UpdateTabHighlights();
             RefreshData();
         }
