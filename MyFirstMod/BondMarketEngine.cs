@@ -15,14 +15,10 @@ namespace MyFirstMod
         private const int MIN_MARKET_BONDS = 4;
         private const int INTERNAL_UNIT_SCALE = 100;
 
-        private readonly float[] _incomeHistory = new float[WINDOW_SIZE];
-        private readonly float[] _expenseHistory = new float[WINDOW_SIZE];
-        private readonly float[] _debtServiceHistory = new float[WINDOW_SIZE];
+        private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
-
-        private float _tickIncome;
-        private float _tickExpenses;
-        private float _tickDebtService;
+        private long _prevMoney;
+        private bool _prevMoneySet;
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
@@ -32,30 +28,38 @@ namespace MyFirstMod
         private int _nextBondId;
         private bool _initialized;
 
-        public float GrossIncome { get; private set; }
-        public float TotalExpenses { get; private set; }
-        public float DebtService { get; private set; }
-        public float DebtBurden { get; private set; }
-        public float DSCR { get; private set; }
-        public float NOI { get; private set; }
-        public CreditRating Rating { get; private set; }
-        public float BenchmarkRate { get; private set; }
-        public float RequiredYield { get; private set; }
+        private float _grossIncome;
+        private float _totalExpenses;
+        private float _debtBurden;
+        private float _dscr;
+        private float _noi;
+        private CreditRating _rating;
+        private float _benchmarkRate;
+        private float _requiredYield;
+
+        public float GrossIncome { get { return _grossIncome; } }
+        public float TotalExpenses { get { return _totalExpenses; } }
+        public float DebtBurden { get { return _debtBurden; } }
+        public float DSCR { get { return _dscr; } }
+        public float NOI { get { return _noi; } }
+        public CreditRating Rating { get { return _rating; } }
+        public float BenchmarkRate { get { return _benchmarkRate; } }
+        public float RequiredYield { get { return _requiredYield; } }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
             Instance = this;
 
-            _incomeHistory[_windowIndex] = _tickIncome;
-            _expenseHistory[_windowIndex] = _tickExpenses;
-            _debtServiceHistory[_windowIndex] = _tickDebtService;
-            _windowIndex = (_windowIndex + 1) % WINDOW_SIZE;
+            if (_prevMoneySet)
+            {
+                float delta = (float)(internalMoneyAmount - _prevMoney);
+                _cashFlowHistory[_windowIndex] = delta;
+                _windowIndex = (_windowIndex + 1) % WINDOW_SIZE;
+            }
+            _prevMoney = internalMoneyAmount;
+            _prevMoneySet = true;
 
-            _tickIncome = 0f;
-            _tickExpenses = 0f;
-            _tickDebtService = 0f;
-
-            RecalculateMetrics();
+            RecalculateMetrics(internalMoneyAmount);
 
             _tickCounter++;
             if (_tickCounter >= TICKS_PER_PERIOD)
@@ -79,61 +83,58 @@ namespace MyFirstMod
             return internalMoneyAmount;
         }
 
-        public override void OnAddResource(EconomyResource resource, ref int amount, Service service, SubService subService, Level level)
+        private void RecalculateMetrics(long internalMoneyAmount)
         {
-            if (amount > 0)
-                _tickIncome += amount;
-        }
-
-        public override void OnFetchResource(EconomyResource resource, ref int amount, Service service, SubService subService, Level level)
-        {
-            if (amount > 0)
-            {
-                _tickExpenses += amount;
-                if (resource == EconomyResource.LoanPayment)
-                    _tickDebtService += amount;
-            }
-        }
-
-        private void RecalculateMetrics()
-        {
-            float totalIncome = 0f;
-            float totalExpenses = 0f;
-            float totalDebtService = 0f;
+            float totalPositive = 0f;
+            float totalNegative = 0f;
+            int positiveCount = 0;
 
             for (int i = 0; i < WINDOW_SIZE; i++)
             {
-                totalIncome += _incomeHistory[i];
-                totalExpenses += _expenseHistory[i];
-                totalDebtService += _debtServiceHistory[i];
+                float v = _cashFlowHistory[i];
+                if (v > 0f)
+                {
+                    totalPositive += v;
+                    positiveCount++;
+                }
+                else if (v < 0f)
+                {
+                    totalNegative += -v;
+                }
             }
 
-            GrossIncome = totalIncome / WINDOW_SIZE;
-            TotalExpenses = totalExpenses / WINDOW_SIZE;
-            DebtService = totalDebtService / WINDOW_SIZE;
+            _grossIncome = totalPositive / INTERNAL_UNIT_SCALE;
+            _totalExpenses = totalNegative / INTERNAL_UNIT_SCALE;
 
-            float incomeDisplay = GrossIncome / INTERNAL_UNIT_SCALE;
-            float debtDisplay = DebtService / INTERNAL_UNIT_SCALE;
-            float expenseDisplay = TotalExpenses / INTERNAL_UNIT_SCALE;
+            float avgIncome = _grossIncome / WINDOW_SIZE;
+            float avgExpense = _totalExpenses / WINDOW_SIZE;
 
-            if (incomeDisplay > 0f)
-                DebtBurden = debtDisplay / incomeDisplay;
+            float estimatedDebtService = avgExpense * 0.15f;
+
+            if (avgIncome > 0f)
+                _debtBurden = estimatedDebtService / avgIncome;
             else
-                DebtBurden = 1f;
+                _debtBurden = 1f;
 
-            NOI = incomeDisplay - expenseDisplay + debtDisplay;
-            if (debtDisplay > 0f)
-                DSCR = NOI / debtDisplay;
+            _noi = avgIncome - avgExpense + estimatedDebtService;
+            if (estimatedDebtService > 0f)
+                _dscr = _noi / estimatedDebtService;
             else
-                DSCR = NOI > 0f ? 10f : 0f;
+                _dscr = _noi > 0f ? 10f : 0f;
 
-            Rating = BondPricing.CalculateRating(DebtBurden, DSCR);
+            float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
+            if (cashDisplay > 500000f && _dscr < 3f)
+                _dscr = Math.Min(_dscr + 1.0f, 10f);
+            if (cashDisplay < 10000f && _dscr > 0.5f)
+                _dscr = Math.Max(_dscr - 0.5f, 0f);
 
-            BenchmarkRate = 0.02f + DebtBurden * 0.08f;
-            if (BenchmarkRate < 0.01f) BenchmarkRate = 0.01f;
-            if (BenchmarkRate > 0.15f) BenchmarkRate = 0.15f;
+            _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
 
-            RequiredYield = BondPricing.GetRequiredYield(BenchmarkRate, Rating);
+            _benchmarkRate = 0.02f + _debtBurden * 0.08f;
+            if (_benchmarkRate < 0.01f) _benchmarkRate = 0.01f;
+            if (_benchmarkRate > 0.15f) _benchmarkRate = 0.15f;
+
+            _requiredYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
         }
 
         private void AgeBonds()
@@ -178,7 +179,7 @@ namespace MyFirstMod
                     return false;
 
                 Bond bond = _marketBonds[marketIndex];
-                float price = BondPricing.PresentValue(bond, RequiredYield);
+                float price = BondPricing.PresentValue(bond, _requiredYield);
 
                 int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
                 if (!TrySpendCash(priceInternal))
@@ -201,7 +202,7 @@ namespace MyFirstMod
                     return false;
 
                 Bond bond = _portfolioBonds[portfolioIndex];
-                float price = BondPricing.PresentValue(bond, RequiredYield);
+                float price = BondPricing.PresentValue(bond, _requiredYield);
 
                 int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
                 AddCashToCity(priceInternal);
@@ -284,7 +285,7 @@ namespace MyFirstMod
             outPrices.Clear();
             lock (_lock)
             {
-                float yield = RequiredYield;
+                float yield = _requiredYield;
                 for (int i = 0; i < _marketBonds.Count; i++)
                 {
                     outBonds.Add(_marketBonds[i]);
@@ -299,7 +300,7 @@ namespace MyFirstMod
             outPrices.Clear();
             lock (_lock)
             {
-                float yield = RequiredYield;
+                float yield = _requiredYield;
                 for (int i = 0; i < _portfolioBonds.Count; i++)
                 {
                     outBonds.Add(_portfolioBonds[i]);
