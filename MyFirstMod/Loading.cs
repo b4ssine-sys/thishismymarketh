@@ -18,6 +18,8 @@ namespace MyFirstMod
 
             Debug.Log("[MyFirstMod] Level loaded - Municipal Bond Market active.");
 
+            BondMarketEngine.NeedsReset = true;
+
             UIView view = UIView.GetAView();
             _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
             _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));

@@ -186,10 +186,10 @@ namespace MyFirstMod
             _sellAllBtn.isVisible = false;
 
             _buy1MBtn = AddUIComponent<UIButton>();
-            _buy1MBtn.size = new Vector2(110f, TAB_HEIGHT);
-            _buy1MBtn.relativePosition = new Vector3(WIDTH - 122f, tabY);
-            _buy1MBtn.text = "Buy 1M 5yr";
-            _buy1MBtn.textScale = 0.8f;
+            _buy1MBtn.size = new Vector2(130f, TAB_HEIGHT);
+            _buy1MBtn.relativePosition = new Vector3(WIDTH - 142f, tabY);
+            _buy1MBtn.text = "Buy 10x 1M 5yr";
+            _buy1MBtn.textScale = 0.75f;
             _buy1MBtn.normalBgSprite = "ButtonMenu";
             _buy1MBtn.hoveredBgSprite = "ButtonMenuHovered";
             _buy1MBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -487,7 +487,7 @@ namespace MyFirstMod
             string status = engine.CreditStatusLabel;
             int penalty = engine.DefaultPenalty;
             string penaltyStr = penalty > 0
-                ? " | Yield Penalty: +" + (penalty * (12f / 25f)).ToString("F1") + "%"
+                ? " | Yield Penalty: +" + (penalty * 0.048f).ToString("F2") + "%"
                 : "";
 
             _footerLabel.text = string.Format(
@@ -549,10 +549,11 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            if (engine.Buy1MBond())
+            int bought = engine.Buy10x1MBonds();
+            if (bought > 0)
                 RefreshData();
             else
-                Debug.Log("[MyFirstMod] Buy 1M 5yr failed - not enough funds.");
+                Debug.Log("[MyFirstMod] Buy 10x 1M 5yr failed - not enough funds.");
         }
 
         private void OnSellAllClick(UIComponent component, UIMouseEventParameter eventParam)

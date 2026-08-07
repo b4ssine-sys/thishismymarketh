@@ -9,6 +9,7 @@ namespace MyFirstMod
     public class BondMarketEngine : EconomyExtensionBase
     {
         public static BondMarketEngine Instance;
+        public static bool NeedsReset;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -54,7 +55,7 @@ namespace MyFirstMod
         };
         private static readonly float[] ISSUE_FACES = new float[]
         {
-            7500f, 22500f, 60000f, 120000f, 225000f
+            25000f, 75000f, 200000f, 400000f, 750000f
         };
         private static readonly int[] ISSUE_PERIODS = new int[]
         {
@@ -81,6 +82,12 @@ namespace MyFirstMod
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
             Instance = this;
+
+            if (NeedsReset)
+            {
+                NeedsReset = false;
+                ResetState();
+            }
 
             if (_prevMoneySet)
             {
@@ -256,7 +263,7 @@ namespace MyFirstMod
 
         private void TriggerDefault(Bond bond, string reason)
         {
-            _defaultPenalty += 25;
+            _defaultPenalty += 3;
             _totalDefaults++;
             Debug.Log("[MyFirstMod] *** DEFAULT *** on " + bond.Name +
                 " - failed " + reason +
@@ -347,33 +354,36 @@ namespace MyFirstMod
         {
             get
             {
-                if (_defaultPenalty >= 50) return "IN DEFAULT - YIELD CRITICAL";
-                if (_defaultPenalty >= 25) return "DISTRESSED - YIELD SPIKED";
-                if (_defaultPenalty >= 10) return "UNDER PRESSURE";
+                if (_defaultPenalty >= 12) return "IN DEFAULT - YIELD CRITICAL";
+                if (_defaultPenalty >= 6) return "DISTRESSED - YIELD SPIKED";
+                if (_defaultPenalty >= 3) return "UNDER PRESSURE";
                 if (_defaultPenalty > 0) return "RECOVERING";
                 return "GOOD STANDING";
             }
         }
 
-        public bool Buy1MBond()
+        public int Buy10x1MBonds()
         {
             lock (_lock)
             {
-                float couponRate = _requiredYield;
-                int periods = 60;
-                _nextBondId++;
-                Bond bond = new Bond("B1M" + _nextBondId.ToString(), "1M Treasury Bond", 1000000f, couponRate, periods);
-                float price = BondPricing.PresentValue(bond, _requiredYield);
-
-                int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
-                if (!TrySpendCash(priceInternal))
-                    return false;
-
-                bond.PurchasePrice = price;
-                _portfolioBonds.Add(bond);
-
-                Debug.Log("[MyFirstMod] Bought 1M 5yr Treasury Bond for " + price.ToString("N0"));
-                return true;
+                int bought = 0;
+                for (int i = 0; i < 10; i++)
+                {
+                    float couponRate = _requiredYield;
+                    int periods = 60;
+                    _nextBondId++;
+                    Bond bond = new Bond("B1M" + _nextBondId.ToString(), "1M Treasury Bond", 1000000f, couponRate, periods);
+                    float price = BondPricing.PresentValue(bond, _requiredYield);
+                    int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                    if (!TrySpendCash(priceInternal))
+                        break;
+                    bond.PurchasePrice = price;
+                    _portfolioBonds.Add(bond);
+                    bought++;
+                }
+                if (bought > 0)
+                    Debug.Log("[MyFirstMod] Bought " + bought.ToString() + "x 1M 5yr Treasury Bonds");
+                return bought;
             }
         }
 
@@ -461,6 +471,36 @@ namespace MyFirstMod
 
             em.AddResource(EconomyManager.Resource.PublicIncome, internalAmount,
                 ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+        }
+
+        private void ResetState()
+        {
+            lock (_lock)
+            {
+                _marketBonds.Clear();
+                _portfolioBonds.Clear();
+                _issuedBonds.Clear();
+            }
+            for (int i = 0; i < WINDOW_SIZE; i++)
+                _cashFlowHistory[i] = 0f;
+            _windowIndex = 0;
+            _prevMoney = 0;
+            _prevMoneySet = false;
+            _tickCounter = 0;
+            _nextBondId = 0;
+            _initialized = false;
+            _defaultPenalty = 0;
+            _totalDefaults = 0;
+            _realizedPL = 0f;
+            _grossIncome = 0f;
+            _totalExpenses = 0f;
+            _debtBurden = 0f;
+            _dscr = 0f;
+            _noi = 0f;
+            _rating = CreditRating.AAA;
+            _benchmarkRate = 0f;
+            _requiredYield = 0f;
+            Debug.Log("[MyFirstMod] Bond market state reset for new game.");
         }
 
         private void GenerateInitialBonds()
