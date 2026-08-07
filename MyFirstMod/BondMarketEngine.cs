@@ -562,7 +562,7 @@ namespace MyFirstMod
                 long remaining = em.LastCashAmount;
 
                 float coupon = _requiredYield;
-                int periods = 8;
+                int periods = 60;
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
@@ -593,7 +593,7 @@ namespace MyFirstMod
                 long remaining = em.LastCashAmount;
 
                 float coupon = _requiredYield;
-                int periods = 8;
+                int periods = 60;
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
