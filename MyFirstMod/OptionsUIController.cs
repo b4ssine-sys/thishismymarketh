@@ -53,10 +53,41 @@ namespace MyFirstMod
     {
         public static OptionsPanel Instance;
 
+        private const float PANEL_PADDING = 16f;
+        private static readonly Color32 COLOR_LONG = new Color32(140, 230, 140, 255);
+        private static readonly Color32 COLOR_SHORT = new Color32(230, 180, 120, 255);
+        private static readonly Color32 COLOR_NEUTRAL = new Color32(180, 180, 180, 255);
+        private static readonly Color32 COLOR_LOSS = new Color32(230, 120, 120, 255);
+        private static readonly Color32 COLOR_SELECTED = new Color32(100, 200, 255, 255);
+        private static readonly Color32 COLOR_WHITE = new Color32(255, 255, 255, 255);
+        private static readonly Color32 COLOR_TEXT = new Color32(240, 240, 240, 255);
+
+        // A single open position on the current underlying. Positive
+        // ContractsHeld = long (bought), negative = short (written). The
+        // strike/expiry are locked in when the position is opened from flat
+        // (or re-locked on a flip through zero) so an existing position is
+        // always priced against the actual contract it was entered at,
+        // instead of a constantly-moving fresh ATM quote.
+        private struct Position
+        {
+            public int ContractsHeld;
+            public float StrikePrice;
+            public int ExpiryDays;
+        }
+
+        private Position _currentPosition;
+
+        private UILabel _titleLabel;
         private UILabel _spotLabel;
+        private UILabel _qtyTitleLabel;
+        private UILabel _customQtyLabel;
+        private UILabel _expiryTitleLabel;
+        private UILabel _customExpiryLabel;
         private UILabel _optionRowLabel;
+        private UILabel _sellHintLabel;
         private UILabel _contractsLabel;
         private UILabel _portfolioValueLabel;
+
         private UITextField _customQtyInput;
         private UITextField _customExpiryInput;
 
@@ -69,14 +100,16 @@ namespace MyFirstMod
         private UIButton _btnExp30;
         private UIButton _btnExp60;
 
+        private UIButton _buyBtn;
+        private UIButton _sellBtn;
+        private UIButton _closeBtn;
+
         private const string UnderlyingId = "Greasy Gasoline";
         private const float SampleSpot = 128f;
         private const float Vol = 0.38f;
 
         private int _selectedQuantity = 1;
         private int _selectedExpiryDays = 30;
-        // Positive = long (bought) calls held, negative = short (written) calls owed.
-        private int _ownedContractsCount = 0;
         private float _totalPremiumPaid = 0f;   // net premium paid (positive) or received (negative) for the open position
         private float _lastPremiumCalculated = 0f;
 
@@ -90,14 +123,18 @@ namespace MyFirstMod
         {
             base.Start();
             Instance = this;
+            SetupUI();
+        }
 
+        private void SetupUI()
+        {
             UIView view = UIView.GetAView();
             atlas = view.defaultAtlas;
             backgroundSprite = "MenuPanel2";
-            color = new Color32(255, 255, 255, 255);
+            color = COLOR_WHITE;
 
             width = 620f;
-            height = 440f;
+            height = 460f;
             // Centered on screen instead of anchored near the toggle button.
             relativePosition = new Vector3((view.fixedWidth - width) / 2f, (view.fixedHeight - height) / 2f);
             canFocus = true;
@@ -106,26 +143,25 @@ namespace MyFirstMod
             // Starts hidden; click the toggle icon to flip display visibility open
             isVisible = false;
 
-            UILabel title = CreateLabel(16f, 16f, 1.3f);
-            title.text = "Options Market - Greasy Gasoline";
+            _titleLabel = CreateLabel(1.3f);
+            _titleLabel.text = "Options Market - Greasy Gasoline";
 
-            _spotLabel = CreateLabel(16f, 54f, 1.05f);
+            _spotLabel = CreateLabel(1.05f);
 
-            UILabel qtyTitle = CreateLabel(16f, 92f, 1.0f);
-            qtyTitle.text = "Select Quantity:";
+            _qtyTitleLabel = CreateLabel(1.0f);
+            _qtyTitleLabel.text = "Select Quantity:";
 
-            _btnQty1 = CreateQtyButton("1", 150f, 88f, 1);
-            _btnQty10 = CreateQtyButton("10", 205f, 88f, 10);
-            _btnQty100 = CreateQtyButton("100", 260f, 88f, 100);
+            _btnQty1 = CreateQtyButton("1", 1);
+            _btnQty10 = CreateQtyButton("10", 10);
+            _btnQty100 = CreateQtyButton("100", 100);
 
-            UILabel customXLabel = CreateLabel(335f, 92f, 1.0f);
-            customXLabel.text = "Custom (X):";
+            _customQtyLabel = CreateLabel(1.0f);
+            _customQtyLabel.text = "Custom (X):";
 
             _customQtyInput = AddUIComponent<UITextField>();
             _customQtyInput.atlas = atlas;
             _customQtyInput.font = view.defaultFont;
             _customQtyInput.size = new Vector2(70f, 26f);
-            _customQtyInput.relativePosition = new Vector3(440f, 88f);
             _customQtyInput.normalBgSprite = "TextFieldPanel";
             _customQtyInput.hoveredBgSprite = "TextFieldPanelHovered";
             _customQtyInput.focusedBgSprite = "TextFieldPanelFocused";
@@ -142,22 +178,21 @@ namespace MyFirstMod
                 }
             };
 
-            UILabel expiryTitle = CreateLabel(16f, 130f, 1.0f);
-            expiryTitle.text = "Contract Length (days):";
+            _expiryTitleLabel = CreateLabel(1.0f);
+            _expiryTitleLabel.text = "Contract Length (days):";
 
-            _btnExp7 = CreateExpiryButton("7", 230f, 126f, 7);
-            _btnExp14 = CreateExpiryButton("14", 285f, 126f, 14);
-            _btnExp30 = CreateExpiryButton("30", 340f, 126f, 30);
-            _btnExp60 = CreateExpiryButton("60", 395f, 126f, 60);
+            _btnExp7 = CreateExpiryButton("7", 7);
+            _btnExp14 = CreateExpiryButton("14", 14);
+            _btnExp30 = CreateExpiryButton("30", 30);
+            _btnExp60 = CreateExpiryButton("60", 60);
 
-            UILabel customExpiryLabel = CreateLabel(460f, 130f, 1.0f);
-            customExpiryLabel.text = "Custom:";
+            _customExpiryLabel = CreateLabel(1.0f);
+            _customExpiryLabel.text = "Custom:";
 
             _customExpiryInput = AddUIComponent<UITextField>();
             _customExpiryInput.atlas = atlas;
             _customExpiryInput.font = view.defaultFont;
             _customExpiryInput.size = new Vector2(70f, 26f);
-            _customExpiryInput.relativePosition = new Vector3(530f, 126f);
             _customExpiryInput.normalBgSprite = "TextFieldPanel";
             _customExpiryInput.hoveredBgSprite = "TextFieldPanelHovered";
             _customExpiryInput.focusedBgSprite = "TextFieldPanelFocused";
@@ -174,88 +209,116 @@ namespace MyFirstMod
                 }
             };
 
-            _optionRowLabel = CreateLabel(16f, 178f, 1.05f);
+            _optionRowLabel = CreateLabel(1.05f);
 
-            UIButton buyBtn = AddUIComponent<UIButton>();
-            buyBtn.atlas = atlas;
-            buyBtn.font = view.defaultFont;
-            buyBtn.text = "Buy Call";
-            buyBtn.textScale = 1f;
-            buyBtn.width = 130f;
-            buyBtn.height = 32f;
-            buyBtn.relativePosition = new Vector3(16f, 222f);
-            buyBtn.normalBgSprite = "ButtonMenu";
-            buyBtn.hoveredBgSprite = "ButtonMenuHovered";
-            buyBtn.pressedBgSprite = "ButtonMenuPressed";
-            buyBtn.eventClick += delegate { HandleTransaction(1); };
+            _buyBtn = CreateStandardButton("Buy Call", 130f, 32f);
+            _buyBtn.eventClick += delegate { HandleTransaction(1); };
 
-            UIButton sellBtn = AddUIComponent<UIButton>();
-            sellBtn.atlas = atlas;
-            sellBtn.font = view.defaultFont;
-            sellBtn.text = "Sell Call";
-            sellBtn.textScale = 1f;
-            sellBtn.width = 130f;
-            sellBtn.height = 32f;
-            sellBtn.relativePosition = new Vector3(160f, 222f);
-            sellBtn.normalBgSprite = "ButtonMenu";
-            sellBtn.hoveredBgSprite = "ButtonMenuHovered";
-            sellBtn.pressedBgSprite = "ButtonMenuPressed";
-            sellBtn.eventClick += delegate { HandleTransaction(-1); };
+            _sellBtn = CreateStandardButton("Sell Call", 130f, 32f);
+            _sellBtn.eventClick += delegate { HandleTransaction(-1); };
 
-            UILabel sellHint = CreateLabel(16f, 260f, 0.8f);
-            sellHint.text = "(Selling beyond what you hold writes/shorts new calls)";
-            sellHint.textColor = new Color32(180, 180, 180, 255);
+            _sellHintLabel = CreateLabel(0.8f);
+            _sellHintLabel.text = "(Selling beyond what you hold writes/shorts new calls)";
+            _sellHintLabel.textColor = COLOR_NEUTRAL;
 
-            _contractsLabel = CreateLabel(16f, 290f, 1.05f);
-            _contractsLabel.textColor = new Color32(140, 230, 140, 255);
+            _contractsLabel = CreateLabel(1.05f);
 
-            _portfolioValueLabel = CreateLabel(16f, 318f, 0.95f);
-            _portfolioValueLabel.autoSize = false;
-            _portfolioValueLabel.wordWrap = true;
-            _portfolioValueLabel.width = width - 32f;
+            _portfolioValueLabel = CreateLabel(0.95f);
 
-            UIButton close = AddUIComponent<UIButton>();
-            close.atlas = atlas;
-            close.font = view.defaultFont;
-            close.text = "Close";
-            close.textScale = 1f;
-            close.width = 110f;
-            close.height = 32f;
-            close.relativePosition = new Vector3(16f, height - 50f);
-            close.normalBgSprite = "ButtonMenu";
-            close.hoveredBgSprite = "ButtonMenuHovered";
-            close.pressedBgSprite = "ButtonMenuPressed";
-            close.eventClick += delegate { isVisible = false; };
+            _closeBtn = CreateStandardButton("Close", 110f, 32f);
+            _closeBtn.eventClick += delegate { isVisible = false; };
 
             UpdateButtonSelectionState();
             UpdateExpiryButtonSelectionState();
             Refresh();
         }
 
-        private UILabel CreateLabel(float x, float y, float scale)
+        // Lays out every control top-to-bottom using each label's actual
+        // measured height (instead of hand-picked y-offsets), so text that
+        // wraps to an extra line pushes everything below it down rather than
+        // overlapping or spilling past the panel edge.
+        private void PerformAutoLayout()
+        {
+            float currentY = PANEL_PADDING;
+            float contentWidth = width - (PANEL_PADDING * 2f);
+
+            ConfigureLabelLayout(_titleLabel, currentY, contentWidth);
+            currentY += _titleLabel.height + 10f;
+
+            ConfigureLabelLayout(_spotLabel, currentY, contentWidth);
+            currentY += _spotLabel.height + 14f;
+
+            _qtyTitleLabel.relativePosition = new Vector3(PANEL_PADDING, currentY + 4f);
+            _btnQty1.relativePosition = new Vector3(150f, currentY);
+            _btnQty10.relativePosition = new Vector3(205f, currentY);
+            _btnQty100.relativePosition = new Vector3(260f, currentY);
+            _customQtyLabel.relativePosition = new Vector3(335f, currentY + 4f);
+            _customQtyInput.relativePosition = new Vector3(440f, currentY);
+            currentY += 34f;
+
+            _expiryTitleLabel.relativePosition = new Vector3(PANEL_PADDING, currentY + 4f);
+            _btnExp7.relativePosition = new Vector3(230f, currentY);
+            _btnExp14.relativePosition = new Vector3(285f, currentY);
+            _btnExp30.relativePosition = new Vector3(340f, currentY);
+            _btnExp60.relativePosition = new Vector3(395f, currentY);
+            _customExpiryLabel.relativePosition = new Vector3(460f, currentY + 4f);
+            _customExpiryInput.relativePosition = new Vector3(530f, currentY);
+            currentY += 38f;
+
+            ConfigureLabelLayout(_optionRowLabel, currentY, contentWidth);
+            currentY += _optionRowLabel.height + 12f;
+
+            _buyBtn.relativePosition = new Vector3(PANEL_PADDING, currentY);
+            _sellBtn.relativePosition = new Vector3(PANEL_PADDING + 144f, currentY);
+            currentY += 40f;
+
+            ConfigureLabelLayout(_sellHintLabel, currentY, contentWidth);
+            currentY += _sellHintLabel.height + 12f;
+
+            ConfigureLabelLayout(_contractsLabel, currentY, contentWidth);
+            currentY += _contractsLabel.height + 12f;
+
+            ConfigureLabelLayout(_portfolioValueLabel, currentY, contentWidth);
+
+            _closeBtn.relativePosition = new Vector3(PANEL_PADDING, height - 48f);
+        }
+
+        private void ConfigureLabelLayout(UILabel label, float y, float targetWidth)
+        {
+            label.relativePosition = new Vector3(PANEL_PADDING, y);
+            label.autoSize = false;
+            label.wordWrap = true;
+            label.width = targetWidth;
+        }
+
+        private UILabel CreateLabel(float scale)
         {
             UILabel l = AddUIComponent<UILabel>();
             l.font = UIView.GetAView().defaultFont;
-            l.textColor = new Color32(240, 240, 240, 255);
+            l.textColor = COLOR_TEXT;
             l.textScale = scale;
-            l.relativePosition = new Vector3(x, y);
             return l;
         }
 
-        private UIButton CreateQtyButton(string text, float x, float y, int amount)
+        private UIButton CreateStandardButton(string text, float btnWidth, float btnHeight)
         {
             UIButton btn = AddUIComponent<UIButton>();
             btn.atlas = atlas;
             btn.font = UIView.GetAView().defaultFont;
             btn.text = text;
-            btn.textScale = 0.9f;
-            btn.width = 50f;
-            btn.height = 26f;
-            btn.relativePosition = new Vector3(x, y);
+            btn.textScale = 1f;
+            btn.width = btnWidth;
+            btn.height = btnHeight;
             btn.normalBgSprite = "ButtonMenu";
             btn.hoveredBgSprite = "ButtonMenuHovered";
             btn.pressedBgSprite = "ButtonMenuPressed";
+            return btn;
+        }
 
+        private UIButton CreateQtyButton(string text, int amount)
+        {
+            UIButton btn = CreateStandardButton(text, 50f, 26f);
+            btn.textScale = 0.9f;
             btn.eventClick += delegate (UIComponent component, UIMouseEventParameter param)
             {
                 _selectedQuantity = amount;
@@ -267,34 +330,23 @@ namespace MyFirstMod
 
         private void ResetQtyButtonColors()
         {
-            _btnQty1.color = new Color32(255, 255, 255, 255);
-            _btnQty10.color = new Color32(255, 255, 255, 255);
-            _btnQty100.color = new Color32(255, 255, 255, 255);
+            _btnQty1.color = COLOR_WHITE;
+            _btnQty10.color = COLOR_WHITE;
+            _btnQty100.color = COLOR_WHITE;
         }
 
         private void UpdateButtonSelectionState()
         {
             ResetQtyButtonColors();
-            if (_selectedQuantity == 1) _btnQty1.color = new Color32(100, 200, 255, 255);
-            else if (_selectedQuantity == 10) _btnQty10.color = new Color32(100, 200, 255, 255);
-            else if (_selectedQuantity == 100) _btnQty100.color = new Color32(100, 200, 255, 255);
-
+            if (_selectedQuantity == 1) _btnQty1.color = COLOR_SELECTED;
+            else if (_selectedQuantity == 10) _btnQty10.color = COLOR_SELECTED;
+            else if (_selectedQuantity == 100) _btnQty100.color = COLOR_SELECTED;
         }
 
-        private UIButton CreateExpiryButton(string text, float x, float y, int days)
+        private UIButton CreateExpiryButton(string text, int days)
         {
-            UIButton btn = AddUIComponent<UIButton>();
-            btn.atlas = atlas;
-            btn.font = UIView.GetAView().defaultFont;
-            btn.text = text;
+            UIButton btn = CreateStandardButton(text, 50f, 26f);
             btn.textScale = 0.9f;
-            btn.width = 50f;
-            btn.height = 26f;
-            btn.relativePosition = new Vector3(x, y);
-            btn.normalBgSprite = "ButtonMenu";
-            btn.hoveredBgSprite = "ButtonMenuHovered";
-            btn.pressedBgSprite = "ButtonMenuPressed";
-
             btn.eventClick += delegate (UIComponent component, UIMouseEventParameter param)
             {
                 _selectedExpiryDays = days;
@@ -306,20 +358,21 @@ namespace MyFirstMod
 
         private void ResetExpiryButtonColors()
         {
-            _btnExp7.color = new Color32(255, 255, 255, 255);
-            _btnExp14.color = new Color32(255, 255, 255, 255);
-            _btnExp30.color = new Color32(255, 255, 255, 255);
-            _btnExp60.color = new Color32(255, 255, 255, 255);
+            _btnExp7.color = COLOR_WHITE;
+            _btnExp14.color = COLOR_WHITE;
+            _btnExp30.color = COLOR_WHITE;
+            _btnExp60.color = COLOR_WHITE;
         }
 
         private void UpdateExpiryButtonSelectionState()
         {
             ResetExpiryButtonColors();
-            if (_selectedExpiryDays == 7) _btnExp7.color = new Color32(100, 200, 255, 255);
-            else if (_selectedExpiryDays == 14) _btnExp14.color = new Color32(100, 200, 255, 255);
-            else if (_selectedExpiryDays == 30) _btnExp30.color = new Color32(100, 200, 255, 255);
-            else if (_selectedExpiryDays == 60) _btnExp60.color = new Color32(100, 200, 255, 255);
+            if (_selectedExpiryDays == 7) _btnExp7.color = COLOR_SELECTED;
+            else if (_selectedExpiryDays == 14) _btnExp14.color = COLOR_SELECTED;
+            else if (_selectedExpiryDays == 30) _btnExp30.color = COLOR_SELECTED;
+            else if (_selectedExpiryDays == 60) _btnExp60.color = COLOR_SELECTED;
         }
+
         public override void Update()
         {
             base.Update();
@@ -335,6 +388,17 @@ namespace MyFirstMod
         {
             // No ownership guard here: selling beyond what you currently hold
             // writes (shorts) new calls rather than just closing a long position.
+            bool live;
+            float currentSpot = PriceFeed.GetSpot(UnderlyingId, SampleSpot, out live);
+
+            // Lock in the execution strike/expiry when opening a brand-new
+            // position from flat, so the whole position prices consistently
+            // against the contract it was actually entered at.
+            if (_currentPosition.ContractsHeld == 0)
+            {
+                _currentPosition.StrikePrice = (float)Math.Round(currentSpot, 2);
+                _currentPosition.ExpiryDays = _selectedExpiryDays;
+            }
 
             long totalCostScaled = (long)(_lastPremiumCalculated * 100f) * _selectedQuantity;
             // Clamp before narrowing to int so an unusually large premium * quantity
@@ -346,7 +410,7 @@ namespace MyFirstMod
                 // No live economy to charge against (e.g. testing outside a loaded
                 // city). Track the position without a cash transfer instead of
                 // silently swallowing whatever error comes back from AddResource.
-                ApplyPositionChange(direction);
+                ApplyPositionChange(direction, currentSpot);
                 Debug.LogWarning("[OptionsMarket] EconomyManager unavailable; position tracked without a cash transfer.");
                 Refresh();
                 return;
@@ -361,46 +425,49 @@ namespace MyFirstMod
                 EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
             }
 
-            ApplyPositionChange(direction);
+            ApplyPositionChange(direction, currentSpot);
             Refresh();
         }
 
-        // Tracks quantity held (positive = long, negative = short) and cost
-        // basis so Refresh() can show a live mark-to-market value. Adding to
-        // a position (buying while long/flat, or selling/writing while
-        // short/flat) books it at the current premium. Reducing a position
-        // realizes against that position's own average premium instead of
-        // the current quote, so the remaining open quantity keeps an
-        // accurate cost basis. Crossing through zero splits into a close of
-        // the old side plus a fresh open on the new side.
-        private void ApplyPositionChange(int direction)
+        // Adding to a position (buying while long/flat, or selling/writing
+        // while short/flat) books it at the current premium. Reducing a
+        // position realizes against that position's own average premium
+        // instead of the current quote, so the remaining open quantity keeps
+        // an accurate cost basis. Crossing through zero closes the old side
+        // and re-locks a fresh strike/expiry to open the new side.
+        private void ApplyPositionChange(int direction, float currentSpot)
         {
             int qtyDelta = direction * _selectedQuantity;
-            bool sameSideOrFlat = _ownedContractsCount == 0 || Math.Sign(_ownedContractsCount) == Math.Sign(qtyDelta);
+            bool sameSideOrFlat = _currentPosition.ContractsHeld == 0
+                || Math.Sign(_currentPosition.ContractsHeld) == Math.Sign(qtyDelta);
 
             if (sameSideOrFlat)
             {
                 _totalPremiumPaid += qtyDelta * _lastPremiumCalculated;
-                _ownedContractsCount += qtyDelta;
+                _currentPosition.ContractsHeld += qtyDelta;
             }
             else
             {
-                float avgPremium = _totalPremiumPaid / _ownedContractsCount;
-                int closingAmount = Math.Min(Math.Abs(qtyDelta), Math.Abs(_ownedContractsCount));
+                float avgPremium = _totalPremiumPaid / _currentPosition.ContractsHeld;
+                int closingAmount = Math.Min(Math.Abs(qtyDelta), Math.Abs(_currentPosition.ContractsHeld));
                 int closingSigned = Math.Sign(qtyDelta) * closingAmount;
 
                 _totalPremiumPaid += closingSigned * avgPremium;
-                _ownedContractsCount += closingSigned;
+                _currentPosition.ContractsHeld += closingSigned;
 
                 int remainder = qtyDelta - closingSigned;
                 if (remainder != 0)
                 {
-                    _totalPremiumPaid += remainder * _lastPremiumCalculated;
-                    _ownedContractsCount += remainder;
+                    // Flipped through zero - the leftover opens a fresh
+                    // position on the other side at today's strike/expiry.
+                    _currentPosition.StrikePrice = (float)Math.Round(currentSpot, 2);
+                    _currentPosition.ExpiryDays = _selectedExpiryDays;
+                    _currentPosition.ContractsHeld = remainder;
+                    _totalPremiumPaid = remainder * _lastPremiumCalculated;
                 }
             }
 
-            if (_ownedContractsCount == 0)
+            if (_currentPosition.ContractsHeld == 0)
             {
                 _totalPremiumPaid = 0f;
             }
@@ -410,35 +477,53 @@ namespace MyFirstMod
         {
             bool live;
             float spot = PriceFeed.GetSpot(UnderlyingId, SampleSpot, out live);
-            int day = CurrentDay();
-            int currentDay = day > _selectedExpiryDays ? _selectedExpiryDays : day;
-            _spotLabel.text = "Underlying: " + UnderlyingId + " Price (Spot): ₡" + spot.ToString("0.00")
-            + (live ? " (LIVE)" : " (SAMPLE)");
-            float strike = (float)Math.Round(spot, 2);
-            OptionContract c = new OptionContract(UnderlyingId, OptionKind.Call, strike, _selectedExpiryDays);
-            _lastPremiumCalculated = OptionPricing.Premium(c, spot, Vol, 0f, currentDay);
-            _optionRowLabel.text = string.Format("TYPE: CALL | STRIKE: ₡{0:0.00} | EXPIRY: {1}d | PREMIUM: ₡{2:0.00}", strike, _selectedExpiryDays, _lastPremiumCalculated);
+            int currentDay = Math.Min(CurrentDay(), _selectedExpiryDays);
 
-            if (_ownedContractsCount >= 0)
+            _spotLabel.text = string.Format("Underlying: {0} | Spot: ₡{1:0.00} {2}",
+                UnderlyingId, spot, live ? "(LIVE)" : "(SAMPLE)");
+
+            // Price a held position against its own locked-in contract;
+            // otherwise quote what a brand-new trade would get today.
+            float activeStrike = _currentPosition.ContractsHeld != 0
+                ? _currentPosition.StrikePrice
+                : (float)Math.Round(spot, 2);
+            int activeExpiry = _currentPosition.ContractsHeld != 0
+                ? _currentPosition.ExpiryDays
+                : _selectedExpiryDays;
+
+            OptionContract contract = new OptionContract(UnderlyingId, OptionKind.Call, activeStrike, activeExpiry);
+            _lastPremiumCalculated = OptionPricing.Premium(contract, spot, Vol, 0f, currentDay);
+
+            _optionRowLabel.text = string.Format("TYPE: CALL | STRIKE: ₡{0:0.00} | EXPIRY: {1}d | PREMIUM: ₡{2:0.00}",
+                activeStrike, activeExpiry, _lastPremiumCalculated);
+
+            int totalQuantity = Math.Abs(_currentPosition.ContractsHeld);
+            if (_currentPosition.ContractsHeld > 0)
             {
-                _contractsLabel.text = "YOUR ACTIVE PORTFOLIO: " + _ownedContractsCount + " Greasy Gasoline Call Contracts Held (LONG)";
-                _contractsLabel.textColor = new Color32(140, 230, 140, 255);
+                _contractsLabel.text = string.Format("ACTIVE PORTFOLIO: {0} Greasy Gasoline Call Contracts Held (LONG) @ Strike ₡{1:0.00}",
+                    totalQuantity, _currentPosition.StrikePrice);
+                _contractsLabel.textColor = COLOR_LONG;
+            }
+            else if (_currentPosition.ContractsHeld < 0)
+            {
+                _contractsLabel.text = string.Format("ACTIVE PORTFOLIO: {0} Greasy Gasoline Call Contracts Written (SHORT) @ Strike ₡{1:0.00}",
+                    totalQuantity, _currentPosition.StrikePrice);
+                _contractsLabel.textColor = COLOR_SHORT;
             }
             else
             {
-                _contractsLabel.text = "YOUR ACTIVE PORTFOLIO: " + Math.Abs(_ownedContractsCount) + " Greasy Gasoline Call Contracts Written (SHORT)";
-                _contractsLabel.textColor = new Color32(230, 180, 120, 255);
+                _contractsLabel.text = "ACTIVE PORTFOLIO: No Open Options Positions";
+                _contractsLabel.textColor = COLOR_NEUTRAL;
             }
 
-            float liveValue = _ownedContractsCount * _lastPremiumCalculated;
+            float liveValue = _currentPosition.ContractsHeld * _lastPremiumCalculated;
             float unrealizedPL = liveValue - _totalPremiumPaid;
             _portfolioValueLabel.text = string.Format(
                 "LIVE VALUE: ₡{0:0.00} | COST BASIS: ₡{1:0.00} | UNREALIZED: {2}₡{3:0.00}",
                 liveValue, _totalPremiumPaid, unrealizedPL >= 0 ? "+" : "-", Math.Abs(unrealizedPL));
-            _portfolioValueLabel.textColor = unrealizedPL >= 0
-                ? new Color32(140, 230, 140, 255)
-                : new Color32(230, 120, 120, 255);
+            _portfolioValueLabel.textColor = unrealizedPL >= 0 ? COLOR_LONG : COLOR_LOSS;
 
+            PerformAutoLayout();
             BringToFront();
         }
 
