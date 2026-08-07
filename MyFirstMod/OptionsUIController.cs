@@ -174,7 +174,7 @@ namespace MyFirstMod
                 if (int.TryParse(value, out val) && val > 0)
                 {
                     _selectedQuantity = val;
-                    ResetQtyButtonColors();
+                    UpdateButtonSelectionState();
                 }
             };
 
@@ -205,7 +205,7 @@ namespace MyFirstMod
                 if (int.TryParse(value, out val) && val > 0)
                 {
                     _selectedExpiryDays = val;
-                    ResetExpiryButtonColors();
+                    UpdateExpiryButtonSelectionState();
                 }
             };
 
@@ -386,18 +386,13 @@ namespace MyFirstMod
 
         private void HandleTransaction(int direction)
         {
-            // No ownership guard here: selling beyond what you currently hold
-            // writes (shorts) new calls rather than just closing a long position.
             bool live;
             float currentSpot = PriceFeed.GetSpot(UnderlyingId, SampleSpot, out live);
 
-            // Lock in the execution strike/expiry when opening a brand-new
-            // position from flat, so the whole position prices consistently
-            // against the contract it was actually entered at.
             if (_currentPosition.ContractsHeld == 0)
             {
                 _currentPosition.StrikePrice = (float)Math.Round(currentSpot, 2);
-                _currentPosition.ExpiryDays = _selectedExpiryDays;
+                _currentPosition.ExpiryDays = CurrentDay() + _selectedExpiryDays;
             }
 
             long totalCostScaled = (long)(_lastPremiumCalculated * 100f) * _selectedQuantity;
@@ -458,10 +453,8 @@ namespace MyFirstMod
                 int remainder = qtyDelta - closingSigned;
                 if (remainder != 0)
                 {
-                    // Flipped through zero - the leftover opens a fresh
-                    // position on the other side at today's strike/expiry.
                     _currentPosition.StrikePrice = (float)Math.Round(currentSpot, 2);
-                    _currentPosition.ExpiryDays = _selectedExpiryDays;
+                    _currentPosition.ExpiryDays = CurrentDay() + _selectedExpiryDays;
                     _currentPosition.ContractsHeld = remainder;
                     _totalPremiumPaid = remainder * _lastPremiumCalculated;
                 }
@@ -477,42 +470,42 @@ namespace MyFirstMod
         {
             bool live;
             float spot = PriceFeed.GetSpot(UnderlyingId, SampleSpot, out live);
-            int currentDay = Math.Min(CurrentDay(), _selectedExpiryDays);
+            int currentDay = CurrentDay();
 
             _spotLabel.text = string.Format("Underlying: {0} | Spot: ₡{1:0.00} {2}",
                 UnderlyingId, spot, live ? "(LIVE)" : "(SAMPLE)");
 
-            // Price a held position against its own locked-in contract;
-            // otherwise quote what a brand-new trade would get today.
             float activeStrike = _currentPosition.ContractsHeld != 0
                 ? _currentPosition.StrikePrice
                 : (float)Math.Round(spot, 2);
             int activeExpiry = _currentPosition.ContractsHeld != 0
                 ? _currentPosition.ExpiryDays
-                : _selectedExpiryDays;
+                : currentDay + _selectedExpiryDays;
 
             OptionContract contract = new OptionContract(UnderlyingId, OptionKind.Call, activeStrike, activeExpiry);
             _lastPremiumCalculated = OptionPricing.Premium(contract, spot, Vol, 0f, currentDay);
 
+            int daysRemaining = Math.Max(0, activeExpiry - currentDay);
             _optionRowLabel.text = string.Format("TYPE: CALL | STRIKE: ₡{0:0.00} | EXPIRY: {1}d | PREMIUM: ₡{2:0.00}",
-                activeStrike, activeExpiry, _lastPremiumCalculated);
+                activeStrike, daysRemaining, _lastPremiumCalculated);
 
             int totalQuantity = Math.Abs(_currentPosition.ContractsHeld);
+            string expiryTag = daysRemaining > 0 ? string.Format(" | {0}d left", daysRemaining) : " | EXPIRED";
             if (_currentPosition.ContractsHeld > 0)
             {
-                _contractsLabel.text = string.Format("ACTIVE PORTFOLIO: {0} Greasy Gasoline Call Contracts Held (LONG) @ Strike ₡{1:0.00}",
-                    totalQuantity, _currentPosition.StrikePrice);
-                _contractsLabel.textColor = COLOR_LONG;
+                _contractsLabel.text = string.Format("PORTFOLIO: {0}x LONG Call @ ₡{1:0.00}{2}",
+                    totalQuantity, _currentPosition.StrikePrice, expiryTag);
+                _contractsLabel.textColor = daysRemaining > 0 ? COLOR_LONG : COLOR_LOSS;
             }
             else if (_currentPosition.ContractsHeld < 0)
             {
-                _contractsLabel.text = string.Format("ACTIVE PORTFOLIO: {0} Greasy Gasoline Call Contracts Written (SHORT) @ Strike ₡{1:0.00}",
-                    totalQuantity, _currentPosition.StrikePrice);
-                _contractsLabel.textColor = COLOR_SHORT;
+                _contractsLabel.text = string.Format("PORTFOLIO: {0}x SHORT Call @ ₡{1:0.00}{2}",
+                    totalQuantity, _currentPosition.StrikePrice, expiryTag);
+                _contractsLabel.textColor = daysRemaining > 0 ? COLOR_SHORT : COLOR_LOSS;
             }
             else
             {
-                _contractsLabel.text = "ACTIVE PORTFOLIO: No Open Options Positions";
+                _contractsLabel.text = "PORTFOLIO: No Open Positions";
                 _contractsLabel.textColor = COLOR_NEUTRAL;
             }
 
