@@ -191,7 +191,7 @@ namespace MyFirstMod
 
                     if (b.RemainingPeriods <= 0)
                     {
-                        int faceInternal = (int)(b.FaceValue * INTERNAL_UNIT_SCALE);
+                        long faceInternal = (long)(b.FaceValue * INTERNAL_UNIT_SCALE);
                         AddCashToCity(faceInternal);
                         _realizedPL += (b.FaceValue + b.CouponsReceived) - b.PurchasePrice;
                         _portfolioBonds.RemoveAt(i);
@@ -200,7 +200,7 @@ namespace MyFirstMod
                     else
                     {
                         float couponPayment = (b.FaceValue * b.CouponRate) / BondPricing.PeriodsPerYear;
-                        int couponInternal = (int)(couponPayment * INTERNAL_UNIT_SCALE);
+                        long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
                         if (couponInternal > 0)
                         {
                             AddCashToCity(couponInternal);
@@ -232,7 +232,7 @@ namespace MyFirstMod
 
                 if (ib.RemainingPeriods <= 0)
                 {
-                    int faceInternal = (int)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                    long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
                     if (!TrySpendCash(faceInternal))
                     {
                         TriggerDefault(ib, "maturity repayment");
@@ -246,7 +246,7 @@ namespace MyFirstMod
                 else
                 {
                     float couponPayment = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
-                    int couponInternal = (int)(couponPayment * INTERNAL_UNIT_SCALE);
+                    long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
                     if (couponInternal > 0)
                     {
                         if (!TrySpendCash(couponInternal))
@@ -292,7 +292,7 @@ namespace MyFirstMod
                 bond.PurchasePrice = face;
                 _issuedBonds.Add(bond);
 
-                int cashInternal = (int)(face * INTERNAL_UNIT_SCALE);
+                long cashInternal = (long)(face * INTERNAL_UNIT_SCALE);
                 AddCashToCity(cashInternal);
 
                 Debug.Log("[MyFirstMod] Issued bond: " + name +
@@ -366,19 +366,14 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return false;
-
                 float couponRate = _requiredYield;
                 int periods = 60;
                 _nextBondId++;
                 Bond bond = new Bond("B1B" + _nextBondId.ToString(), "1B Treasury Bond", 1000000000f, couponRate, periods);
                 float price = BondPricing.PresentValue(bond, _requiredYield);
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-                if (em.LastCashAmount < priceInternal)
+                if (!TrySpendCash(priceInternal))
                     return false;
-                em.FetchResource(EconomyManager.Resource.LoanPayment, (int)Math.Min(priceInternal, int.MaxValue),
-                    ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 bond.PurchasePrice = price;
                 _portfolioBonds.Add(bond);
                 Debug.Log("[MyFirstMod] Bought 1B 5yr Treasury Bond for " + price.ToString("N0"));
@@ -402,12 +397,11 @@ namespace MyFirstMod
                     _nextBondId++;
                     Bond bond = new Bond("B1M" + _nextBondId.ToString(), "1M Treasury Bond", 1000000f, couponRate, periods);
                     float price = BondPricing.PresentValue(bond, _requiredYield);
-                    int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                     if (remaining < priceInternal)
                         break;
                     remaining -= priceInternal;
-                    em.FetchResource(EconomyManager.Resource.LoanPayment, priceInternal,
-                        ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+                    TrySpendCash(priceInternal);
                     bond.PurchasePrice = price;
                     _portfolioBonds.Add(bond);
                     bought++;
@@ -434,12 +428,11 @@ namespace MyFirstMod
                     _nextBondId++;
                     Bond bond = new Bond("B10M" + _nextBondId.ToString(), "10M Treasury Bond", 10000000f, couponRate, periods);
                     float price = BondPricing.PresentValue(bond, _requiredYield);
-                    int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                     if (remaining < priceInternal)
                         break;
                     remaining -= priceInternal;
-                    em.FetchResource(EconomyManager.Resource.LoanPayment, priceInternal,
-                        ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+                    TrySpendCash(priceInternal);
                     bond.PurchasePrice = price;
                     _portfolioBonds.Add(bond);
                     bought++;
@@ -460,7 +453,7 @@ namespace MyFirstMod
                 Bond bond = _marketBonds[marketIndex];
                 float price = BondPricing.PresentValue(bond, _requiredYield);
 
-                int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                 if (!TrySpendCash(priceInternal))
                     return false;
 
@@ -483,7 +476,7 @@ namespace MyFirstMod
                 Bond bond = _portfolioBonds[portfolioIndex];
                 float price = BondPricing.PresentValue(bond, _requiredYield);
 
-                int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                 AddCashToCity(priceInternal);
 
                 _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
@@ -502,7 +495,7 @@ namespace MyFirstMod
                 {
                     Bond bond = _portfolioBonds[i];
                     float price = BondPricing.PresentValue(bond, _requiredYield);
-                    int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
+                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                     AddCashToCity(priceInternal);
                     _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
                     _portfolioBonds.RemoveAt(i);
@@ -513,27 +506,36 @@ namespace MyFirstMod
             }
         }
 
-        private bool TrySpendCash(int internalAmount)
+        private bool TrySpendCash(long internalAmount)
         {
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null) return false;
 
-            long currentCash = em.LastCashAmount;
-            if (currentCash < internalAmount)
+            if (em.LastCashAmount < internalAmount)
                 return false;
 
-            em.FetchResource(EconomyManager.Resource.LoanPayment, internalAmount,
-                ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+            while (internalAmount > 0)
+            {
+                int chunk = (int)Math.Min(internalAmount, int.MaxValue);
+                em.FetchResource(EconomyManager.Resource.LoanPayment, chunk,
+                    ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+                internalAmount -= chunk;
+            }
             return true;
         }
 
-        private void AddCashToCity(int internalAmount)
+        private void AddCashToCity(long internalAmount)
         {
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null) return;
 
-            em.AddResource(EconomyManager.Resource.PublicIncome, internalAmount,
-                ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+            while (internalAmount > 0)
+            {
+                int chunk = (int)Math.Min(internalAmount, int.MaxValue);
+                em.AddResource(EconomyManager.Resource.PublicIncome, chunk,
+                    ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
+                internalAmount -= chunk;
+            }
         }
 
         private void ResetState()
