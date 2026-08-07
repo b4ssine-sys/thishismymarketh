@@ -4,17 +4,10 @@ using UnityEngine;
 
 namespace MyFirstMod
 {
-    // Runs when a save/map/asset is loaded and unloaded. Creates the options
-    // window and its toggle button on load, tears both down on unload.
-    //
-    // This is the single LoadingExtensionBase for the mod. Do not add a
-    // second one — the game instantiates every LoadingExtensionBase in the
-    // assembly for each enabled IUserMod, so a second one here would spawn
-    // duplicate panels and buttons and clobber OptionsPanel.Instance.
     public class Loading : LoadingExtensionBase
     {
-        private OptionsPanel _panel;
-        private OptionsToggleButton _toggleButton;
+        private BondMarketPanel _panel;
+        private BondToggleButton _toggleButton;
 
         public override void OnLevelLoaded(LoadMode mode)
         {
@@ -23,22 +16,18 @@ namespace MyFirstMod
             if (mode != LoadMode.NewGame && mode != LoadMode.LoadGame)
                 return;
 
-            Debug.Log("[MyFirstMod] Level loaded - mod is active.");
-
-            PriceFeed.SetEconomy(managers.economy);
-            PriceFeed.Discover();
+            Debug.Log("[MyFirstMod] Level loaded - Municipal Bond Market active.");
 
             UIView view = UIView.GetAView();
-            _panel = (OptionsPanel)view.AddUIComponent(typeof(OptionsPanel));
-            _toggleButton = (OptionsToggleButton)view.AddUIComponent(typeof(OptionsToggleButton));
+            _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
+            _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
 
-            Debug.Log("[MyFirstMod] Click the coin icon (top-left) to open the options window.");
+            Debug.Log("[MyFirstMod] Click the icon (top-left) to open the bond market.");
         }
 
         public override void OnLevelUnloading()
         {
             base.OnLevelUnloading();
-            PriceFeed.SetEconomy(null);
 
             if (_toggleButton != null)
             {

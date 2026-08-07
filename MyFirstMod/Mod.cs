@@ -14,15 +14,15 @@ namespace MyFirstMod
         // Workshop item titled.
         public string Name
         {
-            get { return "Secondary Options Market " + Version; }
+            get { return "Municipal Bond Market " + Version; }
         }
 
         public string Description
         {
             get
             {
-                return "Adds an options market on top of the Financial Districts " +
-                       "stock exchange. Built for Cities: Skylines 1.21.1-f9.";
+                return "Adds a municipal bond market with credit ratings, " +
+                       "coupon payments, and secondary trading. Built for Cities: Skylines 1.21.1-f9.";
             }
         }
 
