@@ -11,9 +11,12 @@ namespace MyFirstMod
         public static BondMarketEngine Instance;
 
         private const int WINDOW_SIZE = 60;
-        private const int TICKS_PER_PERIOD = 15;
+        public const int TICKS_PER_PERIOD = 15;
         private const int MIN_MARKET_BONDS = 4;
         private const int INTERNAL_UNIT_SCALE = 100;
+        private const int MAX_ISSUED_BONDS = 5;
+        private const float DEFAULT_YIELD_SPIKE = 0.12f;
+        private const int DEFAULT_DECAY_PER_PERIOD = 1;
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
@@ -22,11 +25,15 @@ namespace MyFirstMod
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
+        private readonly List<Bond> _issuedBonds = new List<Bond>();
         private readonly object _lock = new object();
 
         private int _tickCounter;
         private int _nextBondId;
         private bool _initialized;
+        private int _defaultPenalty;
+        private int _totalDefaults;
+        private float _realizedPL;
 
         private float _grossIncome;
         private float _totalExpenses;
@@ -37,6 +44,23 @@ namespace MyFirstMod
         private float _benchmarkRate;
         private float _requiredYield;
 
+        private static readonly string[] ISSUE_NAMES = new string[]
+        {
+            "Emergency Note",
+            "Municipal Note",
+            "Revenue Bond",
+            "Infrastructure Bond",
+            "Capital Bond"
+        };
+        private static readonly float[] ISSUE_FACES = new float[]
+        {
+            5000f, 15000f, 40000f, 80000f, 150000f
+        };
+        private static readonly int[] ISSUE_PERIODS = new int[]
+        {
+            2, 3, 4, 5, 6
+        };
+
         public float GrossIncome { get { return _grossIncome; } }
         public float TotalExpenses { get { return _totalExpenses; } }
         public float DebtBurden { get { return _debtBurden; } }
@@ -45,6 +69,14 @@ namespace MyFirstMod
         public CreditRating Rating { get { return _rating; } }
         public float BenchmarkRate { get { return _benchmarkRate; } }
         public float RequiredYield { get { return _requiredYield; } }
+        public int DefaultPenalty { get { return _defaultPenalty; } }
+        public int TotalDefaults { get { return _totalDefaults; } }
+        public float RealizedPL { get { return _realizedPL; } }
+        public int TicksInCurrentPeriod { get { return _tickCounter; } }
+
+        public int IssuedCount { get { lock (_lock) { return _issuedBonds.Count; } } }
+        public int MaxIssuedBonds { get { return MAX_ISSUED_BONDS; } }
+        public int IssueTemplateCount { get { return ISSUE_NAMES.Length; } }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
@@ -134,7 +166,11 @@ namespace MyFirstMod
             if (_benchmarkRate < 0.01f) _benchmarkRate = 0.01f;
             if (_benchmarkRate > 0.15f) _benchmarkRate = 0.15f;
 
-            _requiredYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
+            float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
+
+            float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
+            _requiredYield = baseYield + defaultSpike;
+            if (_requiredYield > 0.50f) _requiredYield = 0.50f;
         }
 
         private void AgeBonds()
@@ -150,6 +186,7 @@ namespace MyFirstMod
                     {
                         int faceInternal = (int)(b.FaceValue * INTERNAL_UNIT_SCALE);
                         AddCashToCity(faceInternal);
+                        _realizedPL += (b.FaceValue + b.CouponsReceived) - b.PurchasePrice;
                         _portfolioBonds.RemoveAt(i);
                         Debug.Log("[MyFirstMod] Bond matured: " + b.Name + " - returned face value " + b.FaceValue.ToString("N0"));
                     }
@@ -171,6 +208,150 @@ namespace MyFirstMod
                     if (_marketBonds[i].RemainingPeriods <= 0)
                         _marketBonds.RemoveAt(i);
                 }
+
+                ServiceIssuedBonds();
+
+                if (_defaultPenalty > 0)
+                    _defaultPenalty = Math.Max(0, _defaultPenalty - DEFAULT_DECAY_PER_PERIOD);
+            }
+        }
+
+        private void ServiceIssuedBonds()
+        {
+            for (int i = _issuedBonds.Count - 1; i >= 0; i--)
+            {
+                Bond ib = _issuedBonds[i];
+                ib.RemainingPeriods--;
+
+                if (ib.RemainingPeriods <= 0)
+                {
+                    int faceInternal = (int)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                    if (!TrySpendCash(faceInternal))
+                    {
+                        TriggerDefault(ib, "maturity repayment");
+                        _issuedBonds.RemoveAt(i);
+                        continue;
+                    }
+                    ib.CouponsReceived += ib.FaceValue;
+                    _issuedBonds.RemoveAt(i);
+                    Debug.Log("[MyFirstMod] Issued bond matured - repaid " + ib.FaceValue.ToString("N0") + " on " + ib.Name);
+                }
+                else
+                {
+                    float couponPayment = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                    int couponInternal = (int)(couponPayment * INTERNAL_UNIT_SCALE);
+                    if (couponInternal > 0)
+                    {
+                        if (!TrySpendCash(couponInternal))
+                        {
+                            TriggerDefault(ib, "coupon payment");
+                            _issuedBonds.RemoveAt(i);
+                            continue;
+                        }
+                        ib.CouponsReceived += couponPayment;
+                    }
+                }
+            }
+        }
+
+        private void TriggerDefault(Bond bond, string reason)
+        {
+            _defaultPenalty += 25;
+            _totalDefaults++;
+            Debug.Log("[MyFirstMod] *** DEFAULT *** on " + bond.Name +
+                " - failed " + reason +
+                " | Yield spiked! Penalty: " + _defaultPenalty.ToString() +
+                " | Total defaults: " + _totalDefaults.ToString());
+        }
+
+        public bool IssueBond(int templateIndex)
+        {
+            lock (_lock)
+            {
+                if (templateIndex < 0 || templateIndex >= ISSUE_NAMES.Length)
+                    return false;
+                if (_issuedBonds.Count >= MAX_ISSUED_BONDS)
+                    return false;
+                if (_rating == CreditRating.D)
+                    return false;
+
+                string name = ISSUE_NAMES[templateIndex];
+                float face = ISSUE_FACES[templateIndex];
+                int periods = ISSUE_PERIODS[templateIndex];
+                float couponRate = _requiredYield;
+
+                _nextBondId++;
+                Bond bond = new Bond("I" + _nextBondId.ToString(), name, face, couponRate, periods);
+                bond.PurchasePrice = face;
+                _issuedBonds.Add(bond);
+
+                int cashInternal = (int)(face * INTERNAL_UNIT_SCALE);
+                AddCashToCity(cashInternal);
+
+                Debug.Log("[MyFirstMod] Issued bond: " + name +
+                    " | Raised: " + face.ToString("N0") +
+                    " | Rate: " + (couponRate * 100f).ToString("F1") + "%" +
+                    " | Term: " + periods.ToString() + " periods");
+                return true;
+            }
+        }
+
+        public string GetTemplateName(int index) { return ISSUE_NAMES[index]; }
+        public float GetTemplateFace(int index) { return ISSUE_FACES[index]; }
+        public int GetTemplatePeriods(int index) { return ISSUE_PERIODS[index]; }
+
+        public bool CanIssueBonds
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _issuedBonds.Count < MAX_ISSUED_BONDS && _rating != CreditRating.D;
+                }
+            }
+        }
+
+        public float TotalDebtOwed
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float total = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                    {
+                        Bond ib = _issuedBonds[i];
+                        float remainingCoupons = (ib.FaceValue * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
+                        total += ib.FaceValue + remainingCoupons;
+                    }
+                    return total;
+                }
+            }
+        }
+
+        public float TotalCouponsPaid
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float total = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                        total += _issuedBonds[i].CouponsReceived;
+                    return total;
+                }
+            }
+        }
+
+        public string CreditStatusLabel
+        {
+            get
+            {
+                if (_defaultPenalty >= 50) return "IN DEFAULT - YIELD CRITICAL";
+                if (_defaultPenalty >= 25) return "DISTRESSED - YIELD SPIKED";
+                if (_defaultPenalty >= 10) return "UNDER PRESSURE";
+                if (_defaultPenalty > 0) return "RECOVERING";
+                return "GOOD STANDING";
             }
         }
 
@@ -210,6 +391,7 @@ namespace MyFirstMod
                 int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
                 AddCashToCity(priceInternal);
 
+                _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
                 _portfolioBonds.RemoveAt(portfolioIndex);
                 Debug.Log("[MyFirstMod] Sold bond: " + bond.Name + " for " + price.ToString("N0"));
                 return true;
@@ -227,6 +409,7 @@ namespace MyFirstMod
                     float price = BondPricing.PresentValue(bond, _requiredYield);
                     int priceInternal = (int)(price * INTERNAL_UNIT_SCALE);
                     AddCashToCity(priceInternal);
+                    _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
                     _portfolioBonds.RemoveAt(i);
                     count++;
                 }

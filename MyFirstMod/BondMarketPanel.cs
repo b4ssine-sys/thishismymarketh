@@ -50,8 +50,9 @@ namespace MyFirstMod
 
         private UIButton _marketTabBtn;
         private UIButton _portfolioTabBtn;
+        private UIButton _cityDebtTabBtn;
         private UIButton _sellAllBtn;
-        private bool _showingPortfolio;
+        private int _activeTab;
 
         private UIPanel _listPanel;
         private UILabel[] _infoLabels;
@@ -135,7 +136,8 @@ namespace MyFirstMod
         private void CreateTabs()
         {
             float tabY = HEADER_HEIGHT + 2f;
-            float tabW = 120f;
+            float tabW = 110f;
+            float gap = 4f;
 
             _marketTabBtn = AddUIComponent<UIButton>();
             _marketTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
@@ -150,7 +152,7 @@ namespace MyFirstMod
 
             _portfolioTabBtn = AddUIComponent<UIButton>();
             _portfolioTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
-            _portfolioTabBtn.relativePosition = new Vector3(12f + tabW + 4f, tabY);
+            _portfolioTabBtn.relativePosition = new Vector3(12f + tabW + gap, tabY);
             _portfolioTabBtn.text = "Portfolio";
             _portfolioTabBtn.textScale = 0.85f;
             _portfolioTabBtn.normalBgSprite = "ButtonMenu";
@@ -158,6 +160,17 @@ namespace MyFirstMod
             _portfolioTabBtn.pressedBgSprite = "ButtonMenuPressed";
             _portfolioTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _portfolioTabBtn.eventClick += OnPortfolioTab;
+
+            _cityDebtTabBtn = AddUIComponent<UIButton>();
+            _cityDebtTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
+            _cityDebtTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 2f, tabY);
+            _cityDebtTabBtn.text = "City Debt";
+            _cityDebtTabBtn.textScale = 0.85f;
+            _cityDebtTabBtn.normalBgSprite = "ButtonMenu";
+            _cityDebtTabBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _cityDebtTabBtn.pressedBgSprite = "ButtonMenuPressed";
+            _cityDebtTabBtn.focusedBgSprite = "ButtonMenuFocused";
+            _cityDebtTabBtn.eventClick += OnCityDebtTab;
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
@@ -171,7 +184,7 @@ namespace MyFirstMod
             _sellAllBtn.eventClick += OnSellAllClick;
             _sellAllBtn.isVisible = false;
 
-            _showingPortfolio = false;
+            _activeTab = 0;
             UpdateTabHighlights();
         }
 
@@ -179,7 +192,7 @@ namespace MyFirstMod
         {
             float listY = HEADER_HEIGHT + TAB_HEIGHT + 8f;
             _listPanel = AddUIComponent<UIPanel>();
-            _listPanel.size = new Vector2(WIDTH - 24f, ROW_HEIGHT * MAX_ROWS + 4f);
+            _listPanel.size = new Vector2(WIDTH - 24f, ROW_HEIGHT * MAX_ROWS + 24f);
             _listPanel.relativePosition = new Vector3(12f, listY);
             _listPanel.eventMouseWheel += OnScrollWheel;
 
@@ -280,19 +293,34 @@ namespace MyFirstMod
             string ratingStr = BondPricing.RatingLabel(engine.Rating);
             float yieldPct = engine.RequiredYield * 100f;
             float dscrVal = engine.DSCR;
-            float incomeDisplay = engine.GrossIncome / 100f;
-            float expenseDisplay = engine.TotalExpenses / 100f;
-            float debtBurdenPct = engine.DebtBurden * 100f;
 
-            _summaryLabel.text = string.Format(
-                "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
-                "Income: {3:N0}/tick  |  Expenses: {4:N0}/tick  |  Debt Burden: {5:F1}%",
-                ratingStr, yieldPct, dscrVal, incomeDisplay, expenseDisplay, debtBurdenPct);
+            if (_activeTab == 2)
+            {
+                _summaryLabel.text = string.Format(
+                    "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
+                    "Debt: {3}/{4} bonds  |  Owed: {5:N0}  |  {6}",
+                    ratingStr, yieldPct, dscrVal,
+                    engine.IssuedCount, engine.MaxIssuedBonds,
+                    engine.TotalDebtOwed, engine.CreditStatusLabel);
+            }
+            else
+            {
+                float incomeDisplay = engine.GrossIncome / 100f;
+                float expenseDisplay = engine.TotalExpenses / 100f;
+                float debtBurdenPct = engine.DebtBurden * 100f;
 
-            if (_showingPortfolio)
+                _summaryLabel.text = string.Format(
+                    "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
+                    "Income: {3:N0}/tick  |  Expenses: {4:N0}/tick  |  Debt Burden: {5:F1}%",
+                    ratingStr, yieldPct, dscrVal, incomeDisplay, expenseDisplay, debtBurdenPct);
+            }
+
+            if (_activeTab == 0)
+                RefreshMarket(engine);
+            else if (_activeTab == 1)
                 RefreshPortfolio(engine);
             else
-                RefreshMarket(engine);
+                RefreshCityDebt(engine);
         }
 
         private void RefreshMarket(BondMarketEngine engine)
@@ -301,6 +329,7 @@ namespace MyFirstMod
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
+            int ticksInPeriod = engine.TicksInCurrentPeriod;
 
             int count = _cachedBonds.Count;
             if (count > MAX_ROWS) count = MAX_ROWS;
@@ -311,10 +340,11 @@ namespace MyFirstMod
                 {
                     Bond b = _cachedBonds[i];
                     float price = _cachedPrices[i];
+                    int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
 
                     _infoLabels[i].text = string.Format(
-                        "{0}  Face:{1:N0}  Cpn:{2:F1}%  Per:{3}",
-                        b.Name, b.FaceValue, b.CouponRate * 100f, b.RemainingPeriods);
+                        "{0}  Face:{1:N0}  Cpn:{2:F1}%  {3}d left",
+                        b.Name, b.FaceValue, b.CouponRate * 100f, daysLeft);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Buy";
                     _actionButtons[i].isVisible = true;
@@ -338,6 +368,7 @@ namespace MyFirstMod
             _sellAllBtn.isEnabled = engine.PortfolioCount > 0;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
+            int ticksInPeriod = engine.TicksInCurrentPeriod;
 
             int total = _cachedBonds.Count;
             int maxOffset = Math.Max(0, total - MAX_ROWS);
@@ -345,15 +376,17 @@ namespace MyFirstMod
                 _scrollOffset = maxOffset;
 
             float totalValue = 0f;
-            float totalLifetimePL = 0f;
+            float unrealizedPL = 0f;
 
             for (int j = 0; j < total; j++)
             {
                 float p = _cachedPrices[j];
                 Bond bj = _cachedBonds[j];
                 totalValue += p;
-                totalLifetimePL += (p + bj.CouponsReceived) - bj.PurchasePrice;
+                unrealizedPL += (p + bj.CouponsReceived) - bj.PurchasePrice;
             }
+
+            float totalLifetimePL = engine.RealizedPL + unrealizedPL;
 
             for (int i = 0; i < MAX_ROWS; i++)
             {
@@ -362,12 +395,13 @@ namespace MyFirstMod
                 {
                     Bond b = _cachedBonds[bondIdx];
                     float price = _cachedPrices[bondIdx];
-                    float lifetimePL = (price + b.CouponsReceived) - b.PurchasePrice;
+                    float bondPL = (price + b.CouponsReceived) - b.PurchasePrice;
+                    int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
 
-                    string plStr = lifetimePL >= 0 ? "+" + lifetimePL.ToString("N0") : lifetimePL.ToString("N0");
+                    string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
                     _infoLabels[i].text = string.Format(
-                        "{0}  Paid:{1:N0}  Cpn:{2:N0}  P/L:{3}",
-                        b.Name, b.PurchasePrice, b.CouponsReceived, plStr);
+                        "{0}  Paid:{1:N0}  P/L:{2}  {3}d left",
+                        b.Name, b.PurchasePrice, plStr, daysLeft);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
@@ -392,9 +426,63 @@ namespace MyFirstMod
                 totalValue, totalPLStr, engine.PortfolioCount);
         }
 
+        private void RefreshCityDebt(BondMarketEngine engine)
+        {
+            _sellAllBtn.isVisible = false;
+            _scrollHintLabel.text = "";
+
+            int templateCount = engine.IssueTemplateCount;
+            bool canIssue = engine.CanIssueBonds;
+            float yieldPct = engine.RequiredYield * 100f;
+
+            for (int i = 0; i < MAX_ROWS; i++)
+            {
+                if (i < templateCount)
+                {
+                    string tName = engine.GetTemplateName(i);
+                    float tFace = engine.GetTemplateFace(i);
+                    int tPeriods = engine.GetTemplatePeriods(i);
+                    float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
+
+                    _infoLabels[i].text = string.Format(
+                        "{0}  Raise:{1:N0}  Rate:{2:F1}%  Term:{3}per  Cpn:{4:N0}/per",
+                        tName, tFace, yieldPct, tPeriods, perPeriodCoupon);
+                    _priceLabels[i].text = string.Format("{0:N0}", tFace);
+                    _actionButtons[i].text = "Issue";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = canIssue;
+                }
+                else
+                {
+                    _infoLabels[i].text = "";
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+            }
+
+            if (!canIssue && engine.Rating == CreditRating.D)
+                _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
+            else if (!canIssue)
+                _scrollHintLabel.text = string.Format("MAX CAPACITY ({0}/{0}) - REPAY EXISTING DEBT FIRST",
+                    engine.MaxIssuedBonds);
+            else
+                _scrollHintLabel.text = "";
+
+            string status = engine.CreditStatusLabel;
+            int penalty = engine.DefaultPenalty;
+            string penaltyStr = penalty > 0
+                ? " | Yield Penalty: +" + (penalty * (12f / 25f)).ToString("F1") + "%"
+                : "";
+
+            _footerLabel.text = string.Format(
+                "Outstanding: {0}/{1}  |  Paid: {2:N0}  |  {3}{4}",
+                engine.IssuedCount, engine.MaxIssuedBonds,
+                engine.TotalCouponsPaid, status, penaltyStr);
+        }
+
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
-            if (!_showingPortfolio) return;
+            if (_activeTab != 1) return;
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
@@ -413,7 +501,7 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            if (_showingPortfolio)
+            if (_activeTab == 1)
             {
                 int portfolioIdx = _scrollOffset + index;
                 if (engine.SellBond(portfolioIdx))
@@ -423,8 +511,13 @@ namespace MyFirstMod
                         _scrollOffset = maxOffset;
                     RefreshData();
                 }
+            }
+            else if (_activeTab == 2)
+            {
+                if (engine.IssueBond(index))
+                    RefreshData();
                 else
-                    Debug.Log("[MyFirstMod] Sell failed at index " + portfolioIdx.ToString());
+                    Debug.Log("[MyFirstMod] Cannot issue bond - at capacity or rating D.");
             }
             else
             {
@@ -454,7 +547,7 @@ namespace MyFirstMod
 
         private void OnMarketTab(UIComponent component, UIMouseEventParameter eventParam)
         {
-            _showingPortfolio = false;
+            _activeTab = 0;
             _scrollOffset = 0;
             UpdateTabHighlights();
             RefreshData();
@@ -462,7 +555,15 @@ namespace MyFirstMod
 
         private void OnPortfolioTab(UIComponent component, UIMouseEventParameter eventParam)
         {
-            _showingPortfolio = true;
+            _activeTab = 1;
+            _scrollOffset = 0;
+            UpdateTabHighlights();
+            RefreshData();
+        }
+
+        private void OnCityDebtTab(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _activeTab = 2;
             _scrollOffset = 0;
             UpdateTabHighlights();
             RefreshData();
@@ -470,16 +571,9 @@ namespace MyFirstMod
 
         private void UpdateTabHighlights()
         {
-            if (!_showingPortfolio)
-            {
-                _marketTabBtn.normalBgSprite = "ButtonMenuFocused";
-                _portfolioTabBtn.normalBgSprite = "ButtonMenu";
-            }
-            else
-            {
-                _marketTabBtn.normalBgSprite = "ButtonMenu";
-                _portfolioTabBtn.normalBgSprite = "ButtonMenuFocused";
-            }
+            _marketTabBtn.normalBgSprite = _activeTab == 0 ? "ButtonMenuFocused" : "ButtonMenu";
+            _portfolioTabBtn.normalBgSprite = _activeTab == 1 ? "ButtonMenuFocused" : "ButtonMenu";
+            _cityDebtTabBtn.normalBgSprite = _activeTab == 2 ? "ButtonMenuFocused" : "ButtonMenu";
         }
 
         public override void OnDestroy()
