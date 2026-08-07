@@ -53,6 +53,7 @@ namespace MyFirstMod
         private UIButton _cityDebtTabBtn;
         private UIButton _sellAllBtn;
         private UIButton _buy1MBtn;
+        private UIButton _buy10MBtn;
         private int _activeTab;
 
         private UIPanel _listPanel;
@@ -197,6 +198,18 @@ namespace MyFirstMod
             _buy1MBtn.eventClick += OnBuy1MClick;
             _buy1MBtn.isVisible = false;
 
+            _buy10MBtn = AddUIComponent<UIButton>();
+            _buy10MBtn.size = new Vector2(135f, TAB_HEIGHT);
+            _buy10MBtn.relativePosition = new Vector3(WIDTH - 142f - 139f, tabY);
+            _buy10MBtn.text = "Buy 10x 10M 5yr";
+            _buy10MBtn.textScale = 0.75f;
+            _buy10MBtn.normalBgSprite = "ButtonMenu";
+            _buy10MBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _buy10MBtn.pressedBgSprite = "ButtonMenuPressed";
+            _buy10MBtn.disabledBgSprite = "ButtonMenuDisabled";
+            _buy10MBtn.eventClick += OnBuy10MClick;
+            _buy10MBtn.isVisible = false;
+
             _activeTab = 0;
             UpdateTabHighlights();
         }
@@ -340,6 +353,7 @@ namespace MyFirstMod
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = true;
+            _buy10MBtn.isVisible = true;
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
@@ -381,6 +395,7 @@ namespace MyFirstMod
             _sellAllBtn.isVisible = true;
             _sellAllBtn.isEnabled = engine.PortfolioCount > 0;
             _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
@@ -445,6 +460,7 @@ namespace MyFirstMod
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
             _scrollHintLabel.text = "";
 
             int templateCount = engine.IssueTemplateCount;
@@ -554,6 +570,18 @@ namespace MyFirstMod
                 RefreshData();
             else
                 Debug.Log("[MyFirstMod] Buy 10x 1M 5yr failed - not enough funds.");
+        }
+
+        private void OnBuy10MClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int bought = engine.Buy10x10MBonds();
+            if (bought > 0)
+                RefreshData();
+            else
+                Debug.Log("[MyFirstMod] Buy 10x 10M 5yr failed - not enough funds.");
         }
 
         private void OnSellAllClick(UIComponent component, UIMouseEventParameter eventParam)
