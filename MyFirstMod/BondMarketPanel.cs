@@ -310,7 +310,7 @@ namespace MyFirstMod
             if (count > MAX_ROWS) count = MAX_ROWS;
 
             float totalValue = 0f;
-            float totalPL = 0f;
+            float totalLifetimePL = 0f;
 
             for (int i = 0; i < MAX_ROWS; i++)
             {
@@ -318,14 +318,14 @@ namespace MyFirstMod
                 {
                     Bond b = _cachedBonds[i];
                     float price = _cachedPrices[i];
-                    float pl = price - b.PurchasePrice;
+                    float lifetimePL = (price + b.CouponsReceived) - b.PurchasePrice;
                     totalValue += price;
-                    totalPL += pl;
+                    totalLifetimePL += lifetimePL;
 
-                    string plStr = pl >= 0 ? "+" + pl.ToString("N0") : pl.ToString("N0");
+                    string plStr = lifetimePL >= 0 ? "+" + lifetimePL.ToString("N0") : lifetimePL.ToString("N0");
                     _infoLabels[i].text = string.Format(
-                        "{0}  Paid:{1:N0}  Per:{2}  P/L:{3}",
-                        b.Name, b.PurchasePrice, b.RemainingPeriods, plStr);
+                        "{0}  Paid:{1:N0}  Cpn:{2:N0}  P/L:{3}",
+                        b.Name, b.PurchasePrice, b.CouponsReceived, plStr);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
@@ -339,8 +339,8 @@ namespace MyFirstMod
                 }
             }
 
-            string totalPLStr = totalPL >= 0 ? "+" + totalPL.ToString("N0") : totalPL.ToString("N0");
-            _footerLabel.text = string.Format("Portfolio Value: {0:N0}  |  Total P/L: {1}  |  {2} bonds",
+            string totalPLStr = totalLifetimePL >= 0 ? "+" + totalLifetimePL.ToString("N0") : totalLifetimePL.ToString("N0");
+            _footerLabel.text = string.Format("Portfolio Value: {0:N0}  |  Lifetime P/L: {1}  |  {2} bonds",
                 totalValue, totalPLStr, engine.PortfolioCount);
         }
 

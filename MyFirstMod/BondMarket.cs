@@ -13,6 +13,7 @@ namespace MyFirstMod
         public int TotalPeriods;
         public int RemainingPeriods;
         public float PurchasePrice;
+        public float CouponsReceived;
 
         public Bond(string id, string name, float faceValue, float couponRate, int totalPeriods)
         {
@@ -23,6 +24,7 @@ namespace MyFirstMod
             TotalPeriods = totalPeriods;
             RemainingPeriods = totalPeriods;
             PurchasePrice = 0f;
+            CouponsReceived = 0f;
         }
     }
 

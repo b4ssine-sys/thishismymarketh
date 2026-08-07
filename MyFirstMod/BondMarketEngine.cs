@@ -158,7 +158,10 @@ namespace MyFirstMod
                         float couponPayment = (b.FaceValue * b.CouponRate) / BondPricing.PeriodsPerYear;
                         int couponInternal = (int)(couponPayment * INTERNAL_UNIT_SCALE);
                         if (couponInternal > 0)
+                        {
                             AddCashToCity(couponInternal);
+                            b.CouponsReceived += couponPayment;
+                        }
                     }
                 }
 
@@ -241,12 +244,12 @@ namespace MyFirstMod
             lock (_lock)
             {
                 _marketBonds.Clear();
-                _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.03f, 6));
-                _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.045f, 12));
-                _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.05f, 18));
-                _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.055f, 24));
-                _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.06f, 36));
-                _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.065f, 48));
+                _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.03f, 1));
+                _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.045f, 2));
+                _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.05f, 3));
+                _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.055f, 4));
+                _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.06f, 5));
+                _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.065f, 6));
             }
         }
 
@@ -260,7 +263,7 @@ namespace MyFirstMod
             };
             float[] faces = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f };
             float[] coupons = new float[] { 0.03f, 0.04f, 0.045f, 0.05f, 0.055f, 0.06f };
-            int[] periods = new int[] { 6, 12, 18, 24, 36 };
+            int[] periods = new int[] { 1, 2, 3, 4, 5, 6 };
 
             while (_marketBonds.Count < 6)
             {
