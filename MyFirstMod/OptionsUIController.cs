@@ -56,6 +56,7 @@ namespace MyFirstMod
         private UILabel _spotLabel;
         private UILabel _optionRowLabel;
         private UILabel _contractsLabel;
+        private UILabel _portfolioValueLabel;
         private UITextField _customQtyInput;
 
         private UIButton _btnQty1;
@@ -69,6 +70,7 @@ namespace MyFirstMod
 
         private int _selectedQuantity = 1;
         private int _ownedContractsCount = 0;
+        private float _totalPremiumPaid = 0f;   // cost basis of the held position
         private float _lastPremiumCalculated = 0f;
 
         private float _timer = 0f;
@@ -158,8 +160,10 @@ namespace MyFirstMod
             sellBtn.pressedBgSprite = "ButtonMenuPressed";
             sellBtn.eventClick += delegate { HandleTransaction(-1); };
 
-            _contractsLabel = CreateLabel(16f, 215f, 0.95f);
+            _contractsLabel = CreateLabel(16f, 200f, 0.95f);
             _contractsLabel.textColor = new Color32(140, 230, 140, 255);
+
+            _portfolioValueLabel = CreateLabel(16f, 222f, 0.85f);
 
             UIButton close = AddUIComponent<UIButton>();
             close.atlas = atlas;
@@ -253,7 +257,7 @@ namespace MyFirstMod
                 // No live economy to charge against (e.g. testing outside a loaded
                 // city). Track the position without a cash transfer instead of
                 // silently swallowing whatever error comes back from AddResource.
-                _ownedContractsCount += _selectedQuantity * direction;
+                ApplyPositionChange(direction);
                 Debug.LogWarning("[OptionsMarket] EconomyManager unavailable; position tracked without a cash transfer.");
                 Refresh();
                 return;
@@ -262,15 +266,36 @@ namespace MyFirstMod
             if (direction > 0)
             {
                 EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(-totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
-                _ownedContractsCount += _selectedQuantity;
             }
             else
             {
                 EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
-                _ownedContractsCount -= _selectedQuantity;
             }
 
+            ApplyPositionChange(direction);
             Refresh();
+        }
+
+        // Tracks quantity held and cost basis so Refresh() can show a live
+        // mark-to-market value against what was actually paid for the position.
+        private void ApplyPositionChange(int direction)
+        {
+            if (direction > 0)
+            {
+                _totalPremiumPaid += _lastPremiumCalculated * _selectedQuantity;
+                _ownedContractsCount += _selectedQuantity;
+            }
+            else
+            {
+                float avgCost = _ownedContractsCount > 0 ? _totalPremiumPaid / _ownedContractsCount : 0f;
+                _totalPremiumPaid -= avgCost * _selectedQuantity;
+                _ownedContractsCount -= _selectedQuantity;
+                if (_ownedContractsCount <= 0)
+                {
+                    _ownedContractsCount = 0;
+                    _totalPremiumPaid = 0f;
+                }
+            }
         }
 
         public void Refresh()
@@ -286,6 +311,16 @@ namespace MyFirstMod
             _lastPremiumCalculated = OptionPricing.Premium(c, spot, Vol, 0f, currentDay);
             _optionRowLabel.text = string.Format("TYPE: CALL | STRIKE: ${0:0.00} | PREMIUM: ${1:0.00}", strike, _lastPremiumCalculated);
             _contractsLabel.text = "YOUR ACTIVE PORTFOLIO: " + _ownedContractsCount + " Greasy Gasoline Call Contracts Held";
+
+            float liveValue = _ownedContractsCount * _lastPremiumCalculated;
+            float unrealizedPL = liveValue - _totalPremiumPaid;
+            _portfolioValueLabel.text = string.Format(
+                "LIVE VALUE: ${0:0.00} | COST BASIS: ${1:0.00} | UNREALIZED: {2}${3:0.00}",
+                liveValue, _totalPremiumPaid, unrealizedPL >= 0 ? "+" : "-", Math.Abs(unrealizedPL));
+            _portfolioValueLabel.textColor = unrealizedPL >= 0
+                ? new Color32(140, 230, 140, 255)
+                : new Color32(230, 120, 120, 255);
+
             BringToFront();
         }
 
