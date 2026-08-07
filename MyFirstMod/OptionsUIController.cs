@@ -256,12 +256,12 @@ namespace MyFirstMod
 
             if (direction > 0)
             {
-                EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(-totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None);
+                EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(-totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
                 _ownedContractsCount += _selectedQuantity;
             }
             else
             {
-                EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None);
+                EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
                 _ownedContractsCount -= _selectedQuantity;
             }
 
