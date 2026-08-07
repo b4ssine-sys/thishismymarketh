@@ -5,7 +5,6 @@ using UnityEngine;
 
 namespace MyFirstMod
 {
-    // Live investment price source + comprehensive reflection discovery for the Financial Districts DLC internals.
     public static class PriceFeed
     {
         private static readonly string[] Keywords = new string[]
@@ -24,11 +23,116 @@ namespace MyFirstMod
             "Oil"
         };
 
+        private static bool _resolved;
+        private static FieldInfo _cashField;
+        private static PropertyInfo _cashProp;
+        private static float _syntheticPrice = -1f;
+        private static long _prevCash = long.MinValue;
+
         public static float GetSpot(string underlyingId, float fallback, out bool isLive)
         {
             isLive = false;
-            // Real investment value reflection hook will be inserted here once its structural path is logged
-            return fallback;
+
+            if (!_resolved)
+            {
+                _resolved = true;
+                ResolveCashSource();
+            }
+
+            long currentCash = ReadCash();
+            if (currentCash == long.MinValue)
+                return fallback;
+
+            isLive = true;
+
+            if (_syntheticPrice < 0f)
+            {
+                _syntheticPrice = Math.Max(10f, (currentCash / 100f) / 5000f);
+                _prevCash = currentCash;
+                return (float)Math.Round(_syntheticPrice, 2);
+            }
+
+            long delta = currentCash - _prevCash;
+            _prevCash = currentCash;
+
+            float priceChange = (delta / 100f) / 200f;
+            priceChange = Math.Max(-5f, Math.Min(5f, priceChange));
+            _syntheticPrice = Math.Max(1f, _syntheticPrice + priceChange);
+
+            return (float)Math.Round(_syntheticPrice, 2);
+        }
+
+        private static long ReadCash()
+        {
+            try
+            {
+                if (EconomyManager.instance == null)
+                    return long.MinValue;
+
+                object val = null;
+                if (_cashField != null)
+                    val = _cashField.GetValue(EconomyManager.instance);
+                else if (_cashProp != null)
+                    val = _cashProp.GetValue(EconomyManager.instance, null);
+
+                if (val is long)
+                    return (long)val;
+                if (val is int)
+                    return (long)(int)val;
+            }
+            catch { }
+            return long.MinValue;
+        }
+
+        private static void ResolveCashSource()
+        {
+            try
+            {
+                Type t = typeof(EconomyManager);
+                BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+                string[] fieldNames = new string[] { "m_cashAmount", "m_totalCash", "cashAmount" };
+                for (int i = 0; i < fieldNames.Length; i++)
+                {
+                    FieldInfo f = t.GetField(fieldNames[i], flags);
+                    if (f != null && (f.FieldType == typeof(long) || f.FieldType == typeof(int)))
+                    {
+                        _cashField = f;
+                        Debug.Log("[MyFirstMod] PriceFeed: resolved cash field '" + fieldNames[i] + "'");
+                        return;
+                    }
+                }
+
+                string[] propNames = new string[] { "internalCashAmount", "LastCashAmount", "CashAmount" };
+                for (int i = 0; i < propNames.Length; i++)
+                {
+                    PropertyInfo p = t.GetProperty(propNames[i], flags);
+                    if (p != null && (p.PropertyType == typeof(long) || p.PropertyType == typeof(int)))
+                    {
+                        _cashProp = p;
+                        Debug.Log("[MyFirstMod] PriceFeed: resolved cash property '" + propNames[i] + "'");
+                        return;
+                    }
+                }
+
+                FieldInfo[] allFields = t.GetFields(flags);
+                for (int i = 0; i < allFields.Length; i++)
+                {
+                    if ((allFields[i].FieldType == typeof(long) || allFields[i].FieldType == typeof(int))
+                        && Contains(allFields[i].Name, "cash"))
+                    {
+                        _cashField = allFields[i];
+                        Debug.Log("[MyFirstMod] PriceFeed: found cash field by scan '" + allFields[i].Name + "'");
+                        return;
+                    }
+                }
+
+                Debug.LogWarning("[MyFirstMod] PriceFeed: no cash source found on EconomyManager; using fallback price.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[MyFirstMod] PriceFeed: ResolveCashSource failed: " + ex.Message);
+            }
         }
 
         public static void Discover()

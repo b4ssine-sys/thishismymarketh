@@ -218,7 +218,7 @@ namespace MyFirstMod
             _sellBtn.eventClick += delegate { HandleTransaction(-1); };
 
             _sellHintLabel = CreateLabel(0.8f);
-            _sellHintLabel.text = "(Selling beyond what you hold writes/shorts new calls)";
+            _sellHintLabel.text = "(Sell closes contracts from your current position)";
             _sellHintLabel.textColor = COLOR_NEUTRAL;
 
             _contractsLabel = CreateLabel(1.05f);
@@ -386,6 +386,15 @@ namespace MyFirstMod
 
         private void HandleTransaction(int direction)
         {
+            int effectiveQty = _selectedQuantity;
+
+            if (direction < 0)
+            {
+                if (_currentPosition.ContractsHeld <= 0)
+                    return;
+                effectiveQty = Math.Min(effectiveQty, _currentPosition.ContractsHeld);
+            }
+
             bool live;
             float currentSpot = PriceFeed.GetSpot(UnderlyingId, SampleSpot, out live);
 
@@ -395,17 +404,12 @@ namespace MyFirstMod
                 _currentPosition.ExpiryDays = CurrentDay() + _selectedExpiryDays;
             }
 
-            long totalCostScaled = (long)(_lastPremiumCalculated * 100f) * _selectedQuantity;
-            // Clamp before narrowing to int so an unusually large premium * quantity
-            // can't wrap around into a negative amount and hand out free cash.
+            long totalCostScaled = (long)(_lastPremiumCalculated * 100f) * effectiveQty;
             totalCostScaled = Math.Max(int.MinValue, Math.Min(int.MaxValue, totalCostScaled));
 
             if (EconomyManager.instance == null)
             {
-                // No live economy to charge against (e.g. testing outside a loaded
-                // city). Track the position without a cash transfer instead of
-                // silently swallowing whatever error comes back from AddResource.
-                ApplyPositionChange(direction, currentSpot);
+                ApplyPositionChange(direction, effectiveQty, currentSpot);
                 Debug.LogWarning("[OptionsMarket] EconomyManager unavailable; position tracked without a cash transfer.");
                 Refresh();
                 return;
@@ -420,7 +424,7 @@ namespace MyFirstMod
                 EconomyManager.instance.AddResource(EconomyManager.Resource.PublicIncome, (int)(totalCostScaled), ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.None);
             }
 
-            ApplyPositionChange(direction, currentSpot);
+            ApplyPositionChange(direction, effectiveQty, currentSpot);
             Refresh();
         }
 
@@ -430,9 +434,9 @@ namespace MyFirstMod
         // instead of the current quote, so the remaining open quantity keeps
         // an accurate cost basis. Crossing through zero closes the old side
         // and re-locks a fresh strike/expiry to open the new side.
-        private void ApplyPositionChange(int direction, float currentSpot)
+        private void ApplyPositionChange(int direction, int quantity, float currentSpot)
         {
-            int qtyDelta = direction * _selectedQuantity;
+            int qtyDelta = direction * quantity;
             bool sameSideOrFlat = _currentPosition.ContractsHeld == 0
                 || Math.Sign(_currentPosition.ContractsHeld) == Math.Sign(qtyDelta);
 
