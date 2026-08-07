@@ -58,6 +58,8 @@ namespace MyFirstMod
             "State Transit Auth", "Regional Water District", "County Health System",
             "Port Authority", "Clean Power Grid", "District School Board"
         };
+        private static readonly float[] MARKET_FACES = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
+        private static readonly int[] MARKET_PERIODS = new int[] { 4, 6, 8, 10, 12, 16 };
 
         public float GrossIncome { get { return _grossIncome; } }
         public float TotalExpenses { get { return _totalExpenses; } }
@@ -340,14 +342,11 @@ namespace MyFirstMod
 
         private void RegenerateBondsInternal()
         {
-            float[] faces = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
-            int[] periods = new int[] { 4, 6, 8, 10, 12, 16 };
-
             while (_marketBonds.Count < MIN_MARKET_BONDS)
             {
                 string issuer = MARKET_ISSUERS[_rng.Next(MARKET_ISSUERS.Length)];
-                float face = faces[_rng.Next(faces.Length)];
-                int term = periods[_rng.Next(periods.Length)];
+                float face = MARKET_FACES[_rng.Next(MARKET_FACES.Length)];
+                int term = MARKET_PERIODS[_rng.Next(MARKET_PERIODS.Length)];
 
                 float spread = (float)(_rng.NextDouble() * 0.02 - 0.005);
                 float coupon = _requiredYield + spread;
@@ -538,7 +537,7 @@ namespace MyFirstMod
             {
                 float face = 1000000000f;
                 float coupon = _requiredYield;
-                int periods = 12;
+                int periods = 60;
 
                 Bond b = MakeBond("Institutional Sovereign Note", face, coupon, periods);
                 float price = BondPricing.PresentValue(b, _requiredYield);
@@ -575,7 +574,8 @@ namespace MyFirstMod
                         break;
 
                     remaining -= priceInternal;
-                    TrySpendCash(priceInternal);
+                    if (!TrySpendCash(priceInternal))
+                        break;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
@@ -606,7 +606,8 @@ namespace MyFirstMod
                         break;
 
                     remaining -= priceInternal;
-                    TrySpendCash(priceInternal);
+                    if (!TrySpendCash(priceInternal))
+                        break;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
