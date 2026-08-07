@@ -29,7 +29,7 @@ namespace MyFirstMod
             _panel = (OptionsPanel)view.AddUIComponent(typeof(OptionsPanel));
             _toggleButton = (OptionsToggleButton)view.AddUIComponent(typeof(OptionsToggleButton));
 
-            Debug.Log("[MyFirstMod] Click the MKT button to open the options window.");
+            Debug.Log("[MyFirstMod] Click the coin icon (top-left) to open the options window.");
         }
 
         public override void OnLevelUnloading()

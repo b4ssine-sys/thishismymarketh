@@ -5,7 +5,7 @@ using MyFirstMod.Options;
 
 namespace MyFirstMod
 {
-    // ON-SCREEN VISUAL TOGGLE BUTTON (Floating "MKT" Icon)
+    // ON-SCREEN VISUAL TOGGLE BUTTON (small top-left icon)
     public class OptionsToggleButton : UIButton
     {
         public override void Start()
@@ -16,17 +16,22 @@ namespace MyFirstMod
             this.atlas = view.defaultAtlas;
             this.font = view.defaultFont;
 
-            this.text = "MKT";
-            this.textScale = 0.9f;
-            this.width = 45f;
-            this.height = 45f;
+            this.width = 32f;
+            this.height = 32f;
 
-            // Anchored directly on the lower left of your screen above the toolbar
-            this.relativePosition = new Vector3(16f, view.fixedHeight - 110f);
+            // Top-left corner, stacked under the game's own small icon badges there.
+            this.relativePosition = new Vector3(10f, 100f);
 
             this.normalBgSprite = "ButtonMenu";
             this.hoveredBgSprite = "ButtonMenuHovered";
             this.pressedBgSprite = "ButtonMenuPressed";
+
+            // Money icon from the game's own atlas (used by the Economy info view).
+            // If this renders as a blank square in your build, the sprite name
+            // differs on your game version - tell me and I'll swap it.
+            this.normalFgSprite = "InfoIconMoney";
+            this.hoveredFgSprite = "InfoIconMoneyHovered";
+            this.pressedFgSprite = "InfoIconMoneyPressed";
 
             this.eventClick += delegate (UIComponent component, UIMouseEventParameter param)
             {
