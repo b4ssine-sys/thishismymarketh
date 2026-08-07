@@ -25,11 +25,7 @@ namespace MyFirstMod
 
             Debug.Log("[MyFirstMod] Level loaded - mod is active.");
 
-            // One-time diagnostic: dumps any Investment/Market/Company-related
-            // types found in the loaded assemblies to the Debug Output panel.
-            // PriceFeed.GetSpot is still a stub (always returns the sample
-            // price) until this dump tells us the real class/field names to
-            // hard-code a live lookup against.
+            PriceFeed.SetEconomy(managers.economy);
             PriceFeed.Discover();
 
             UIView view = UIView.GetAView();
@@ -42,6 +38,7 @@ namespace MyFirstMod
         public override void OnLevelUnloading()
         {
             base.OnLevelUnloading();
+            PriceFeed.SetEconomy(null);
 
             if (_toggleButton != null)
             {
