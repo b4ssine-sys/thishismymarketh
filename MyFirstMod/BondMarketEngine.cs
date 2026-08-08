@@ -37,6 +37,12 @@ namespace MyFirstMod
         private int _totalDefaults;
         private float _realizedPL;
 
+        private const int MAX_ACTIVE_SWAPS = 5;
+        private readonly List<InterestRateSwap> _activeSwaps = new List<InterestRateSwap>();
+        private int _nextSwapId;
+        private float _revenueVolatility;
+        private float _swapPL;
+
         private float _grossIncome;
         private float _totalExpenses;
         private float _debtBurden;
@@ -80,6 +86,25 @@ namespace MyFirstMod
 
         public int PortfolioCount { get { lock (_lock) { return _portfolioBonds.Count; } } }
         public int MarketCount { get { lock (_lock) { return _marketBonds.Count; } } }
+
+        public float RevenueVolatility { get { return _revenueVolatility; } }
+        public float SwapPL { get { return _swapPL; } }
+        public int SwapCount { get { lock (_lock) { return _activeSwaps.Count; } } }
+        public int MaxActiveSwaps { get { return MAX_ACTIVE_SWAPS; } }
+
+        public float TotalHedgedNotional
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float total = 0f;
+                    for (int i = 0; i < _activeSwaps.Count; i++)
+                        total += _activeSwaps[i].NotionalAmount;
+                    return total;
+                }
+            }
+        }
 
         public bool CanIssueBonds
         {
@@ -230,6 +255,29 @@ namespace MyFirstMod
             float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
             _requiredYield = baseYield + defaultSpike;
             if (_requiredYield > 0.50f) _requiredYield = 0.50f;
+
+            float avgPositiveFlow = totalPositive / WINDOW_SIZE;
+            if (avgPositiveFlow > 0f)
+            {
+                float mean = 0f;
+                for (int i = 0; i < WINDOW_SIZE; i++)
+                    mean += _cashFlowHistory[i];
+                mean /= WINDOW_SIZE;
+
+                float sumSqDiff = 0f;
+                for (int i = 0; i < WINDOW_SIZE; i++)
+                {
+                    float diff = _cashFlowHistory[i] - mean;
+                    sumSqDiff += diff * diff;
+                }
+                float stddev = (float)Math.Sqrt(sumSqDiff / WINDOW_SIZE);
+                _revenueVolatility = stddev / avgPositiveFlow;
+                if (_revenueVolatility > 2f) _revenueVolatility = 2f;
+            }
+            else
+            {
+                _revenueVolatility = 0f;
+            }
         }
 
         private float CalculateActiveDebtService()
@@ -279,6 +327,7 @@ namespace MyFirstMod
             }
 
             ServiceIssuedBondsInternal();
+            SettleSwapsInternal();
 
             if (_defaultPenalty > 0)
             {
@@ -327,6 +376,48 @@ namespace MyFirstMod
         {
             _defaultPenalty += 3;
             _totalDefaults++;
+        }
+
+        private void SettleSwapsInternal()
+        {
+            float floatingRate = _benchmarkRate;
+
+            for (int i = _activeSwaps.Count - 1; i >= 0; i--)
+            {
+                InterestRateSwap swap = _activeSwaps[i];
+                swap.RemainingPeriods--;
+
+                float netPayment;
+                if (swap.PayFixed)
+                    netPayment = (floatingRate - swap.FixedRate) * swap.NotionalAmount / BondPricing.PeriodsPerYear;
+                else
+                    netPayment = (swap.FixedRate - floatingRate) * swap.NotionalAmount / BondPricing.PeriodsPerYear;
+
+                if (netPayment > 0f)
+                {
+                    long cashInternal = (long)(netPayment * INTERNAL_UNIT_SCALE);
+                    if (cashInternal > 0)
+                        AddCashToCity(cashInternal);
+                }
+                else if (netPayment < 0f)
+                {
+                    long cashInternal = (long)(-netPayment * INTERNAL_UNIT_SCALE);
+                    if (cashInternal > 0 && !TrySpendCash(cashInternal))
+                    {
+                        _activeSwaps.RemoveAt(i);
+                        continue;
+                    }
+                }
+
+                swap.LastSettlement = netPayment;
+                swap.CumulativePL += netPayment;
+                _swapPL += netPayment;
+
+                if (swap.RemainingPeriods <= 0)
+                {
+                    _activeSwaps.RemoveAt(i);
+                }
+            }
         }
 
         private void GenerateInitialBondsInternal()
@@ -416,6 +507,10 @@ namespace MyFirstMod
             _rating = CreditRating.AAA;
             _benchmarkRate = 0f;
             _requiredYield = 0f;
+            _activeSwaps.Clear();
+            _nextSwapId = 0;
+            _revenueVolatility = 0f;
+            _swapPL = 0f;
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -645,6 +740,120 @@ namespace MyFirstMod
                     bought++;
                 }
                 return bought;
+            }
+        }
+
+        public bool EnterSwap(float notional, float fixedRate, int periods, bool payFixed)
+        {
+            lock (_lock)
+            {
+                if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
+                    return false;
+                if (notional <= 0f || periods <= 0)
+                    return false;
+
+                _nextSwapId++;
+                InterestRateSwap swap = new InterestRateSwap(
+                    "SW" + _nextSwapId.ToString(), notional, fixedRate, periods, payFixed);
+                _activeSwaps.Add(swap);
+                return true;
+            }
+        }
+
+        public bool TerminateSwap(int index)
+        {
+            lock (_lock)
+            {
+                if (index < 0 || index >= _activeSwaps.Count)
+                    return false;
+                _activeSwaps.RemoveAt(index);
+                return true;
+            }
+        }
+
+        public int TerminateAllSwaps()
+        {
+            lock (_lock)
+            {
+                int count = _activeSwaps.Count;
+                _activeSwaps.Clear();
+                return count;
+            }
+        }
+
+        public bool AutoHedge()
+        {
+            lock (_lock)
+            {
+                if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
+                    return false;
+                if (_issuedBonds.Count == 0)
+                    return false;
+
+                float totalDebtFace = 0f;
+                float weightedPeriods = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                {
+                    totalDebtFace += _issuedBonds[i].FaceValue;
+                    weightedPeriods += _issuedBonds[i].FaceValue * _issuedBonds[i].RemainingPeriods;
+                }
+
+                float hedgedNotional = 0f;
+                for (int i = 0; i < _activeSwaps.Count; i++)
+                    hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+                float unhedged = totalDebtFace - hedgedNotional;
+                if (unhedged <= 0f)
+                    return false;
+
+                int avgPeriods = totalDebtFace > 0f
+                    ? (int)(weightedPeriods / totalDebtFace)
+                    : 60;
+                if (avgPeriods < 6) avgPeriods = 6;
+
+                _nextSwapId++;
+                InterestRateSwap swap = new InterestRateSwap(
+                    "SW" + _nextSwapId.ToString(), unhedged, _requiredYield, avgPeriods, true);
+                _activeSwaps.Add(swap);
+                return true;
+            }
+        }
+
+        public string CalculateRecommendedHedge()
+        {
+            lock (_lock)
+            {
+                if (_issuedBonds.Count == 0)
+                    return "No debt to hedge";
+
+                float totalDebtFace = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    totalDebtFace += _issuedBonds[i].FaceValue;
+
+                float hedgedNotional = 0f;
+                for (int i = 0; i < _activeSwaps.Count; i++)
+                    hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+                float unhedged = totalDebtFace - hedgedNotional;
+                float hedgeRatio = totalDebtFace > 0f ? hedgedNotional / totalDebtFace : 0f;
+
+                if (hedgeRatio >= 1.0f)
+                    return "Fully hedged";
+                if (_revenueVolatility > 0.5f && hedgeRatio < 0.5f)
+                    return string.Format("HIGH RISK: Hedge {0:N0} ({1:F0}% exposed)", unhedged, (1f - hedgeRatio) * 100f);
+                if (unhedged > 0f)
+                    return string.Format("Recommend: Hedge {0:N0} unhedged", unhedged);
+                return "Position balanced";
+            }
+        }
+
+        public void GetActiveSwapsSnapshot(List<InterestRateSwap> outSwaps)
+        {
+            outSwaps.Clear();
+            lock (_lock)
+            {
+                for (int i = 0; i < _activeSwaps.Count; i++)
+                    outSwaps.Add(_activeSwaps[i]);
             }
         }
     }

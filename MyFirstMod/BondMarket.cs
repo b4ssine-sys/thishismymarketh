@@ -28,6 +28,30 @@ namespace MyFirstMod
         }
     }
 
+    public class InterestRateSwap
+    {
+        public string Id;
+        public float NotionalAmount;
+        public float FixedRate;
+        public int TotalPeriods;
+        public int RemainingPeriods;
+        public bool PayFixed;
+        public float CumulativePL;
+        public float LastSettlement;
+
+        public InterestRateSwap(string id, float notional, float fixedRate, int totalPeriods, bool payFixed)
+        {
+            Id = id;
+            NotionalAmount = notional;
+            FixedRate = fixedRate;
+            TotalPeriods = totalPeriods;
+            RemainingPeriods = totalPeriods;
+            PayFixed = payFixed;
+            CumulativePL = 0f;
+            LastSettlement = 0f;
+        }
+    }
+
     public static class BondPricing
     {
         public const int PeriodsPerYear = 12;
