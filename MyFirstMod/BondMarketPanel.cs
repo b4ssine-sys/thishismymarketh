@@ -75,6 +75,7 @@ namespace MyFirstMod
         private readonly List<Bond> _cachedBonds = new List<Bond>();
         private readonly List<float> _cachedPrices = new List<float>();
         private readonly List<InterestRateSwap> _cachedSwaps = new List<InterestRateSwap>();
+        private readonly List<Bond> _cachedIssuedBonds = new List<Bond>();
 
         private UIButton _hedgingTabBtn;
         private UIButton _autoHedgeBtn;
@@ -570,22 +571,44 @@ namespace MyFirstMod
             _pay25Btn.isEnabled = hasDebt;
             _pay50Btn.isVisible = hasDebt;
             _pay50Btn.isEnabled = hasDebt;
-            _scrollHintLabel.text = "";
 
+            engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
+            int issuedCount = _cachedIssuedBonds.Count;
             int templateCount = engine.IssueTemplateCount;
+            int totalItems = issuedCount + templateCount;
             bool canIssue = engine.CanIssueBonds;
             float yieldPct = engine.RequiredYield * 100f;
 
+            int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
+
             for (int i = 0; i < MAX_ROWS; i++)
             {
-                if (i < templateCount)
+                int itemIdx = _scrollOffset + i;
+                if (itemIdx < issuedCount)
                 {
-                    string tName = engine.GetTemplateName(i);
-                    float tFace = engine.GetTemplateFace(i);
-                    int tPeriods = engine.GetTemplatePeriods(i);
-                    float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
+                    Bond ib = _cachedIssuedBonds[itemIdx];
+                    int monthsLeft = ib.RemainingPeriods;
+                    float perPeriodCoupon = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
+                    _infoLabels[i].text = string.Format(
+                        "{0}   {1:N0}   {2:F1}%   {3}mo left   Paid: {4:N0}",
+                        ib.Name, ib.FaceValue, ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
+                    _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
+                    _actionButtons[i].text = "Repay";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = true;
+                }
+                else if (itemIdx < totalItems)
+                {
+                    int tIdx = itemIdx - issuedCount;
+                    string tName = engine.GetTemplateName(tIdx);
+                    float tFace = engine.GetTemplateFace(tIdx);
+                    int tPeriods = engine.GetTemplatePeriods(tIdx);
+                    float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
                     int years = tPeriods / 12;
+
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0}   {2:F1}%   {3}yr   {4:N0}/per",
                         tName, tFace, yieldPct, years, perPeriodCoupon);
@@ -602,7 +625,10 @@ namespace MyFirstMod
                 }
             }
 
-            if (!canIssue && engine.Rating == CreditRating.D)
+            if (totalItems > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
+            else if (!canIssue && engine.Rating == CreditRating.D)
                 _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
             else if (!canIssue)
                 _scrollHintLabel.text = string.Format("MAX CAPACITY ({0}/{0}) - REPAY EXISTING DEBT FIRST",
@@ -686,11 +712,17 @@ namespace MyFirstMod
 
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
-            if (_activeTab != 1 && _activeTab != 3) return;
+            if (_activeTab != 1 && _activeTab != 2 && _activeTab != 3) return;
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            int totalItems = _activeTab == 1 ? engine.PortfolioCount : engine.SwapCount;
+            int totalItems;
+            if (_activeTab == 1)
+                totalItems = engine.PortfolioCount;
+            else if (_activeTab == 2)
+                totalItems = engine.IssuedCount + engine.IssueTemplateCount;
+            else
+                totalItems = engine.SwapCount;
             int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
             if (eventParam.wheelDelta < 0f)
                 _scrollOffset = Math.Min(maxOffset, _scrollOffset + 1);
@@ -719,10 +751,30 @@ namespace MyFirstMod
             }
             else if (_activeTab == 2)
             {
-                if (engine.IssueBond(index))
-                    RefreshData();
+                int itemIdx = _scrollOffset + index;
+                int issuedCount = _cachedIssuedBonds.Count;
+
+                if (itemIdx < issuedCount)
+                {
+                    if (engine.RepaySingleBond(itemIdx))
+                    {
+                        int totalItems = engine.IssuedCount + engine.IssueTemplateCount;
+                        int maxOff = Math.Max(0, totalItems - MAX_ROWS);
+                        if (_scrollOffset > maxOff)
+                            _scrollOffset = maxOff;
+                        RefreshData();
+                    }
+                    else
+                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds.");
+                }
                 else
-                    Debug.Log("[MyFirstMod] Cannot issue bond - at capacity or rating D.");
+                {
+                    int templateIdx = itemIdx - issuedCount;
+                    if (engine.IssueBond(templateIdx))
+                        RefreshData();
+                    else
+                        Debug.Log("[MyFirstMod] Cannot issue bond - at capacity or rating D.");
+                }
             }
             else if (_activeTab == 3)
             {

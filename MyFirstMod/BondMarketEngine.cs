@@ -856,5 +856,32 @@ namespace MyFirstMod
                     outSwaps.Add(_activeSwaps[i]);
             }
         }
+
+        public void GetIssuedBondsSnapshot(List<Bond> outBonds)
+        {
+            outBonds.Clear();
+            lock (_lock)
+            {
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    outBonds.Add(_issuedBonds[i]);
+            }
+        }
+
+        public bool RepaySingleBond(int issuedIndex)
+        {
+            lock (_lock)
+            {
+                if (issuedIndex < 0 || issuedIndex >= _issuedBonds.Count)
+                    return false;
+
+                Bond ib = _issuedBonds[issuedIndex];
+                long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                if (!TrySpendCash(faceInternal))
+                    return false;
+
+                _issuedBonds.RemoveAt(issuedIndex);
+                return true;
+            }
+        }
     }
 }
