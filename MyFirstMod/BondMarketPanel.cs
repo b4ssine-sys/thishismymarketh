@@ -207,9 +207,9 @@ namespace MyFirstMod
             _sellAllBtn.isVisible = false;
 
             _buy1MBtn = AddUIComponent<UIButton>();
-            _buy1MBtn.size = new Vector2(130f, TAB_HEIGHT);
-            _buy1MBtn.relativePosition = new Vector3(WIDTH - 142f, tabY);
-            _buy1MBtn.text = "Buy 10x 1M 5yr";
+            _buy1MBtn.size = new Vector2(105f, TAB_HEIGHT);
+            _buy1MBtn.relativePosition = new Vector3(WIDTH - 117f, tabY);
+            _buy1MBtn.text = "10x 1M 5yr";
             _buy1MBtn.textScale = 0.75f;
             _buy1MBtn.normalBgSprite = "ButtonMenu";
             _buy1MBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -219,9 +219,9 @@ namespace MyFirstMod
             _buy1MBtn.isVisible = false;
 
             _buy10MBtn = AddUIComponent<UIButton>();
-            _buy10MBtn.size = new Vector2(135f, TAB_HEIGHT);
-            _buy10MBtn.relativePosition = new Vector3(WIDTH - 142f - 139f, tabY);
-            _buy10MBtn.text = "Buy 10x 10M 5yr";
+            _buy10MBtn.size = new Vector2(105f, TAB_HEIGHT);
+            _buy10MBtn.relativePosition = new Vector3(WIDTH - 226f, tabY);
+            _buy10MBtn.text = "10x 10M 5yr";
             _buy10MBtn.textScale = 0.75f;
             _buy10MBtn.normalBgSprite = "ButtonMenu";
             _buy10MBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -231,8 +231,8 @@ namespace MyFirstMod
             _buy10MBtn.isVisible = false;
 
             _buy1BBtn = AddUIComponent<UIButton>();
-            _buy1BBtn.size = new Vector2(110f, TAB_HEIGHT);
-            _buy1BBtn.relativePosition = new Vector3(WIDTH - 142f - 139f - 114f, tabY);
+            _buy1BBtn.size = new Vector2(90f, TAB_HEIGHT);
+            _buy1BBtn.relativePosition = new Vector3(WIDTH - 320f, tabY);
             _buy1BBtn.text = "Buy 1B 5yr";
             _buy1BBtn.textScale = 0.75f;
             _buy1BBtn.normalBgSprite = "ButtonMenu";
