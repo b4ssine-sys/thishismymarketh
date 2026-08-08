@@ -51,7 +51,7 @@ namespace MyFirstMod
             "Emergency Note", "Municipal Note", "Revenue Bond", "Infrastructure Bond", "Capital Bond"
         };
         private static readonly float[] ISSUE_FACES = new float[] { 25000f, 75000f, 200000f, 400000f, 750000f };
-        private static readonly int[] ISSUE_PERIODS = new int[] { 4, 6, 8, 10, 12 };
+        private static readonly int[] ISSUE_PERIODS = new int[] { 24, 36, 60, 84, 120 };
 
         private static readonly string[] MARKET_ISSUERS = new string[]
         {
@@ -528,6 +528,38 @@ namespace MyFirstMod
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
                 _issuedBonds.Add(ib);
                 return true;
+            }
+        }
+
+        public int PayDebtPercent(float percent)
+        {
+            lock (_lock)
+            {
+                if (_issuedBonds.Count == 0)
+                    return 0;
+
+                float totalFace = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    totalFace += _issuedBonds[i].FaceValue;
+
+                float budget = totalFace * percent;
+                int retired = 0;
+
+                for (int i = _issuedBonds.Count - 1; i >= 0; i--)
+                {
+                    Bond ib = _issuedBonds[i];
+                    if (ib.FaceValue > budget)
+                        continue;
+
+                    long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                    if (!TrySpendCash(faceInternal))
+                        continue;
+
+                    budget -= ib.FaceValue;
+                    _issuedBonds.RemoveAt(i);
+                    retired++;
+                }
+                return retired;
             }
         }
 

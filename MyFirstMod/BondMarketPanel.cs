@@ -55,6 +55,8 @@ namespace MyFirstMod
         private UIButton _buy1MBtn;
         private UIButton _buy10MBtn;
         private UIButton _buy1BBtn;
+        private UIButton _pay25Btn;
+        private UIButton _pay50Btn;
         private int _activeTab;
 
         private UIPanel _listPanel;
@@ -223,6 +225,30 @@ namespace MyFirstMod
             _buy1BBtn.eventClick += OnBuy1BClick;
             _buy1BBtn.isVisible = false;
 
+            _pay50Btn = AddUIComponent<UIButton>();
+            _pay50Btn.size = new Vector2(90f, TAB_HEIGHT);
+            _pay50Btn.relativePosition = new Vector3(WIDTH - 102f, tabY);
+            _pay50Btn.text = "Pay 50%";
+            _pay50Btn.textScale = 0.8f;
+            _pay50Btn.normalBgSprite = "ButtonMenu";
+            _pay50Btn.hoveredBgSprite = "ButtonMenuHovered";
+            _pay50Btn.pressedBgSprite = "ButtonMenuPressed";
+            _pay50Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _pay50Btn.eventClick += OnPay50Click;
+            _pay50Btn.isVisible = false;
+
+            _pay25Btn = AddUIComponent<UIButton>();
+            _pay25Btn.size = new Vector2(90f, TAB_HEIGHT);
+            _pay25Btn.relativePosition = new Vector3(WIDTH - 196f, tabY);
+            _pay25Btn.text = "Pay 25%";
+            _pay25Btn.textScale = 0.8f;
+            _pay25Btn.normalBgSprite = "ButtonMenu";
+            _pay25Btn.hoveredBgSprite = "ButtonMenuHovered";
+            _pay25Btn.pressedBgSprite = "ButtonMenuPressed";
+            _pay25Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _pay25Btn.eventClick += OnPay25Click;
+            _pay25Btn.isVisible = false;
+
             _activeTab = 0;
             UpdateTabHighlights();
         }
@@ -368,6 +394,8 @@ namespace MyFirstMod
             _buy1MBtn.isVisible = true;
             _buy10MBtn.isVisible = true;
             _buy1BBtn.isVisible = true;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
@@ -411,6 +439,8 @@ namespace MyFirstMod
             _buy1MBtn.isVisible = false;
             _buy10MBtn.isVisible = false;
             _buy1BBtn.isVisible = false;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
@@ -477,6 +507,11 @@ namespace MyFirstMod
             _buy1MBtn.isVisible = false;
             _buy10MBtn.isVisible = false;
             _buy1BBtn.isVisible = false;
+            bool hasDebt = engine.IssuedCount > 0;
+            _pay25Btn.isVisible = hasDebt;
+            _pay25Btn.isEnabled = hasDebt;
+            _pay50Btn.isVisible = hasDebt;
+            _pay50Btn.isEnabled = hasDebt;
             _scrollHintLabel.text = "";
 
             int templateCount = engine.IssueTemplateCount;
@@ -492,9 +527,10 @@ namespace MyFirstMod
                     int tPeriods = engine.GetTemplatePeriods(i);
                     float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
 
+                    int years = tPeriods / 12;
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:N0}   {2:F1}%   {3} per   {4:N0}/per",
-                        tName, tFace, yieldPct, tPeriods, perPeriodCoupon);
+                        "{0}   {1:N0}   {2:F1}%   {3}yr   {4:N0}/per",
+                        tName, tFace, yieldPct, years, perPeriodCoupon);
                     _priceLabels[i].text = string.Format("{0:N0}", tFace);
                     _actionButtons[i].text = "Issue";
                     _actionButtons[i].isVisible = true;
@@ -620,6 +656,28 @@ namespace MyFirstMod
             _scrollOffset = 0;
             if (sold > 0)
                 Debug.Log("[MyFirstMod] Sold all " + sold.ToString() + " bonds");
+            RefreshData();
+        }
+
+        private void OnPay25Click(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int retired = engine.PayDebtPercent(0.25f);
+            if (retired > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + retired.ToString() + " bonds (25% target)");
+            RefreshData();
+        }
+
+        private void OnPay50Click(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int retired = engine.PayDebtPercent(0.50f);
+            if (retired > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + retired.ToString() + " bonds (50% target)");
             RefreshData();
         }
 
