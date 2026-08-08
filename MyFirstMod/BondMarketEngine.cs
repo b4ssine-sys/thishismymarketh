@@ -106,6 +106,31 @@ namespace MyFirstMod
             }
         }
 
+        public float TotalDebtFace
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float total = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                        total += _issuedBonds[i].FaceValue;
+                    return total;
+                }
+            }
+        }
+
+        public float OverHedgeRatio
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return CalculateOverHedgeRatioInternal();
+                }
+            }
+        }
+
         public bool CanIssueBonds
         {
             get
@@ -251,6 +276,14 @@ namespace MyFirstMod
             if (_benchmarkRate < 0.01f) _benchmarkRate = 0.01f;
             if (_benchmarkRate > 0.15f) _benchmarkRate = 0.15f;
 
+            float overHedgeR = CalculateOverHedgeRatioInternal();
+            if (overHedgeR > 0f)
+            {
+                float ohPenalty = overHedgeR * 0.04f;
+                if (ohPenalty > 0.10f) ohPenalty = 0.10f;
+                _benchmarkRate += ohPenalty;
+            }
+
             float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
             float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
             _requiredYield = baseYield + defaultSpike;
@@ -278,6 +311,23 @@ namespace MyFirstMod
             {
                 _revenueVolatility = 0f;
             }
+        }
+
+        private float CalculateOverHedgeRatioInternal()
+        {
+            float totalDebtFace = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                totalDebtFace += _issuedBonds[i].FaceValue;
+
+            float hedgedNotional = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+            if (hedgedNotional <= totalDebtFace)
+                return 0f;
+            if (totalDebtFace <= 0f)
+                return hedgedNotional > 0f ? 2f : 0f;
+            return (hedgedNotional - totalDebtFace) / totalDebtFace;
         }
 
         private float CalculateActiveDebtService()
@@ -781,6 +831,58 @@ namespace MyFirstMod
             }
         }
 
+        public bool SellSwapTranche(int index, float fraction)
+        {
+            lock (_lock)
+            {
+                if (index < 0 || index >= _activeSwaps.Count)
+                    return false;
+                if (fraction <= 0f || fraction > 1f)
+                    return false;
+
+                InterestRateSwap swap = _activeSwaps[index];
+
+                if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
+                {
+                    _activeSwaps.RemoveAt(index);
+                    return true;
+                }
+
+                float remainFraction = 1f - fraction;
+                swap.NotionalAmount *= remainFraction;
+                swap.CumulativePL *= remainFraction;
+                return true;
+            }
+        }
+
+        public int SellAllSwapsTranche(float fraction)
+        {
+            lock (_lock)
+            {
+                if (fraction <= 0f || fraction > 1f)
+                    return 0;
+
+                int affected = 0;
+                for (int i = _activeSwaps.Count - 1; i >= 0; i--)
+                {
+                    InterestRateSwap swap = _activeSwaps[i];
+
+                    if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
+                    {
+                        _activeSwaps.RemoveAt(i);
+                    }
+                    else
+                    {
+                        float remainFraction = 1f - fraction;
+                        swap.NotionalAmount *= remainFraction;
+                        swap.CumulativePL *= remainFraction;
+                    }
+                    affected++;
+                }
+                return affected;
+            }
+        }
+
         public bool AutoHedge()
         {
             lock (_lock)
@@ -823,9 +925,6 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                if (_issuedBonds.Count == 0)
-                    return "No debt to hedge";
-
                 float totalDebtFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
                     totalDebtFace += _issuedBonds[i].FaceValue;
@@ -833,6 +932,17 @@ namespace MyFirstMod
                 float hedgedNotional = 0f;
                 for (int i = 0; i < _activeSwaps.Count; i++)
                     hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+                float overHedgeR = CalculateOverHedgeRatioInternal();
+                if (overHedgeR > 0f)
+                {
+                    float penalty = overHedgeR * 4f;
+                    if (penalty > 10f) penalty = 10f;
+                    return string.Format("OVER-HEDGED {0:F0}%  Rate +{1:F1}%", overHedgeR * 100f, penalty);
+                }
+
+                if (_issuedBonds.Count == 0 && _activeSwaps.Count == 0)
+                    return "No debt to hedge";
 
                 float unhedged = totalDebtFace - hedgedNotional;
                 float hedgeRatio = totalDebtFace > 0f ? hedgedNotional / totalDebtFace : 0f;

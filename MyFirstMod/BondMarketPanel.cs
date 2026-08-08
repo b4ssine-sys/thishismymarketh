@@ -79,6 +79,8 @@ namespace MyFirstMod
 
         private UIButton _hedgingTabBtn;
         private UIButton _autoHedgeBtn;
+        private UIButton _sell25SwapsBtn;
+        private UIButton _sell50SwapsBtn;
         private UIButton _exitAllSwapsBtn;
 
         public override void Start()
@@ -267,10 +269,10 @@ namespace MyFirstMod
             _pay25Btn.isVisible = false;
 
             _autoHedgeBtn = AddUIComponent<UIButton>();
-            _autoHedgeBtn.size = new Vector2(110f, TAB_HEIGHT);
-            _autoHedgeBtn.relativePosition = new Vector3(WIDTH - 122f, tabY);
+            _autoHedgeBtn.size = new Vector2(95f, TAB_HEIGHT);
+            _autoHedgeBtn.relativePosition = new Vector3(WIDTH - 314f, tabY);
             _autoHedgeBtn.text = "Auto-Hedge";
-            _autoHedgeBtn.textScale = 0.8f;
+            _autoHedgeBtn.textScale = 0.75f;
             _autoHedgeBtn.normalBgSprite = "ButtonMenu";
             _autoHedgeBtn.hoveredBgSprite = "ButtonMenuHovered";
             _autoHedgeBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -278,11 +280,35 @@ namespace MyFirstMod
             _autoHedgeBtn.eventClick += OnAutoHedgeClick;
             _autoHedgeBtn.isVisible = false;
 
+            _sell25SwapsBtn = AddUIComponent<UIButton>();
+            _sell25SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
+            _sell25SwapsBtn.relativePosition = new Vector3(WIDTH - 215f, tabY);
+            _sell25SwapsBtn.text = "Sell 25%";
+            _sell25SwapsBtn.textScale = 0.75f;
+            _sell25SwapsBtn.normalBgSprite = "ButtonMenu";
+            _sell25SwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _sell25SwapsBtn.pressedBgSprite = "ButtonMenuPressed";
+            _sell25SwapsBtn.disabledBgSprite = "ButtonMenuDisabled";
+            _sell25SwapsBtn.eventClick += OnSell25SwapsClick;
+            _sell25SwapsBtn.isVisible = false;
+
+            _sell50SwapsBtn = AddUIComponent<UIButton>();
+            _sell50SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
+            _sell50SwapsBtn.relativePosition = new Vector3(WIDTH - 146f, tabY);
+            _sell50SwapsBtn.text = "Sell 50%";
+            _sell50SwapsBtn.textScale = 0.75f;
+            _sell50SwapsBtn.normalBgSprite = "ButtonMenu";
+            _sell50SwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _sell50SwapsBtn.pressedBgSprite = "ButtonMenuPressed";
+            _sell50SwapsBtn.disabledBgSprite = "ButtonMenuDisabled";
+            _sell50SwapsBtn.eventClick += OnSell50SwapsClick;
+            _sell50SwapsBtn.isVisible = false;
+
             _exitAllSwapsBtn = AddUIComponent<UIButton>();
-            _exitAllSwapsBtn.size = new Vector2(90f, TAB_HEIGHT);
-            _exitAllSwapsBtn.relativePosition = new Vector3(WIDTH - 122f - 94f, tabY);
+            _exitAllSwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
+            _exitAllSwapsBtn.relativePosition = new Vector3(WIDTH - 77f, tabY);
             _exitAllSwapsBtn.text = "Exit All";
-            _exitAllSwapsBtn.textScale = 0.8f;
+            _exitAllSwapsBtn.textScale = 0.75f;
             _exitAllSwapsBtn.normalBgSprite = "ButtonMenu";
             _exitAllSwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
             _exitAllSwapsBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -412,12 +438,27 @@ namespace MyFirstMod
             else if (_activeTab == 3)
             {
                 float volPct = engine.RevenueVolatility * 100f;
-                _summaryLabel.text = string.Format(
-                    "Floating Rate: {0:F1}%  |  Volatility: {1:F1}%  |  Swaps: {2}/{3}\n" +
-                    "Hedged: {4:N0}  |  Debt Exposure: {5:N0}",
-                    engine.BenchmarkRate * 100f, volPct,
-                    engine.SwapCount, engine.MaxActiveSwaps,
-                    engine.TotalHedgedNotional, engine.TotalDebtOwed);
+                float overHedge = engine.OverHedgeRatio;
+                if (overHedge > 0f)
+                {
+                    float penalty = overHedge * 4f;
+                    if (penalty > 10f) penalty = 10f;
+                    _summaryLabel.text = string.Format(
+                        "Rate: {0:F1}%  |  Vol: {1:F1}%  |  Swaps: {2}/{3}\n" +
+                        "OVER-HEDGED by {4:N0}  |  Rate Penalty: +{5:F1}%",
+                        engine.BenchmarkRate * 100f, volPct,
+                        engine.SwapCount, engine.MaxActiveSwaps,
+                        engine.TotalHedgedNotional - engine.TotalDebtFace, penalty);
+                }
+                else
+                {
+                    _summaryLabel.text = string.Format(
+                        "Floating Rate: {0:F1}%  |  Volatility: {1:F1}%  |  Swaps: {2}/{3}\n" +
+                        "Hedged: {4:N0}  |  Debt Face: {5:N0}",
+                        engine.BenchmarkRate * 100f, volPct,
+                        engine.SwapCount, engine.MaxActiveSwaps,
+                        engine.TotalHedgedNotional, engine.TotalDebtFace);
+                }
             }
             else
             {
@@ -450,6 +491,8 @@ namespace MyFirstMod
             _pay25Btn.isVisible = false;
             _pay50Btn.isVisible = false;
             _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
             _scrollHintLabel.text = "";
 
@@ -497,6 +540,8 @@ namespace MyFirstMod
             _pay25Btn.isVisible = false;
             _pay50Btn.isVisible = false;
             _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
@@ -565,6 +610,8 @@ namespace MyFirstMod
             _buy10MBtn.isVisible = false;
             _buy1BBtn.isVisible = false;
             _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
             bool hasDebt = engine.IssuedCount > 0;
             _pay25Btn.isVisible = hasDebt;
@@ -656,10 +703,15 @@ namespace MyFirstMod
             _buy1BBtn.isVisible = false;
             _pay25Btn.isVisible = false;
             _pay50Btn.isVisible = false;
+            bool hasSwaps = engine.SwapCount > 0;
             _autoHedgeBtn.isVisible = true;
             _autoHedgeBtn.isEnabled = engine.SwapCount < engine.MaxActiveSwaps && engine.IssuedCount > 0;
+            _sell25SwapsBtn.isVisible = true;
+            _sell25SwapsBtn.isEnabled = hasSwaps;
+            _sell50SwapsBtn.isVisible = true;
+            _sell50SwapsBtn.isEnabled = hasSwaps;
             _exitAllSwapsBtn.isVisible = true;
-            _exitAllSwapsBtn.isEnabled = engine.SwapCount > 0;
+            _exitAllSwapsBtn.isEnabled = hasSwaps;
 
             engine.GetActiveSwapsSnapshot(_cachedSwaps);
 
@@ -922,6 +974,28 @@ namespace MyFirstMod
             _scrollOffset = 0;
             if (exited > 0)
                 Debug.Log("[MyFirstMod] Terminated " + exited.ToString() + " swap(s)");
+            RefreshData();
+        }
+
+        private void OnSell25SwapsClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int affected = engine.SellAllSwapsTranche(0.25f);
+            if (affected > 0)
+                Debug.Log("[MyFirstMod] Sold 25% tranche of " + affected.ToString() + " swap(s)");
+            RefreshData();
+        }
+
+        private void OnSell50SwapsClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            int affected = engine.SellAllSwapsTranche(0.50f);
+            if (affected > 0)
+                Debug.Log("[MyFirstMod] Sold 50% tranche of " + affected.ToString() + " swap(s)");
             RefreshData();
         }
 
