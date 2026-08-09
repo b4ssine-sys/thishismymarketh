@@ -18,7 +18,11 @@ namespace MyFirstMod
 
             Debug.Log("[MyFirstMod] Level loaded - Municipal Bond Market active.");
 
-            BondMarketEngine.NeedsReset = true;
+            if (mode == LoadMode.NewGame)
+            {
+                BondMarketEngine.NeedsReset = true;
+                BondMarketEngine.PendingSaveData = null;
+            }
 
             UIView view = UIView.GetAView();
             _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
