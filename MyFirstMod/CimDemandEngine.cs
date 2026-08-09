@@ -137,5 +137,55 @@ namespace MyFirstMod
             if (demandScore >= 0.10f) return "VERY WEAK";
             return "NO DEMAND";
         }
+
+        public static void CalculateCitizenActivity(
+            int population, float demandScore, float bondAppeal,
+            float defaultProbability, System.Random rng,
+            out float buyVolume, out float sellVolume)
+        {
+            float participationRate = 0.01f + demandScore * 0.04f;
+            float activePopulation = population * participationRate;
+            if (activePopulation < 1f) activePopulation = 1f;
+
+            float buyBias = 0.5f + (bondAppeal - 0.5f) * 0.6f;
+            buyBias -= defaultProbability * 0.3f;
+            if (buyBias < 0.1f) buyBias = 0.1f;
+            if (buyBias > 0.9f) buyBias = 0.9f;
+
+            float noise = (float)(rng.NextDouble() * 0.2 - 0.1);
+            float adjustedBias = buyBias + noise;
+            if (adjustedBias < 0.05f) adjustedBias = 0.05f;
+            if (adjustedBias > 0.95f) adjustedBias = 0.95f;
+
+            buyVolume = activePopulation * adjustedBias * WEALTH_PER_CAPITA;
+            sellVolume = activePopulation * (1f - adjustedBias) * WEALTH_PER_CAPITA;
+        }
+
+        public static float CalculateMarketPressure(float buyVolume, float sellVolume)
+        {
+            float total = buyVolume + sellVolume;
+            if (total <= 0f) return 0f;
+            float pressure = (buyVolume - sellVolume) / total;
+            if (pressure < -1f) pressure = -1f;
+            if (pressure > 1f) pressure = 1f;
+            return pressure;
+        }
+
+        public static float AdjustYieldForPressure(float baseYield, float pressure)
+        {
+            float multiplier = 1f + pressure * 0.15f;
+            if (multiplier < 0.90f) multiplier = 0.90f;
+            if (multiplier > 1.15f) multiplier = 1.15f;
+            return baseYield * multiplier;
+        }
+
+        public static string PressureLabel(float pressure)
+        {
+            if (pressure > 0.3f) return "STRONG BUY";
+            if (pressure > 0.1f) return "BUYING";
+            if (pressure < -0.3f) return "STRONG SELL";
+            if (pressure < -0.1f) return "SELLING";
+            return "BALANCED";
+        }
     }
 }

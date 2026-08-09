@@ -14,6 +14,9 @@ namespace MyFirstMod
         public int RemainingPeriods;
         public float PurchasePrice;
         public float CouponsReceived;
+        public float SoldFraction;
+
+        public float SubscribedFace { get { return FaceValue * SoldFraction; } }
 
         public Bond(string id, string name, float faceValue, float couponRate, int totalPeriods)
         {
@@ -25,6 +28,7 @@ namespace MyFirstMod
             RemainingPeriods = totalPeriods;
             PurchasePrice = 0f;
             CouponsReceived = 0f;
+            SoldFraction = 1f;
         }
     }
 

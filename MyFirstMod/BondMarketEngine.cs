@@ -54,6 +54,13 @@ namespace MyFirstMod
         private float _employmentRate;
         private float _populationGrowth;
 
+        private float _citizenBuyVolume;
+        private float _citizenSellVolume;
+        private float _marketPressure;
+        private float _smoothedPressure;
+        private readonly float[] _pressureHistory = new float[12];
+        private int _pressureHistoryIndex;
+
         private float _grossIncome;
         private float _totalExpenses;
         private float _debtBurden;
@@ -108,6 +115,10 @@ namespace MyFirstMod
         public float AbsorptionCapacity { get { return _absorptionCapacity; } }
         public int Population { get { return _population; } }
         public string DemandLabelText { get { return CimDemandEngine.DemandLabel(_demandScore); } }
+        public float CitizenBuyVolume { get { return _citizenBuyVolume; } }
+        public float CitizenSellVolume { get { return _citizenSellVolume; } }
+        public float MarketPressure { get { return _smoothedPressure; } }
+        public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
 
         public float TotalHedgedNotional
         {
@@ -131,7 +142,7 @@ namespace MyFirstMod
                 {
                     float total = 0f;
                     for (int i = 0; i < _issuedBonds.Count; i++)
-                        total += _issuedBonds[i].FaceValue;
+                        total += _issuedBonds[i].SubscribedFace;
                     return total;
                 }
             }
@@ -170,8 +181,8 @@ namespace MyFirstMod
                     for (int i = 0; i < _issuedBonds.Count; i++)
                     {
                         Bond ib = _issuedBonds[i];
-                        float remainingCoupons = (ib.FaceValue * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
-                        total += ib.FaceValue + remainingCoupons;
+                        float remainingCoupons = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
+                        total += ib.SubscribedFace + remainingCoupons;
                     }
                     return total;
                 }
@@ -340,6 +351,7 @@ namespace MyFirstMod
             _demandScore = CimDemandEngine.CalculateDemandScore(
                 _financialHealth, _citizenConfidence, _bondAppeal);
             _requiredYield = CimDemandEngine.AdjustYieldForDemand(_requiredYield, _demandScore);
+            _requiredYield = CimDemandEngine.AdjustYieldForPressure(_requiredYield, _smoothedPressure);
             if (_requiredYield > 0.50f) _requiredYield = 0.50f;
             float avgIncomeForCap = _grossIncome / WINDOW_SIZE;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
@@ -350,7 +362,7 @@ namespace MyFirstMod
         {
             float totalDebtFace = 0f;
             for (int i = 0; i < _issuedBonds.Count; i++)
-                totalDebtFace += _issuedBonds[i].FaceValue;
+                totalDebtFace += _issuedBonds[i].SubscribedFace;
 
             float hedgedNotional = 0f;
             for (int i = 0; i < _activeSwaps.Count; i++)
@@ -397,7 +409,7 @@ namespace MyFirstMod
             for (int i = 0; i < _issuedBonds.Count; i++)
             {
                 Bond ib = _issuedBonds[i];
-                total += (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                total += (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
             }
             return total;
         }
@@ -439,6 +451,7 @@ namespace MyFirstMod
 
             ServiceIssuedBondsInternal();
             SettleSwapsInternal();
+            SimulateCitizenTradingInternal();
 
             if (_defaultPenalty > 0)
             {
@@ -455,19 +468,19 @@ namespace MyFirstMod
 
                 if (ib.RemainingPeriods <= 0)
                 {
-                    long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                    long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
                     if (!TrySpendCash(faceInternal))
                     {
                         TriggerDefaultInternal(ib, "maturity repayment");
                         _issuedBonds.RemoveAt(i);
                         continue;
                     }
-                    ib.CouponsReceived += ib.FaceValue;
+                    ib.CouponsReceived += ib.SubscribedFace;
                     _issuedBonds.RemoveAt(i);
                 }
                 else
                 {
-                    float couponPayment = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                    float couponPayment = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
                     long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
                     if (couponInternal > 0)
                     {
@@ -527,6 +540,55 @@ namespace MyFirstMod
                 if (swap.RemainingPeriods <= 0)
                 {
                     _activeSwaps.RemoveAt(i);
+                }
+            }
+        }
+
+        private void SimulateCitizenTradingInternal()
+        {
+            if (_issuedBonds.Count == 0)
+            {
+                _citizenBuyVolume = 0f;
+                _citizenSellVolume = 0f;
+                return;
+            }
+
+            CimDemandEngine.CalculateCitizenActivity(
+                _population, _demandScore, _bondAppeal, _defaultProbability, _rng,
+                out _citizenBuyVolume, out _citizenSellVolume);
+
+            _marketPressure = CimDemandEngine.CalculateMarketPressure(
+                _citizenBuyVolume, _citizenSellVolume);
+
+            _pressureHistory[_pressureHistoryIndex] = _marketPressure;
+            _pressureHistoryIndex = (_pressureHistoryIndex + 1) % _pressureHistory.Length;
+
+            float sum = 0f;
+            for (int i = 0; i < _pressureHistory.Length; i++)
+                sum += _pressureHistory[i];
+            _smoothedPressure = sum / _pressureHistory.Length;
+
+            if (_citizenBuyVolume > 0f)
+            {
+                float totalUnsold = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    totalUnsold += _issuedBonds[i].FaceValue * (1f - _issuedBonds[i].SoldFraction);
+
+                if (totalUnsold > 0f)
+                {
+                    float buyable = _citizenBuyVolume;
+                    if (buyable > totalUnsold) buyable = totalUnsold;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                    {
+                        Bond ib = _issuedBonds[i];
+                        float unsold = ib.FaceValue * (1f - ib.SoldFraction);
+                        if (unsold <= 0f) continue;
+
+                        float share = unsold / totalUnsold;
+                        float bought = buyable * share;
+                        ib.SoldFraction += bought / ib.FaceValue;
+                        if (ib.SoldFraction > 1f) ib.SoldFraction = 1f;
+                    }
                 }
             }
         }
@@ -632,6 +694,12 @@ namespace MyFirstMod
             _happiness = 0.5f;
             _employmentRate = 0.7f;
             _populationGrowth = 0f;
+            _citizenBuyVolume = 0f;
+            _citizenSellVolume = 0f;
+            _marketPressure = 0f;
+            _smoothedPressure = 0f;
+            Array.Clear(_pressureHistory, 0, _pressureHistory.Length);
+            _pressureHistoryIndex = 0;
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -746,11 +814,16 @@ namespace MyFirstMod
 
                 float couponRate = _requiredYield;
 
-                long proceedsInternal = (long)(face * INTERNAL_UNIT_SCALE);
+                float initialSubscription = _demandScore;
+                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
+                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
+
+                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
                 AddCashToCity(proceedsInternal);
 
                 _nextBondId++;
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
+                ib.SoldFraction = initialSubscription;
                 _issuedBonds.Add(ib);
                 return true;
             }
@@ -765,7 +838,7 @@ namespace MyFirstMod
 
                 float totalFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalFace += _issuedBonds[i].FaceValue;
+                    totalFace += _issuedBonds[i].SubscribedFace;
 
                 float budget = totalFace * percent;
                 int retired = 0;
@@ -773,14 +846,14 @@ namespace MyFirstMod
                 for (int i = _issuedBonds.Count - 1; i >= 0; i--)
                 {
                     Bond ib = _issuedBonds[i];
-                    if (ib.FaceValue > budget)
+                    if (ib.SubscribedFace > budget)
                         continue;
 
-                    long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                    long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
                     if (!TrySpendCash(faceInternal))
                         continue;
 
-                    budget -= ib.FaceValue;
+                    budget -= ib.SubscribedFace;
                     _issuedBonds.RemoveAt(i);
                     retired++;
                 }
@@ -976,8 +1049,8 @@ namespace MyFirstMod
                 float weightedPeriods = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
                 {
-                    totalDebtFace += _issuedBonds[i].FaceValue;
-                    weightedPeriods += _issuedBonds[i].FaceValue * _issuedBonds[i].RemainingPeriods;
+                    totalDebtFace += _issuedBonds[i].SubscribedFace;
+                    weightedPeriods += _issuedBonds[i].SubscribedFace * _issuedBonds[i].RemainingPeriods;
                 }
 
                 float hedgedNotional = 0f;
@@ -1007,7 +1080,7 @@ namespace MyFirstMod
             {
                 float totalDebtFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalDebtFace += _issuedBonds[i].FaceValue;
+                    totalDebtFace += _issuedBonds[i].SubscribedFace;
 
                 float hedgedNotional = 0f;
                 for (int i = 0; i < _activeSwaps.Count; i++)
@@ -1065,7 +1138,7 @@ namespace MyFirstMod
                     return false;
 
                 Bond ib = _issuedBonds[issuedIndex];
-                long faceInternal = (long)(ib.FaceValue * INTERNAL_UNIT_SCALE);
+                long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
                 if (!TrySpendCash(faceInternal))
                     return false;
 

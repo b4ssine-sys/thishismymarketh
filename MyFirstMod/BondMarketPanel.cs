@@ -446,18 +446,19 @@ namespace MyFirstMod
                     : string.Format("Hedged: {0:N0}", engine.TotalHedgedNotional);
                 int totalPos = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
                 _summaryLabel.text = string.Format(
-                    "Positions: {0}  |  Bonds: {1}  |  Debt: {2}  |  Swaps: {3}\n" +
-                    "Rating: {4}  |  Yield: {5:F1}%  |  Debt Face: {6:N0}  |  {7}",
+                    "Positions: {0}  |  Bonds: {1}  |  Debt: {2}  |  Swaps: {3}  |  {4}\n" +
+                    "Rating: {5}  |  Yield: {6:F1}%  |  Debt Face: {7:N0}  |  {8}",
                     totalPos, engine.PortfolioCount, engine.IssuedCount, engine.SwapCount,
+                    engine.PressureLabelText,
                     ratingStr, yieldPct, engine.TotalDebtFace, hedgeStatus);
             }
             else if (_activeTab == 2)
             {
                 _summaryLabel.text = string.Format(
-                    "Rating: {0}  |  Yield: {1:F1}%  |  Default: {2:F1}%  |  Demand: {3}\n" +
-                    "Debt: {4}/{5}  |  Owed: {6:N0}  |  Capacity: {7:N0}  |  {8}",
+                    "Rating: {0}  |  Yield: {1:F1}%  |  Default: {2:F1}%  |  Demand: {3}  |  {4}\n" +
+                    "Debt: {5}/{6}  |  Owed: {7:N0}  |  Capacity: {8:N0}  |  {9}",
                     ratingStr, yieldPct, engine.DefaultProbability * 100f,
-                    engine.DemandLabelText,
+                    engine.DemandLabelText, engine.PressureLabelText,
                     engine.IssuedCount, engine.MaxIssuedBonds,
                     engine.TotalDebtOwed, engine.AbsorptionCapacity,
                     engine.CreditStatusLabel);
@@ -495,9 +496,10 @@ namespace MyFirstMod
 
                 _summaryLabel.text = string.Format(
                     "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}  |  Demand: {3}\n" +
-                    "Income: {4:N0}/tick  |  Expenses: {5:N0}/tick  |  Default: {6:F1}%",
+                    "Buy: {4:N0}  |  Sell: {5:N0}  |  Pressure: {6}  |  Default: {7:F1}%",
                     ratingStr, yieldPct, dscrVal, engine.DemandLabelText,
-                    incomeDisplay, expenseDisplay, engine.DefaultProbability * 100f);
+                    engine.CitizenBuyVolume, engine.CitizenSellVolume,
+                    engine.PressureLabelText, engine.DefaultProbability * 100f);
             }
 
             if (_activeTab == 0)
@@ -667,11 +669,12 @@ namespace MyFirstMod
                 {
                     Bond ib = _cachedIssuedBonds[itemIdx];
                     int monthsLeft = ib.RemainingPeriods;
-                    float perPeriodCoupon = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                    float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:N0}   {2:F1}%   {3}mo left   Paid: {4:N0}",
-                        ib.Name, ib.FaceValue, ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
+                        "{0}   {1:N0} ({2:F0}%)   {3:F1}%   {4}mo   Paid: {5:N0}",
+                        ib.Name, ib.SubscribedFace, ib.SoldFraction * 100f,
+                        ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
                     _actionButtons[i].text = "Repay";
                     _actionButtons[i].isVisible = true;
@@ -846,11 +849,12 @@ namespace MyFirstMod
                 {
                     int iIdx = itemIdx - portfolioCount;
                     Bond ib = _cachedIssuedBonds[iIdx];
-                    float perPeriod = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                    float perPeriod = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
                     _infoLabels[i].text = string.Format(
-                        "[OWE] {0}  {1:F1}%  Face: {2:N0}  Paid: {3:N0}  {4}mo",
-                        ib.Name, ib.CouponRate * 100f, ib.FaceValue, ib.CouponsReceived, ib.RemainingPeriods);
+                        "[OWE] {0}  {1:F1}%  Sub: {2:N0} ({3:F0}%)  Paid: {4:N0}  {5}mo",
+                        ib.Name, ib.CouponRate * 100f, ib.SubscribedFace,
+                        ib.SoldFraction * 100f, ib.CouponsReceived, ib.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriod);
                     _actionButtons[i].text = "Repay";
                     _actionButtons[i].isVisible = true;
