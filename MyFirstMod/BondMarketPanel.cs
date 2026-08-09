@@ -79,10 +79,13 @@ namespace MyFirstMod
 
         private UIButton _hedgingTabBtn;
         private UIButton _positionsTabBtn;
+        private UIButton _activityTabBtn;
         private UIButton _autoHedgeBtn;
         private UIButton _sell25SwapsBtn;
         private UIButton _sell50SwapsBtn;
         private UIButton _exitAllSwapsBtn;
+
+        private readonly List<CimTransaction> _cachedTransactions = new List<CimTransaction>();
 
         public override void Start()
         {
@@ -207,6 +210,17 @@ namespace MyFirstMod
             _positionsTabBtn.pressedBgSprite = "ButtonMenuPressed";
             _positionsTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _positionsTabBtn.eventClick += OnPositionsTab;
+
+            _activityTabBtn = AddUIComponent<UIButton>();
+            _activityTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
+            _activityTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 5f, tabY);
+            _activityTabBtn.text = "Activity";
+            _activityTabBtn.textScale = 0.85f;
+            _activityTabBtn.normalBgSprite = "ButtonMenu";
+            _activityTabBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _activityTabBtn.pressedBgSprite = "ButtonMenuPressed";
+            _activityTabBtn.focusedBgSprite = "ButtonMenuFocused";
+            _activityTabBtn.eventClick += OnActivityTab;
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
@@ -438,7 +452,16 @@ namespace MyFirstMod
             float yieldPct = engine.RequiredYield * 100f;
             float dscrVal = engine.DSCR;
 
-            if (_activeTab == 4)
+            if (_activeTab == 5)
+            {
+                _summaryLabel.text = string.Format(
+                    "Citizen Bond Activity  |  Demand: {0}  |  Pressure: {1}\n" +
+                    "Buy Vol: {2:N0}  |  Sell Vol: {3:N0}  |  Debt: {4}  |  Pop: {5:N0}",
+                    engine.DemandLabelText, engine.PressureLabelText,
+                    engine.CitizenBuyVolume, engine.CitizenSellVolume,
+                    engine.IssuedCount, engine.Population);
+            }
+            else if (_activeTab == 4)
             {
                 float overHedge = engine.OverHedgeRatio;
                 string hedgeStatus = overHedge > 0f
@@ -510,8 +533,10 @@ namespace MyFirstMod
                 RefreshCityDebt(engine);
             else if (_activeTab == 3)
                 RefreshHedging(engine);
-            else
+            else if (_activeTab == 4)
                 RefreshPositions(engine);
+            else
+                RefreshActivity(engine);
         }
 
         private void RefreshMarket(BondMarketEngine engine)
@@ -901,6 +926,66 @@ namespace MyFirstMod
                 totalPV, engine.TotalDebtFace, swapPLStr, totalItems);
         }
 
+        private void RefreshActivity(BondMarketEngine engine)
+        {
+            _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
+            _buy1BBtn.isVisible = false;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
+            _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
+            _exitAllSwapsBtn.isVisible = false;
+
+            engine.GetTransactionLogSnapshot(_cachedTransactions);
+
+            int total = _cachedTransactions.Count;
+            int maxOffset = Math.Max(0, total - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
+
+            for (int i = 0; i < MAX_ROWS; i++)
+            {
+                int txIdx = total - 1 - _scrollOffset - i;
+                if (txIdx >= 0 && txIdx < total)
+                {
+                    CimTransaction tx = _cachedTransactions[txIdx];
+                    string pressureStr;
+                    if (tx.Pressure > 0.1f)
+                        pressureStr = "BUY";
+                    else if (tx.Pressure < -0.1f)
+                        pressureStr = "SELL";
+                    else
+                        pressureStr = "EVEN";
+
+                    _infoLabels[i].text = string.Format(
+                        "#{0}  Buy: {1:N0}  Sell: {2:N0}  [{3}]  {4}",
+                        tx.Sequence, tx.BuyVolume, tx.SellVolume, pressureStr, tx.Detail);
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+                else
+                {
+                    _infoLabels[i].text = "";
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+            }
+
+            if (total > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("{0} transactions  (scroll to see more)", total);
+            else if (total == 0)
+                _scrollHintLabel.text = "No citizen trading activity yet - issue bonds first";
+            else
+                _scrollHintLabel.text = "";
+
+            _footerLabel.text = string.Format(
+                "Transactions: {0}  |  Demand: {1}  |  Pressure: {2}",
+                total, engine.DemandLabelText, engine.PressureLabelText);
+        }
+
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
             if (_activeTab == 0) return;
@@ -914,6 +999,8 @@ namespace MyFirstMod
                 totalItems = engine.IssuedCount + engine.IssueTemplateCount;
             else if (_activeTab == 3)
                 totalItems = engine.SwapCount;
+            else if (_activeTab == 5)
+                totalItems = engine.TransactionLogCount;
             else
                 totalItems = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
             int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
@@ -1144,6 +1231,14 @@ namespace MyFirstMod
             RefreshData();
         }
 
+        private void OnActivityTab(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _activeTab = 5;
+            _scrollOffset = 0;
+            UpdateTabHighlights();
+            RefreshData();
+        }
+
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)
         {
             BondMarketEngine engine = BondMarketEngine.Instance;
@@ -1196,6 +1291,7 @@ namespace MyFirstMod
             _cityDebtTabBtn.normalBgSprite = _activeTab == 2 ? "ButtonMenuFocused" : "ButtonMenu";
             _hedgingTabBtn.normalBgSprite = _activeTab == 3 ? "ButtonMenuFocused" : "ButtonMenu";
             _positionsTabBtn.normalBgSprite = _activeTab == 4 ? "ButtonMenuFocused" : "ButtonMenu";
+            _activityTabBtn.normalBgSprite = _activeTab == 5 ? "ButtonMenuFocused" : "ButtonMenu";
         }
 
         public override void OnDestroy()

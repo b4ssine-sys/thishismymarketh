@@ -61,6 +61,10 @@ namespace MyFirstMod
         private readonly float[] _pressureHistory = new float[12];
         private int _pressureHistoryIndex;
 
+        private readonly List<CimTransaction> _transactionLog = new List<CimTransaction>();
+        private const int MAX_TRANSACTION_LOG = 50;
+        private int _transactionSeq;
+
         private float _grossIncome;
         private float _totalExpenses;
         private float _debtBurden;
@@ -119,6 +123,26 @@ namespace MyFirstMod
         public float CitizenSellVolume { get { return _citizenSellVolume; } }
         public float MarketPressure { get { return _smoothedPressure; } }
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
+        public int TransactionLogCount { get { return _transactionLog.Count; } }
+
+        public void GetTransactionLogSnapshot(List<CimTransaction> dest)
+        {
+            dest.Clear();
+            lock (_lock)
+            {
+                for (int i = 0; i < _transactionLog.Count; i++)
+                {
+                    CimTransaction src = _transactionLog[i];
+                    CimTransaction copy = new CimTransaction();
+                    copy.Sequence = src.Sequence;
+                    copy.BuyVolume = src.BuyVolume;
+                    copy.SellVolume = src.SellVolume;
+                    copy.Pressure = src.Pressure;
+                    copy.Detail = src.Detail;
+                    dest.Add(copy);
+                }
+            }
+        }
 
         public float TotalHedgedNotional
         {
@@ -568,6 +592,10 @@ namespace MyFirstMod
                 sum += _pressureHistory[i];
             _smoothedPressure = sum / _pressureHistory.Length;
 
+            float[] beforeFractions = new float[_issuedBonds.Count];
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                beforeFractions[i] = _issuedBonds[i].SoldFraction;
+
             if (_citizenBuyVolume > 0f)
             {
                 float totalUnsold = 0f;
@@ -591,6 +619,39 @@ namespace MyFirstMod
                     }
                 }
             }
+
+            string detail = "";
+            for (int i = 0; i < _issuedBonds.Count; i++)
+            {
+                Bond ib = _issuedBonds[i];
+                float before = beforeFractions[i];
+                float after = ib.SoldFraction;
+                if (after > before + 0.001f)
+                {
+                    if (detail.Length > 0) detail += "  ";
+                    detail += string.Format("{0}: {1:F0}%>{2:F0}%",
+                        ib.Id, before * 100f, after * 100f);
+                }
+            }
+            if (detail.Length == 0)
+            {
+                if (_citizenBuyVolume > _citizenSellVolume)
+                    detail = "Fully subscribed";
+                else
+                    detail = "Sell pressure only";
+            }
+
+            _transactionSeq++;
+            CimTransaction tx = new CimTransaction();
+            tx.Sequence = _transactionSeq;
+            tx.BuyVolume = _citizenBuyVolume;
+            tx.SellVolume = _citizenSellVolume;
+            tx.Pressure = _marketPressure;
+            tx.Detail = detail;
+            _transactionLog.Add(tx);
+
+            if (_transactionLog.Count > MAX_TRANSACTION_LOG)
+                _transactionLog.RemoveAt(0);
         }
 
         private void GenerateInitialBondsInternal()
@@ -700,6 +761,8 @@ namespace MyFirstMod
             _smoothedPressure = 0f;
             Array.Clear(_pressureHistory, 0, _pressureHistory.Length);
             _pressureHistoryIndex = 0;
+            _transactionLog.Clear();
+            _transactionSeq = 0;
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)

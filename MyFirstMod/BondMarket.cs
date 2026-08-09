@@ -56,6 +56,15 @@ namespace MyFirstMod
         }
     }
 
+    public class CimTransaction
+    {
+        public int Sequence;
+        public float BuyVolume;
+        public float SellVolume;
+        public float Pressure;
+        public string Detail;
+    }
+
     public static class BondPricing
     {
         public const int PeriodsPerYear = 12;
