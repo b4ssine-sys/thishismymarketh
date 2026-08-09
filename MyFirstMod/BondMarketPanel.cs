@@ -78,6 +78,7 @@ namespace MyFirstMod
         private readonly List<Bond> _cachedIssuedBonds = new List<Bond>();
 
         private UIButton _hedgingTabBtn;
+        private UIButton _positionsTabBtn;
         private UIButton _autoHedgeBtn;
         private UIButton _sell25SwapsBtn;
         private UIButton _sell50SwapsBtn;
@@ -149,7 +150,7 @@ namespace MyFirstMod
         private void CreateTabs()
         {
             float tabY = HEADER_HEIGHT + 2f;
-            float tabW = 110f;
+            float tabW = 88f;
             float gap = 4f;
 
             _marketTabBtn = AddUIComponent<UIButton>();
@@ -177,7 +178,7 @@ namespace MyFirstMod
             _cityDebtTabBtn = AddUIComponent<UIButton>();
             _cityDebtTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _cityDebtTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 2f, tabY);
-            _cityDebtTabBtn.text = "City Debt";
+            _cityDebtTabBtn.text = "Debt";
             _cityDebtTabBtn.textScale = 0.85f;
             _cityDebtTabBtn.normalBgSprite = "ButtonMenu";
             _cityDebtTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -195,6 +196,17 @@ namespace MyFirstMod
             _hedgingTabBtn.pressedBgSprite = "ButtonMenuPressed";
             _hedgingTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _hedgingTabBtn.eventClick += OnHedgingTab;
+
+            _positionsTabBtn = AddUIComponent<UIButton>();
+            _positionsTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
+            _positionsTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 4f, tabY);
+            _positionsTabBtn.text = "Positions";
+            _positionsTabBtn.textScale = 0.85f;
+            _positionsTabBtn.normalBgSprite = "ButtonMenu";
+            _positionsTabBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _positionsTabBtn.pressedBgSprite = "ButtonMenuPressed";
+            _positionsTabBtn.focusedBgSprite = "ButtonMenuFocused";
+            _positionsTabBtn.eventClick += OnPositionsTab;
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
@@ -426,7 +438,20 @@ namespace MyFirstMod
             float yieldPct = engine.RequiredYield * 100f;
             float dscrVal = engine.DSCR;
 
-            if (_activeTab == 2)
+            if (_activeTab == 4)
+            {
+                float overHedge = engine.OverHedgeRatio;
+                string hedgeStatus = overHedge > 0f
+                    ? string.Format("OVER-HEDGED {0:F0}%", overHedge * 100f)
+                    : string.Format("Hedged: {0:N0}", engine.TotalHedgedNotional);
+                int totalPos = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+                _summaryLabel.text = string.Format(
+                    "Positions: {0}  |  Bonds: {1}  |  Debt: {2}  |  Swaps: {3}\n" +
+                    "Rating: {4}  |  Yield: {5:F1}%  |  Debt Face: {6:N0}  |  {7}",
+                    totalPos, engine.PortfolioCount, engine.IssuedCount, engine.SwapCount,
+                    ratingStr, yieldPct, engine.TotalDebtFace, hedgeStatus);
+            }
+            else if (_activeTab == 2)
             {
                 _summaryLabel.text = string.Format(
                     "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
@@ -478,8 +503,10 @@ namespace MyFirstMod
                 RefreshPortfolio(engine);
             else if (_activeTab == 2)
                 RefreshCityDebt(engine);
-            else
+            else if (_activeTab == 3)
                 RefreshHedging(engine);
+            else
+                RefreshPositions(engine);
         }
 
         private void RefreshMarket(BondMarketEngine engine)
@@ -762,9 +789,112 @@ namespace MyFirstMod
             _footerLabel.text = string.Format("Swap P/L: {0}  |  {1}", swapPLStr, recommendation);
         }
 
+        private void RefreshPositions(BondMarketEngine engine)
+        {
+            _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
+            _buy1BBtn.isVisible = false;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
+            _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
+            _exitAllSwapsBtn.isVisible = false;
+
+            engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
+            engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
+            engine.GetActiveSwapsSnapshot(_cachedSwaps);
+
+            int portfolioCount = _cachedBonds.Count;
+            int issuedCount = _cachedIssuedBonds.Count;
+            int swapCount = _cachedSwaps.Count;
+            int totalItems = portfolioCount + issuedCount + swapCount;
+
+            int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
+
+            float totalPV = 0f;
+            for (int j = 0; j < portfolioCount; j++)
+                totalPV += _cachedPrices[j];
+
+            for (int i = 0; i < MAX_ROWS; i++)
+            {
+                int itemIdx = _scrollOffset + i;
+                if (itemIdx < portfolioCount)
+                {
+                    Bond b = _cachedBonds[itemIdx];
+                    float price = _cachedPrices[itemIdx];
+                    float bondPL = (price + b.CouponsReceived) - b.PurchasePrice;
+                    string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
+
+                    _infoLabels[i].text = string.Format(
+                        "[BUY] {0}  {1:F1}%  Face: {2:N0}  P/L: {3}  {4}mo",
+                        b.Name, b.CouponRate * 100f, b.FaceValue, plStr, b.RemainingPeriods);
+                    _priceLabels[i].text = string.Format("{0:N0}", price);
+                    _actionButtons[i].text = "Sell";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = true;
+                }
+                else if (itemIdx < portfolioCount + issuedCount)
+                {
+                    int iIdx = itemIdx - portfolioCount;
+                    Bond ib = _cachedIssuedBonds[iIdx];
+                    float perPeriod = (ib.FaceValue * ib.CouponRate) / BondPricing.PeriodsPerYear;
+
+                    _infoLabels[i].text = string.Format(
+                        "[OWE] {0}  {1:F1}%  Face: {2:N0}  Paid: {3:N0}  {4}mo",
+                        ib.Name, ib.CouponRate * 100f, ib.FaceValue, ib.CouponsReceived, ib.RemainingPeriods);
+                    _priceLabels[i].text = string.Format("{0:N0}/per", perPeriod);
+                    _actionButtons[i].text = "Repay";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = true;
+                }
+                else if (itemIdx < totalItems)
+                {
+                    int sIdx = itemIdx - portfolioCount - issuedCount;
+                    InterestRateSwap s = _cachedSwaps[sIdx];
+                    string dir = s.PayFixed ? "PayFix" : "RcvFix";
+                    string plStr = s.CumulativePL >= 0f
+                        ? "+" + s.CumulativePL.ToString("N0")
+                        : s.CumulativePL.ToString("N0");
+
+                    _infoLabels[i].text = string.Format(
+                        "[SWAP] {0}  {1}  Notional: {2:N0}  {3:F1}%  P/L: {4}  {5}mo",
+                        s.Id, dir, s.NotionalAmount, s.FixedRate * 100f, plStr, s.RemainingPeriods);
+                    _priceLabels[i].text = string.Format("{0:N0}/per", s.LastSettlement);
+                    _actionButtons[i].text = "Exit";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = true;
+                }
+                else
+                {
+                    _infoLabels[i].text = "";
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+            }
+
+            if (totalItems > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
+            else if (totalItems == 0)
+                _scrollHintLabel.text = "No open positions";
+            else
+                _scrollHintLabel.text = "";
+
+            string swapPLStr = engine.SwapPL >= 0f
+                ? "+" + engine.SwapPL.ToString("N0")
+                : engine.SwapPL.ToString("N0");
+            _footerLabel.text = string.Format(
+                "Assets: {0:N0}  |  Debt Face: {1:N0}  |  Swap P/L: {2}  |  {3} positions",
+                totalPV, engine.TotalDebtFace, swapPLStr, totalItems);
+        }
+
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
-            if (_activeTab != 1 && _activeTab != 2 && _activeTab != 3) return;
+            if (_activeTab == 0) return;
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
@@ -773,8 +903,10 @@ namespace MyFirstMod
                 totalItems = engine.PortfolioCount;
             else if (_activeTab == 2)
                 totalItems = engine.IssuedCount + engine.IssueTemplateCount;
-            else
+            else if (_activeTab == 3)
                 totalItems = engine.SwapCount;
+            else
+                totalItems = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
             int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
             if (eventParam.wheelDelta < 0f)
                 _scrollOffset = Math.Min(maxOffset, _scrollOffset + 1);
@@ -837,6 +969,47 @@ namespace MyFirstMod
                     if (_scrollOffset > maxOffset)
                         _scrollOffset = maxOffset;
                     RefreshData();
+                }
+            }
+            else if (_activeTab == 4)
+            {
+                int itemIdx = _scrollOffset + index;
+                int portfolioCount = _cachedBonds.Count;
+                int issuedCount = _cachedIssuedBonds.Count;
+
+                if (itemIdx < portfolioCount)
+                {
+                    if (engine.SellBond(itemIdx))
+                    {
+                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+                        int maxOff = Math.Max(0, total - MAX_ROWS);
+                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                        RefreshData();
+                    }
+                }
+                else if (itemIdx < portfolioCount + issuedCount)
+                {
+                    int issuedIdx = itemIdx - portfolioCount;
+                    if (engine.RepaySingleBond(issuedIdx))
+                    {
+                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+                        int maxOff = Math.Max(0, total - MAX_ROWS);
+                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                        RefreshData();
+                    }
+                    else
+                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds.");
+                }
+                else
+                {
+                    int swapIdx = itemIdx - portfolioCount - issuedCount;
+                    if (engine.TerminateSwap(swapIdx))
+                    {
+                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+                        int maxOff = Math.Max(0, total - MAX_ROWS);
+                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                        RefreshData();
+                    }
                 }
             }
             else
@@ -954,6 +1127,14 @@ namespace MyFirstMod
             RefreshData();
         }
 
+        private void OnPositionsTab(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _activeTab = 4;
+            _scrollOffset = 0;
+            UpdateTabHighlights();
+            RefreshData();
+        }
+
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)
         {
             BondMarketEngine engine = BondMarketEngine.Instance;
@@ -1005,6 +1186,7 @@ namespace MyFirstMod
             _portfolioTabBtn.normalBgSprite = _activeTab == 1 ? "ButtonMenuFocused" : "ButtonMenu";
             _cityDebtTabBtn.normalBgSprite = _activeTab == 2 ? "ButtonMenuFocused" : "ButtonMenu";
             _hedgingTabBtn.normalBgSprite = _activeTab == 3 ? "ButtonMenuFocused" : "ButtonMenu";
+            _positionsTabBtn.normalBgSprite = _activeTab == 4 ? "ButtonMenuFocused" : "ButtonMenu";
         }
 
         public override void OnDestroy()
