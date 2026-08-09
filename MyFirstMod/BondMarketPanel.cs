@@ -490,10 +490,6 @@ namespace MyFirstMod
             }
             else
             {
-                float incomeDisplay = engine.GrossIncome / 100f;
-                float expenseDisplay = engine.TotalExpenses / 100f;
-                float debtBurdenPct = engine.DebtBurden * 100f;
-
                 _summaryLabel.text = string.Format(
                     "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}  |  Demand: {3}\n" +
                     "Buy: {4:N0}  |  Sell: {5:N0}  |  Pressure: {6}  |  Default: {7:F1}%",
