@@ -37,12 +37,28 @@ namespace MyFirstMod
     {
         public static BondMarketPanel Instance;
 
+        // LAYOUT MAP (800x520) - master reference for all UI element positions
+        //  y=0-40     Title bar (drag handle + close)
+        //  y=42-100   Summary (2-line financial overview)
+        //  y=102-132  Tab row: Market|Portfolio|Debt|Hedging|Positions|Activity
+        //             Tabs: 6 x 88w, gap 4, x=12..560
+        //  y=138-378  List panel (6 rows x 36h + 24 pad)
+        //  y=388-418  Action buttons (per-tab, right-aligned, hidden when inactive)
+        //    Tab 0 Market:    [Buy 1B @x472 w90] [10x10M @x570 w105] [10x1M @x683 w105]
+        //    Tab 1 Portfolio: [Sell All @x698 w90]
+        //    Tab 2 Debt:      [Pay 25% @x600 w90] [Pay 50% @x698 w90]
+        //    Tab 3 Hedging:   [Auto-Hedge @x474 w95] [Sell25% @x577 w65] [Sell50% @x650 w65] [ExitAll @x723 w65]
+        //    Tab 4 Positions: (none)
+        //    Tab 5 Activity:  (none)
+        //  y=484-520  Footer
+
         private const float WIDTH = 800f;
         private const float HEIGHT = 520f;
         private const float HEADER_HEIGHT = 100f;
         private const float TAB_HEIGHT = 30f;
         private const float ROW_HEIGHT = 36f;
         private const int MAX_ROWS = 6;
+        private const float ACTION_Y = 388f;
 
         private UILabel _titleLabel;
         private UIButton _closeButton;
@@ -224,7 +240,7 @@ namespace MyFirstMod
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
-            _sellAllBtn.relativePosition = new Vector3(WIDTH - 102f, tabY);
+            _sellAllBtn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
             _sellAllBtn.text = "Sell All";
             _sellAllBtn.textScale = 0.85f;
             _sellAllBtn.normalBgSprite = "ButtonMenu";
@@ -236,7 +252,7 @@ namespace MyFirstMod
 
             _buy1MBtn = AddUIComponent<UIButton>();
             _buy1MBtn.size = new Vector2(105f, TAB_HEIGHT);
-            _buy1MBtn.relativePosition = new Vector3(WIDTH - 117f, tabY);
+            _buy1MBtn.relativePosition = new Vector3(WIDTH - 117f, ACTION_Y);
             _buy1MBtn.text = "10x 1M 5yr";
             _buy1MBtn.textScale = 0.75f;
             _buy1MBtn.normalBgSprite = "ButtonMenu";
@@ -248,7 +264,7 @@ namespace MyFirstMod
 
             _buy10MBtn = AddUIComponent<UIButton>();
             _buy10MBtn.size = new Vector2(105f, TAB_HEIGHT);
-            _buy10MBtn.relativePosition = new Vector3(WIDTH - 226f, tabY);
+            _buy10MBtn.relativePosition = new Vector3(WIDTH - 230f, ACTION_Y);
             _buy10MBtn.text = "10x 10M 5yr";
             _buy10MBtn.textScale = 0.75f;
             _buy10MBtn.normalBgSprite = "ButtonMenu";
@@ -260,7 +276,7 @@ namespace MyFirstMod
 
             _buy1BBtn = AddUIComponent<UIButton>();
             _buy1BBtn.size = new Vector2(90f, TAB_HEIGHT);
-            _buy1BBtn.relativePosition = new Vector3(WIDTH - 320f, tabY);
+            _buy1BBtn.relativePosition = new Vector3(WIDTH - 328f, ACTION_Y);
             _buy1BBtn.text = "Buy 1B 5yr";
             _buy1BBtn.textScale = 0.75f;
             _buy1BBtn.normalBgSprite = "ButtonMenu";
@@ -272,7 +288,7 @@ namespace MyFirstMod
 
             _pay50Btn = AddUIComponent<UIButton>();
             _pay50Btn.size = new Vector2(90f, TAB_HEIGHT);
-            _pay50Btn.relativePosition = new Vector3(WIDTH - 102f, tabY);
+            _pay50Btn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
             _pay50Btn.text = "Pay 50%";
             _pay50Btn.textScale = 0.8f;
             _pay50Btn.normalBgSprite = "ButtonMenu";
@@ -284,7 +300,7 @@ namespace MyFirstMod
 
             _pay25Btn = AddUIComponent<UIButton>();
             _pay25Btn.size = new Vector2(90f, TAB_HEIGHT);
-            _pay25Btn.relativePosition = new Vector3(WIDTH - 196f, tabY);
+            _pay25Btn.relativePosition = new Vector3(WIDTH - 200f, ACTION_Y);
             _pay25Btn.text = "Pay 25%";
             _pay25Btn.textScale = 0.8f;
             _pay25Btn.normalBgSprite = "ButtonMenu";
@@ -296,7 +312,7 @@ namespace MyFirstMod
 
             _autoHedgeBtn = AddUIComponent<UIButton>();
             _autoHedgeBtn.size = new Vector2(95f, TAB_HEIGHT);
-            _autoHedgeBtn.relativePosition = new Vector3(WIDTH - 314f, tabY);
+            _autoHedgeBtn.relativePosition = new Vector3(WIDTH - 326f, ACTION_Y);
             _autoHedgeBtn.text = "Auto-Hedge";
             _autoHedgeBtn.textScale = 0.75f;
             _autoHedgeBtn.normalBgSprite = "ButtonMenu";
@@ -308,7 +324,7 @@ namespace MyFirstMod
 
             _sell25SwapsBtn = AddUIComponent<UIButton>();
             _sell25SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
-            _sell25SwapsBtn.relativePosition = new Vector3(WIDTH - 215f, tabY);
+            _sell25SwapsBtn.relativePosition = new Vector3(WIDTH - 223f, ACTION_Y);
             _sell25SwapsBtn.text = "Sell 25%";
             _sell25SwapsBtn.textScale = 0.75f;
             _sell25SwapsBtn.normalBgSprite = "ButtonMenu";
@@ -320,7 +336,7 @@ namespace MyFirstMod
 
             _sell50SwapsBtn = AddUIComponent<UIButton>();
             _sell50SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
-            _sell50SwapsBtn.relativePosition = new Vector3(WIDTH - 146f, tabY);
+            _sell50SwapsBtn.relativePosition = new Vector3(WIDTH - 150f, ACTION_Y);
             _sell50SwapsBtn.text = "Sell 50%";
             _sell50SwapsBtn.textScale = 0.75f;
             _sell50SwapsBtn.normalBgSprite = "ButtonMenu";
@@ -332,7 +348,7 @@ namespace MyFirstMod
 
             _exitAllSwapsBtn = AddUIComponent<UIButton>();
             _exitAllSwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
-            _exitAllSwapsBtn.relativePosition = new Vector3(WIDTH - 77f, tabY);
+            _exitAllSwapsBtn.relativePosition = new Vector3(WIDTH - 77f, ACTION_Y);
             _exitAllSwapsBtn.text = "Exit All";
             _exitAllSwapsBtn.textScale = 0.75f;
             _exitAllSwapsBtn.normalBgSprite = "ButtonMenu";
