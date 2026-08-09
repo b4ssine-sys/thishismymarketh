@@ -1037,12 +1037,45 @@ namespace MyFirstMod
             }
         }
 
+        private float CalculateSwapMTM(InterestRateSwap swap)
+        {
+            float floatingRate = _benchmarkRate;
+            float remainingYears = (float)swap.RemainingPeriods / BondPricing.PeriodsPerYear;
+            if (swap.PayFixed)
+                return (floatingRate - swap.FixedRate) * swap.NotionalAmount * remainingYears;
+            else
+                return (swap.FixedRate - floatingRate) * swap.NotionalAmount * remainingYears;
+        }
+
+        private bool SettleSwapCash(float mtmValue)
+        {
+            if (mtmValue > 0f)
+            {
+                long cashInternal = (long)(mtmValue * INTERNAL_UNIT_SCALE);
+                if (cashInternal > 0)
+                    AddCashToCity(cashInternal);
+            }
+            else if (mtmValue < 0f)
+            {
+                long cashInternal = (long)(-mtmValue * INTERNAL_UNIT_SCALE);
+                if (cashInternal > 0 && !TrySpendCash(cashInternal))
+                    return false;
+            }
+            _swapPL += mtmValue;
+            return true;
+        }
+
         public bool TerminateSwap(int index)
         {
             lock (_lock)
             {
                 if (index < 0 || index >= _activeSwaps.Count)
                     return false;
+
+                float mtm = CalculateSwapMTM(_activeSwaps[index]);
+                if (!SettleSwapCash(mtm))
+                    return false;
+
                 _activeSwaps.RemoveAt(index);
                 return true;
             }
@@ -1052,8 +1085,16 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                int count = _activeSwaps.Count;
-                _activeSwaps.Clear();
+                int count = 0;
+                for (int i = _activeSwaps.Count - 1; i >= 0; i--)
+                {
+                    float mtm = CalculateSwapMTM(_activeSwaps[i]);
+                    if (SettleSwapCash(mtm))
+                    {
+                        _activeSwaps.RemoveAt(i);
+                        count++;
+                    }
+                }
                 return count;
             }
         }
@@ -1068,12 +1109,19 @@ namespace MyFirstMod
                     return false;
 
                 InterestRateSwap swap = _activeSwaps[index];
+                float fullMTM = CalculateSwapMTM(swap);
+                float settleMTM = fullMTM * fraction;
 
                 if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
                 {
+                    if (!SettleSwapCash(fullMTM))
+                        return false;
                     _activeSwaps.RemoveAt(index);
                     return true;
                 }
+
+                if (!SettleSwapCash(settleMTM))
+                    return false;
 
                 float remainFraction = 1f - fraction;
                 swap.NotionalAmount *= remainFraction;
@@ -1093,13 +1141,19 @@ namespace MyFirstMod
                 for (int i = _activeSwaps.Count - 1; i >= 0; i--)
                 {
                     InterestRateSwap swap = _activeSwaps[i];
+                    float fullMTM = CalculateSwapMTM(swap);
 
                     if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
                     {
+                        if (!SettleSwapCash(fullMTM))
+                            continue;
                         _activeSwaps.RemoveAt(i);
                     }
                     else
                     {
+                        float settleMTM = fullMTM * fraction;
+                        if (!SettleSwapCash(settleMTM))
+                            continue;
                         float remainFraction = 1f - fraction;
                         swap.NotionalAmount *= remainFraction;
                         swap.CumulativePL *= remainFraction;
