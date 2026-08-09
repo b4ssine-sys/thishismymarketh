@@ -454,11 +454,13 @@ namespace MyFirstMod
             else if (_activeTab == 2)
             {
                 _summaryLabel.text = string.Format(
-                    "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
-                    "Debt: {3}/{4} bonds  |  Owed: {5:N0}  |  {6}",
-                    ratingStr, yieldPct, dscrVal,
+                    "Rating: {0}  |  Yield: {1:F1}%  |  Default: {2:F1}%  |  Demand: {3}\n" +
+                    "Debt: {4}/{5}  |  Owed: {6:N0}  |  Capacity: {7:N0}  |  {8}",
+                    ratingStr, yieldPct, engine.DefaultProbability * 100f,
+                    engine.DemandLabelText,
                     engine.IssuedCount, engine.MaxIssuedBonds,
-                    engine.TotalDebtOwed, engine.CreditStatusLabel);
+                    engine.TotalDebtOwed, engine.AbsorptionCapacity,
+                    engine.CreditStatusLabel);
             }
             else if (_activeTab == 3)
             {
@@ -492,9 +494,10 @@ namespace MyFirstMod
                 float debtBurdenPct = engine.DebtBurden * 100f;
 
                 _summaryLabel.text = string.Format(
-                    "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}\n" +
-                    "Income: {3:N0}/tick  |  Expenses: {4:N0}/tick  |  Debt Burden: {5:F1}%",
-                    ratingStr, yieldPct, dscrVal, incomeDisplay, expenseDisplay, debtBurdenPct);
+                    "Rating: {0}  |  Yield: {1:F1}%  |  DSCR: {2:F2}  |  Demand: {3}\n" +
+                    "Income: {4:N0}/tick  |  Expenses: {5:N0}/tick  |  Default: {6:F1}%",
+                    ratingStr, yieldPct, dscrVal, engine.DemandLabelText,
+                    incomeDisplay, expenseDisplay, engine.DefaultProbability * 100f);
             }
 
             if (_activeTab == 0)
@@ -704,6 +707,8 @@ namespace MyFirstMod
                     _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
             else if (!canIssue && engine.Rating == CreditRating.D)
                 _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
+            else if (!canIssue && engine.DemandScore < 0.10f)
+                _scrollHintLabel.text = "NO DEMAND - CITIZENS UNWILLING TO BUY BONDS";
             else if (!canIssue)
                 _scrollHintLabel.text = string.Format("MAX CAPACITY ({0}/{0}) - REPAY EXISTING DEBT FIRST",
                     engine.MaxIssuedBonds);

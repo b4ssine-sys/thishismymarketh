@@ -43,6 +43,17 @@ namespace MyFirstMod
         private float _revenueVolatility;
         private float _swapPL;
 
+        private float _demandScore;
+        private float _defaultProbability;
+        private float _financialHealth;
+        private float _citizenConfidence;
+        private float _bondAppeal;
+        private float _absorptionCapacity;
+        private int _population;
+        private float _happiness;
+        private float _employmentRate;
+        private float _populationGrowth;
+
         private float _grossIncome;
         private float _totalExpenses;
         private float _debtBurden;
@@ -92,6 +103,12 @@ namespace MyFirstMod
         public int SwapCount { get { lock (_lock) { return _activeSwaps.Count; } } }
         public int MaxActiveSwaps { get { return MAX_ACTIVE_SWAPS; } }
 
+        public float DemandScore { get { return _demandScore; } }
+        public float DefaultProbability { get { return _defaultProbability; } }
+        public float AbsorptionCapacity { get { return _absorptionCapacity; } }
+        public int Population { get { return _population; } }
+        public string DemandLabelText { get { return CimDemandEngine.DemandLabel(_demandScore); } }
+
         public float TotalHedgedNotional
         {
             get
@@ -137,7 +154,8 @@ namespace MyFirstMod
             {
                 lock (_lock)
                 {
-                    return _issuedBonds.Count < MAX_ISSUED_BONDS && _rating != CreditRating.D;
+                    return _issuedBonds.Count < MAX_ISSUED_BONDS && _rating != CreditRating.D
+                        && _demandScore >= CimDemandEngine.MIN_ISSUABLE_DEMAND;
                 }
             }
         }
@@ -287,7 +305,6 @@ namespace MyFirstMod
             float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
             float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
             _requiredYield = baseYield + defaultSpike;
-            if (_requiredYield > 0.50f) _requiredYield = 0.50f;
 
             float avgPositiveFlow = totalPositive / WINDOW_SIZE;
             if (avgPositiveFlow > 0f)
@@ -311,6 +328,22 @@ namespace MyFirstMod
             {
                 _revenueVolatility = 0f;
             }
+
+            ReadCityDemographicsInternal();
+            _financialHealth = CimDemandEngine.CalculateFinancialHealth(_rating, _dscr, _debtBurden);
+            _defaultProbability = CimDemandEngine.CalculateDefaultProbability(
+                _debtBurden, _dscr, _defaultPenalty, _revenueVolatility);
+            _citizenConfidence = CimDemandEngine.CalculateCitizenConfidence(
+                _happiness, _employmentRate, _populationGrowth);
+            _bondAppeal = CimDemandEngine.CalculateBondAppeal(
+                _requiredYield, _benchmarkRate, _defaultProbability);
+            _demandScore = CimDemandEngine.CalculateDemandScore(
+                _financialHealth, _citizenConfidence, _bondAppeal);
+            _requiredYield = CimDemandEngine.AdjustYieldForDemand(_requiredYield, _demandScore);
+            if (_requiredYield > 0.50f) _requiredYield = 0.50f;
+            float avgIncomeForCap = _grossIncome / WINDOW_SIZE;
+            _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
+                _population, avgIncomeForCap, _demandScore);
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -328,6 +361,34 @@ namespace MyFirstMod
             if (totalDebtFace <= 0f)
                 return hedgedNotional > 0f ? 2f : 0f;
             return (hedgedNotional - totalDebtFace) / totalDebtFace;
+        }
+
+        private void ReadCityDemographicsInternal()
+        {
+            float avgIncome = _grossIncome / WINDOW_SIZE;
+            float avgExpense = _totalExpenses / WINDOW_SIZE;
+
+            _population = Math.Max(100, (int)(avgIncome * 10f));
+
+            float dscrHappy = _dscr / 3f;
+            if (dscrHappy > 1f) dscrHappy = 1f;
+            if (dscrHappy < 0f) dscrHappy = 0f;
+            float noiHappy = _noi > 0f
+                ? 0.6f + Math.Min(_noi / 5000f, 0.4f)
+                : Math.Max(0.1f, 0.5f + _noi / 10000f);
+            _happiness = dscrHappy * 0.6f + noiHappy * 0.4f;
+            if (_happiness < 0f) _happiness = 0f;
+            if (_happiness > 1f) _happiness = 1f;
+
+            float totalFlow = avgIncome + avgExpense;
+            _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+            if (_employmentRate < 0.2f) _employmentRate = 0.2f;
+            if (_employmentRate > 0.98f) _employmentRate = 0.98f;
+
+            if (_noi > 0f)
+                _populationGrowth = Math.Min(_noi / 10000f, 0.05f);
+            else
+                _populationGrowth = Math.Max(_noi / 10000f, -0.05f);
         }
 
         private float CalculateActiveDebtService()
@@ -561,6 +622,16 @@ namespace MyFirstMod
             _nextSwapId = 0;
             _revenueVolatility = 0f;
             _swapPL = 0f;
+            _demandScore = 0f;
+            _defaultProbability = 0f;
+            _financialHealth = 0f;
+            _citizenConfidence = 0f;
+            _bondAppeal = 0f;
+            _absorptionCapacity = 0f;
+            _population = 0;
+            _happiness = 0.5f;
+            _employmentRate = 0.7f;
+            _populationGrowth = 0f;
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -660,10 +731,19 @@ namespace MyFirstMod
                     return false;
                 if (_rating == CreditRating.D)
                     return false;
+                if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
+                    return false;
 
                 string name = ISSUE_NAMES[optionIndex];
                 float face = ISSUE_FACES[optionIndex];
                 int periods = ISSUE_PERIODS[optionIndex];
+
+                float currentFace = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    currentFace += _issuedBonds[i].FaceValue;
+                if (currentFace + face > _absorptionCapacity)
+                    return false;
+
                 float couponRate = _requiredYield;
 
                 long proceedsInternal = (long)(face * INTERNAL_UNIT_SCALE);
