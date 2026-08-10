@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 3;
+        private const byte SAVE_VERSION = 4;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -131,6 +131,12 @@ namespace MyFirstMod
         public float DefaultProbability { get { return _defaultProbability; } }
         public float AbsorptionCapacity { get { return _absorptionCapacity; } }
         public int Population { get { return _population; } }
+        public float Happiness { get { return _happiness; } }
+        public float EmploymentRate { get { return _employmentRate; } }
+        public float PopulationGrowth { get { return _populationGrowth; } }
+        public float CitizenConfidence { get { return _citizenConfidence; } }
+        public float BondAppeal { get { return _bondAppeal; } }
+        public float FinancialHealth { get { return _financialHealth; } }
         public string DemandLabelText { get { return CimDemandEngine.DemandLabel(_demandScore); } }
         public float CitizenBuyVolume { get { return _citizenBuyVolume; } }
         public float CitizenSellVolume { get { return _citizenSellVolume; } }
@@ -790,6 +796,13 @@ namespace MyFirstMod
             rp.RealizedPL = _realizedPL;
             rp.SwapPL = _swapPL;
             rp.RevenueVolatility = _revenueVolatility;
+            rp.Happiness = _happiness;
+            rp.EmploymentRate = _employmentRate;
+            rp.PopulationGrowth = _populationGrowth;
+            rp.CitizenConfidence = _citizenConfidence;
+            rp.BondAppeal = _bondAppeal;
+            rp.FinancialHealth = _financialHealth;
+            rp.CitizenProceeds = _totalCitizenProceeds;
             rp.Outlook = GenerateOutlookInternal();
 
             _reportHistory.Add(rp);
@@ -1580,6 +1593,13 @@ namespace MyFirstMod
                         w.Write(rp.SwapPL);
                         w.Write(rp.RevenueVolatility);
                         w.Write(rp.Outlook != null ? rp.Outlook : "");
+                        w.Write(rp.Happiness);
+                        w.Write(rp.EmploymentRate);
+                        w.Write(rp.PopulationGrowth);
+                        w.Write(rp.CitizenConfidence);
+                        w.Write(rp.BondAppeal);
+                        w.Write(rp.FinancialHealth);
+                        w.Write(rp.CitizenProceeds);
                     }
 
                     w.Write(_totalCitizenProceeds);
@@ -1706,6 +1726,16 @@ namespace MyFirstMod
                         rp.SwapPL = r.ReadSingle();
                         rp.RevenueVolatility = r.ReadSingle();
                         rp.Outlook = r.ReadString();
+                        if (version >= 4)
+                        {
+                            rp.Happiness = r.ReadSingle();
+                            rp.EmploymentRate = r.ReadSingle();
+                            rp.PopulationGrowth = r.ReadSingle();
+                            rp.CitizenConfidence = r.ReadSingle();
+                            rp.BondAppeal = r.ReadSingle();
+                            rp.FinancialHealth = r.ReadSingle();
+                            rp.CitizenProceeds = r.ReadSingle();
+                        }
                         _reportHistory.Add(rp);
                     }
                 }

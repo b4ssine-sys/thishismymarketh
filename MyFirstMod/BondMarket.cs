@@ -97,6 +97,13 @@ namespace MyFirstMod
         public float SwapPL;
         public float RevenueVolatility;
         public string Outlook;
+        public float Happiness;
+        public float EmploymentRate;
+        public float PopulationGrowth;
+        public float CitizenConfidence;
+        public float BondAppeal;
+        public float FinancialHealth;
+        public float CitizenProceeds;
     }
 
     public static class BondPricing

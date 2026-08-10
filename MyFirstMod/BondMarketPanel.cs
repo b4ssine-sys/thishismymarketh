@@ -549,10 +549,14 @@ namespace MyFirstMod
             {
                 int rCount = engine.ReportCount;
                 int qNum = engine.CurrentQuarter;
+                float unemp = (1f - engine.EmploymentRate) * 100f;
                 _summaryLabel.text = string.Format(
-                    "Quarterly Economic Report  |  {0} reports available\n" +
-                    "Current Quarter: Q{1}  |  Rating: {2}  |  DSCR: {3:F2}",
-                    rCount, qNum, ratingStr, dscrVal);
+                    "Q{0} Report  |  {1} avail  |  {2}  |  Health: {3:F0}%  |  Unemp: {4:F1}%\n" +
+                    "Jobs: {5:F0}%  |  Confidence: {6:F0}%  |  Fin Health: {7:F0}%  |  Pop: {8:N0}",
+                    qNum, rCount, ratingStr,
+                    engine.Happiness * 100f, unemp,
+                    engine.EmploymentRate * 100f, engine.CitizenConfidence * 100f,
+                    engine.FinancialHealth * 100f, engine.Population);
             }
             else if (_activeTab == 5)
             {
@@ -1178,43 +1182,50 @@ namespace MyFirstMod
             string pressureLabel = CimDemandEngine.PressureLabel(rp.SmoothedPressure);
 
             _infoLabels[0].text = string.Format(
-                "Q{0} ECONOMIC REPORT  |  Rating: {1}  |  {2}",
-                rp.Quarter, ratingStr, rp.CreditStatus);
-            _priceLabels[0].text = string.Format("DSCR: {0:F2}", rp.DSCR);
+                "Q{0} REPORT  |  {1}  |  DSCR: {2:F2}  |  {3}",
+                rp.Quarter, ratingStr, rp.DSCR, rp.CreditStatus);
+            _priceLabels[0].text = string.Format("Pop: {0:N0}", rp.Population);
 
             _infoLabels[1].text = string.Format(
-                "Revenue: {0:N0}  |  Expenses: {1:N0}  |  NOI: {2:N0}",
-                rp.GrossIncome, rp.TotalExpenses, rp.NOI);
-            _priceLabels[1].text = string.Format("Burden: {0:F1}%", rp.DebtBurden * 100f);
+                "Rev: {0:N0}  |  Exp: {1:N0}  |  NOI: {2:N0}  |  Burden: {3:F1}%",
+                rp.GrossIncome, rp.TotalExpenses, rp.NOI, rp.DebtBurden * 100f);
+            _priceLabels[1].text = string.Format("Vol: {0:F1}%", rp.RevenueVolatility * 100f);
 
+            string growthStr = rp.PopulationGrowth >= 0
+                ? "+" + (rp.PopulationGrowth * 100f).ToString("F1") + "%"
+                : (rp.PopulationGrowth * 100f).ToString("F1") + "%";
+            float unemploymentPct = (1f - rp.EmploymentRate) * 100f;
             _infoLabels[2].text = string.Format(
-                "Bonds: {0}/{1}  |  Face: {2:N0}  |  Sub: {3:F0}%  |  Coupons: {4:N0}",
-                rp.IssuedBonds, rp.MaxBonds, rp.DebtFace,
-                rp.AvgSubscription * 100f, rp.CouponsPaid);
+                "Health: {0:F0}%  |  Jobs: {1:F0}%  |  Unemp: {2:F1}%  |  Growth: {3}  |  Confidence: {4:F0}%",
+                rp.Happiness * 100f, rp.EmploymentRate * 100f,
+                unemploymentPct, growthStr, rp.CitizenConfidence * 100f);
+            _priceLabels[2].text = string.Format("Fin: {0:F0}%", rp.FinancialHealth * 100f);
+
             string dfltsStr = rp.QuarterDefaults > 0
-                ? string.Format("Dflts: {0}", rp.QuarterDefaults)
-                : "No Dflts";
-            _priceLabels[2].text = dfltsStr;
-
+                ? string.Format("  |  Dflts: {0}", rp.QuarterDefaults)
+                : "";
             _infoLabels[3].text = string.Format(
-                "Bench: {0:F1}%  |  Yield: {1:F1}%  |  Demand: {2}  |  Risk: {3:F1}%",
-                rp.BenchmarkRate * 100f, rp.RequiredYield * 100f,
-                demandLabel, rp.DefaultProbability * 100f);
-            _priceLabels[3].text = string.Format("Pop: {0:N0}", rp.Population);
+                "Debt: {0}/{1}  |  Face: {2:N0}  |  Sub: {3:F0}%  |  Risk: {4:F1}%{5}",
+                rp.IssuedBonds, rp.MaxBonds, rp.DebtFace,
+                rp.AvgSubscription * 100f, rp.DefaultProbability * 100f, dfltsStr);
+            _priceLabels[3].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
 
-            _infoLabels[4].text = string.Format(
-                "Portfolio: {0} bonds  |  Swaps: {1}  |  Hedged: {2:N0}",
-                rp.PortfolioBonds, rp.SwapCount, rp.HedgedNotional);
             string bondPLStr = rp.RealizedPL >= 0
                 ? "+" + rp.RealizedPL.ToString("N0")
                 : rp.RealizedPL.ToString("N0");
             string swapPLStr = rp.SwapPL >= 0
                 ? "+" + rp.SwapPL.ToString("N0")
                 : rp.SwapPL.ToString("N0");
-            _priceLabels[4].text = string.Format("P/L: {0}", bondPLStr);
+            string citizenStr = rp.CitizenProceeds > 0f
+                ? string.Format("  |  Citizen $: {0:N0}", rp.CitizenProceeds)
+                : "";
+            _infoLabels[4].text = string.Format(
+                "Bonds P/L: {0}  |  Swaps: {1} ({2})  |  Hedged: {3:N0}{4}",
+                bondPLStr, rp.SwapCount, swapPLStr, rp.HedgedNotional, citizenStr);
+            _priceLabels[4].text = string.Format("Appeal: {0:F0}%", rp.BondAppeal * 100f);
 
             _infoLabels[5].text = rp.Outlook;
-            _priceLabels[5].text = string.Format("Swap: {0}", swapPLStr);
+            _priceLabels[5].text = string.Format("{0} | {1}", pressureLabel, demandLabel);
 
             for (int i = 0; i < MAX_ROWS; i++)
                 _actionButtons[i].isVisible = false;
@@ -1225,8 +1236,9 @@ namespace MyFirstMod
             else
                 _scrollHintLabel.text = "";
 
-            _footerLabel.text = string.Format("Q{0}  |  {1}  |  {2}  |  Vol: {3:F1}%",
-                rp.Quarter, pressureLabel, demandLabel, rp.RevenueVolatility * 100f);
+            _footerLabel.text = string.Format("Q{0}  |  {1}  |  {2}  |  Health: {3:F0}%  |  Jobs: {4:F0}%",
+                rp.Quarter, pressureLabel, demandLabel,
+                rp.Happiness * 100f, rp.EmploymentRate * 100f);
         }
 
         private void RefreshReportHistory(int total)
@@ -1246,10 +1258,12 @@ namespace MyFirstMod
                         ? "+" + rp.NOI.ToString("N0")
                         : rp.NOI.ToString("N0");
 
+                    float unemp = (1f - rp.EmploymentRate) * 100f;
                     _infoLabels[i].text = string.Format(
-                        "Q{0}  |  {1}  |  DSCR: {2:F2}  |  NOI: {3}  |  Debt: {4:N0}  |  {5}",
+                        "Q{0}  {1}  DSCR:{2:F2}  NOI:{3}  Hlth:{4:F0}%  Jobs:{5:F0}%  Unemp:{6:F1}%  |  {7}",
                         rp.Quarter, ratingStr, rp.DSCR, noiStr,
-                        rp.DebtFace, rp.CreditStatus);
+                        rp.Happiness * 100f, rp.EmploymentRate * 100f, unemp,
+                        rp.CreditStatus);
                     _priceLabels[i].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
                     _actionButtons[i].text = "View";
                     _actionButtons[i].isVisible = true;
