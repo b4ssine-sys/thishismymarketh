@@ -870,7 +870,7 @@ namespace MyFirstMod
             string status = engine.CreditStatusLabel;
             int penalty = engine.DefaultPenalty;
             string penaltyStr = penalty > 0
-                ? " | Penalty: +" + (penalty * 0.048f).ToString("F2") + "%"
+                ? " | Penalty: +" + (penalty * 0.25f).ToString("F1") + "%"
                 : "";
             string citizenStr = engine.TotalCitizenProceeds > 0f
                 ? string.Format("  |  Citizen $: {0:N0}", engine.TotalCitizenProceeds)

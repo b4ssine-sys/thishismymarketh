@@ -105,9 +105,9 @@ namespace MyFirstMod
 
         public static float AdjustYieldForDemand(float baseYield, float demandScore)
         {
-            float multiplier = 1f + (0.5f - demandScore) * 0.70f;
-            if (multiplier < 0.85f) multiplier = 0.85f;
-            if (multiplier > 1.20f) multiplier = 1.20f;
+            float multiplier = 1f + (0.5f - demandScore) * 0.40f;
+            if (multiplier < 0.90f) multiplier = 0.90f;
+            if (multiplier > 1.15f) multiplier = 1.15f;
             return baseYield * multiplier;
         }
 
@@ -173,9 +173,9 @@ namespace MyFirstMod
 
         public static float AdjustYieldForPressure(float baseYield, float pressure)
         {
-            float multiplier = 1f + pressure * 0.15f;
-            if (multiplier < 0.90f) multiplier = 0.90f;
-            if (multiplier > 1.15f) multiplier = 1.15f;
+            float multiplier = 1f + pressure * 0.10f;
+            if (multiplier < 0.93f) multiplier = 0.93f;
+            if (multiplier > 1.10f) multiplier = 1.10f;
             return baseYield * multiplier;
         }
 
