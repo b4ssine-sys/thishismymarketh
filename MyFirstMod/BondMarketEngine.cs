@@ -710,9 +710,17 @@ namespace MyFirstMod
 
                         float share = soldValue / totalSold;
                         float sold = sellable * share;
+                        float prevFraction = ib.SoldFraction;
                         float fractionSold = sold / ib.FaceValue;
                         ib.SoldFraction -= fractionSold;
                         if (ib.SoldFraction < 0.05f) ib.SoldFraction = 0.05f;
+
+                        float actualRedeemed = (prevFraction - ib.SoldFraction) * ib.FaceValue;
+                        if (actualRedeemed > 0f)
+                        {
+                            long cost = (long)(actualRedeemed * INTERNAL_UNIT_SCALE);
+                            TrySpendCash(cost);
+                        }
                     }
                 }
             }
