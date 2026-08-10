@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 1;
+        private const byte SAVE_VERSION = 2;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -68,6 +68,13 @@ namespace MyFirstMod
         private readonly List<CimTransaction> _transactionLog = new List<CimTransaction>();
         private const int MAX_TRANSACTION_LOG = 50;
         private int _transactionSeq;
+
+        private const int PERIODS_PER_QUARTER = 3;
+        private const int MAX_REPORT_HISTORY = 8;
+        private int _periodsSinceReport;
+        private int _quarterNumber;
+        private int _quarterDefaults;
+        private readonly List<QuarterlyReport> _reportHistory = new List<QuarterlyReport>();
 
         private float _grossIncome;
         private float _totalExpenses;
@@ -128,6 +135,18 @@ namespace MyFirstMod
         public float MarketPressure { get { return _smoothedPressure; } }
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
         public int TransactionLogCount { get { return _transactionLog.Count; } }
+        public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
+        public int CurrentQuarter { get { return _quarterNumber; } }
+
+        public void GetReportSnapshot(List<QuarterlyReport> dest)
+        {
+            dest.Clear();
+            lock (_lock)
+            {
+                for (int i = 0; i < _reportHistory.Count; i++)
+                    dest.Add(_reportHistory[i]);
+            }
+        }
 
         public void GetTransactionLogSnapshot(List<CimTransaction> dest)
         {
@@ -492,6 +511,13 @@ namespace MyFirstMod
             {
                 _defaultPenalty = Math.Max(0, _defaultPenalty - DEFAULT_DECAY_PER_PERIOD);
             }
+
+            _periodsSinceReport++;
+            if (_periodsSinceReport >= PERIODS_PER_QUARTER)
+            {
+                _periodsSinceReport = 0;
+                GenerateQuarterlyReportInternal();
+            }
         }
 
         private void ServiceIssuedBondsInternal()
@@ -535,6 +561,7 @@ namespace MyFirstMod
         {
             _defaultPenalty += 3;
             _totalDefaults++;
+            _quarterDefaults++;
         }
 
         private void SettleSwapsInternal()
@@ -665,6 +692,93 @@ namespace MyFirstMod
                 _transactionLog.RemoveAt(0);
         }
 
+        private void GenerateQuarterlyReportInternal()
+        {
+            _quarterNumber++;
+
+            QuarterlyReport rp = new QuarterlyReport();
+            rp.Quarter = _quarterNumber;
+            rp.Rating = _rating;
+            rp.CreditStatus = CreditStatusLabel;
+            rp.DSCR = _dscr;
+            rp.DebtBurden = _debtBurden;
+            rp.GrossIncome = _grossIncome;
+            rp.TotalExpenses = _totalExpenses;
+            rp.NOI = _noi;
+            rp.DefaultProbability = _defaultProbability;
+            rp.IssuedBonds = _issuedBonds.Count;
+            rp.MaxBonds = MAX_ISSUED_BONDS;
+
+            float debtFace = 0f;
+            float debtOwed = 0f;
+            float totalSub = 0f;
+            float couponsPaid = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+            {
+                Bond ib = _issuedBonds[i];
+                debtFace += ib.SubscribedFace;
+                float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
+                debtOwed += ib.SubscribedFace + rc;
+                totalSub += ib.SoldFraction;
+                couponsPaid += ib.CouponsReceived;
+            }
+            rp.DebtFace = debtFace;
+            rp.DebtOwed = debtOwed;
+            rp.AvgSubscription = _issuedBonds.Count > 0 ? totalSub / _issuedBonds.Count : 0f;
+            rp.CouponsPaid = couponsPaid;
+            rp.QuarterDefaults = _quarterDefaults;
+            rp.TotalDefaults = _totalDefaults;
+            rp.BenchmarkRate = _benchmarkRate;
+            rp.RequiredYield = _requiredYield;
+            rp.DemandScore = _demandScore;
+            rp.SmoothedPressure = _smoothedPressure;
+            rp.AbsorptionCapacity = _absorptionCapacity;
+            rp.Population = _population;
+            rp.PortfolioBonds = _portfolioBonds.Count;
+            rp.SwapCount = _activeSwaps.Count;
+
+            float hedged = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedged += _activeSwaps[i].NotionalAmount;
+            rp.HedgedNotional = hedged;
+
+            rp.RealizedPL = _realizedPL;
+            rp.SwapPL = _swapPL;
+            rp.RevenueVolatility = _revenueVolatility;
+            rp.Outlook = GenerateOutlookInternal();
+
+            _reportHistory.Add(rp);
+            if (_reportHistory.Count > MAX_REPORT_HISTORY)
+                _reportHistory.RemoveAt(0);
+
+            _quarterDefaults = 0;
+        }
+
+        private string GenerateOutlookInternal()
+        {
+            if (_rating == CreditRating.D)
+                return "CRITICAL: City in default. Bond access suspended.";
+            if (_rating == CreditRating.CCC)
+                return "WARNING: Credit severely impaired. Fiscal action needed.";
+            if (_dscr < 1.0f)
+                return "CAUTION: Revenue insufficient for debt obligations.";
+            if (_debtBurden > 0.30f)
+                return "ELEVATED RISK: High debt burden straining finances.";
+            if (_defaultPenalty > 6)
+                return "DISTRESSED: Defaults weighing on yields and credit.";
+            if (_defaultPenalty > 0)
+                return "RECOVERING: Working through prior default penalties.";
+            if (_demandScore >= 0.80f && _dscr > 2.0f)
+                return "EXCELLENT: Strong finances, robust investor demand.";
+            if (_demandScore >= 0.60f && _dscr > 1.5f)
+                return "POSITIVE: Healthy fundamentals, good market access.";
+            if (_demandScore >= 0.40f)
+                return "STABLE: Adequate conditions for operations.";
+            if (_demandScore >= 0.20f)
+                return "MIXED: Weakening demand may limit issuance.";
+            return "CHALLENGING: Low demand and weak fiscal position.";
+        }
+
         private void GenerateInitialBondsInternal()
         {
             _marketBonds.Clear();
@@ -774,6 +888,10 @@ namespace MyFirstMod
             _pressureHistoryIndex = 0;
             _transactionLog.Clear();
             _transactionSeq = 0;
+            _periodsSinceReport = 0;
+            _quarterNumber = 0;
+            _quarterDefaults = 0;
+            _reportHistory.Clear();
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -1333,6 +1451,45 @@ namespace MyFirstMod
                         w.Write(tx.Detail != null ? tx.Detail : "");
                     }
 
+                    w.Write(_periodsSinceReport);
+                    w.Write(_quarterNumber);
+                    w.Write(_quarterDefaults);
+                    w.Write(_reportHistory.Count);
+                    for (int i = 0; i < _reportHistory.Count; i++)
+                    {
+                        QuarterlyReport rp = _reportHistory[i];
+                        w.Write(rp.Quarter);
+                        w.Write((int)rp.Rating);
+                        w.Write(rp.CreditStatus != null ? rp.CreditStatus : "");
+                        w.Write(rp.DSCR);
+                        w.Write(rp.DebtBurden);
+                        w.Write(rp.GrossIncome);
+                        w.Write(rp.TotalExpenses);
+                        w.Write(rp.NOI);
+                        w.Write(rp.DefaultProbability);
+                        w.Write(rp.IssuedBonds);
+                        w.Write(rp.MaxBonds);
+                        w.Write(rp.DebtFace);
+                        w.Write(rp.DebtOwed);
+                        w.Write(rp.AvgSubscription);
+                        w.Write(rp.CouponsPaid);
+                        w.Write(rp.QuarterDefaults);
+                        w.Write(rp.TotalDefaults);
+                        w.Write(rp.BenchmarkRate);
+                        w.Write(rp.RequiredYield);
+                        w.Write(rp.DemandScore);
+                        w.Write(rp.SmoothedPressure);
+                        w.Write(rp.AbsorptionCapacity);
+                        w.Write(rp.Population);
+                        w.Write(rp.PortfolioBonds);
+                        w.Write(rp.SwapCount);
+                        w.Write(rp.HedgedNotional);
+                        w.Write(rp.RealizedPL);
+                        w.Write(rp.SwapPL);
+                        w.Write(rp.RevenueVolatility);
+                        w.Write(rp.Outlook != null ? rp.Outlook : "");
+                    }
+
                     w.Flush();
                     return ms.ToArray();
                 }
@@ -1352,7 +1509,7 @@ namespace MyFirstMod
                 BinaryReader r = new BinaryReader(ms);
 
                 byte version = r.ReadByte();
-                if (version != SAVE_VERSION)
+                if (version < 1 || version > SAVE_VERSION)
                 {
                     Debug.Log("[MyFirstMod] RestoreState: Unknown version " + version + ", skipping.");
                     return;
@@ -1415,9 +1572,53 @@ namespace MyFirstMod
 
                 _prevMoneySet = false;
 
+                if (version >= 2)
+                {
+                    _periodsSinceReport = r.ReadInt32();
+                    _quarterNumber = r.ReadInt32();
+                    _quarterDefaults = r.ReadInt32();
+                    _reportHistory.Clear();
+                    int reportCount = r.ReadInt32();
+                    for (int i = 0; i < reportCount; i++)
+                    {
+                        QuarterlyReport rp = new QuarterlyReport();
+                        rp.Quarter = r.ReadInt32();
+                        rp.Rating = (CreditRating)r.ReadInt32();
+                        rp.CreditStatus = r.ReadString();
+                        rp.DSCR = r.ReadSingle();
+                        rp.DebtBurden = r.ReadSingle();
+                        rp.GrossIncome = r.ReadSingle();
+                        rp.TotalExpenses = r.ReadSingle();
+                        rp.NOI = r.ReadSingle();
+                        rp.DefaultProbability = r.ReadSingle();
+                        rp.IssuedBonds = r.ReadInt32();
+                        rp.MaxBonds = r.ReadInt32();
+                        rp.DebtFace = r.ReadSingle();
+                        rp.DebtOwed = r.ReadSingle();
+                        rp.AvgSubscription = r.ReadSingle();
+                        rp.CouponsPaid = r.ReadSingle();
+                        rp.QuarterDefaults = r.ReadInt32();
+                        rp.TotalDefaults = r.ReadInt32();
+                        rp.BenchmarkRate = r.ReadSingle();
+                        rp.RequiredYield = r.ReadSingle();
+                        rp.DemandScore = r.ReadSingle();
+                        rp.SmoothedPressure = r.ReadSingle();
+                        rp.AbsorptionCapacity = r.ReadSingle();
+                        rp.Population = r.ReadInt32();
+                        rp.PortfolioBonds = r.ReadInt32();
+                        rp.SwapCount = r.ReadInt32();
+                        rp.HedgedNotional = r.ReadSingle();
+                        rp.RealizedPL = r.ReadSingle();
+                        rp.SwapPL = r.ReadSingle();
+                        rp.RevenueVolatility = r.ReadSingle();
+                        rp.Outlook = r.ReadString();
+                        _reportHistory.Add(rp);
+                    }
+                }
+
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +
                     _portfolioBonds.Count + "/" + _issuedBonds.Count + "/" + _marketBonds.Count +
-                    " Swaps=" + _activeSwaps.Count);
+                    " Swaps=" + _activeSwaps.Count + " Reports=" + _reportHistory.Count);
             }
             catch (Exception ex)
             {

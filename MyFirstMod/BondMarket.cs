@@ -65,6 +65,40 @@ namespace MyFirstMod
         public string Detail;
     }
 
+    public class QuarterlyReport
+    {
+        public int Quarter;
+        public CreditRating Rating;
+        public string CreditStatus;
+        public float DSCR;
+        public float DebtBurden;
+        public float GrossIncome;
+        public float TotalExpenses;
+        public float NOI;
+        public float DefaultProbability;
+        public int IssuedBonds;
+        public int MaxBonds;
+        public float DebtFace;
+        public float DebtOwed;
+        public float AvgSubscription;
+        public float CouponsPaid;
+        public int QuarterDefaults;
+        public int TotalDefaults;
+        public float BenchmarkRate;
+        public float RequiredYield;
+        public float DemandScore;
+        public float SmoothedPressure;
+        public float AbsorptionCapacity;
+        public int Population;
+        public int PortfolioBonds;
+        public int SwapCount;
+        public float HedgedNotional;
+        public float RealizedPL;
+        public float SwapPL;
+        public float RevenueVolatility;
+        public string Outlook;
+    }
+
     public static class BondPricing
     {
         public const int PeriodsPerYear = 12;

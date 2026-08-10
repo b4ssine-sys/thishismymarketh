@@ -40,8 +40,8 @@ namespace MyFirstMod
         // LAYOUT MAP (800x520) - master reference for all UI element positions
         //  y=0-40     Title bar (drag handle + close)
         //  y=42-100   Summary (2-line financial overview)
-        //  y=102-132  Tab row: Market|Portfolio|Debt|Hedging|Positions|Activity
-        //             Tabs: 6 x 88w, gap 4, x=12..560
+        //  y=102-132  Tab row: Market|Portfolio|Debt|Hedging|Positions|Activity|Report
+        //             Tabs: 7 x 76w, gap 4, x=12..572
         //  y=138-378  List panel (6 rows x 36h + 24 pad)
         //  y=388-418  Action buttons (per-tab, right-aligned, hidden when inactive)
         //    Tab 0 Market:    [Buy 1B @x472 w90] [10x10M @x570 w105] [10x1M @x683 w105]
@@ -96,12 +96,18 @@ namespace MyFirstMod
         private UIButton _hedgingTabBtn;
         private UIButton _positionsTabBtn;
         private UIButton _activityTabBtn;
+        private UIButton _reportTabBtn;
         private UIButton _autoHedgeBtn;
         private UIButton _sell25SwapsBtn;
         private UIButton _sell50SwapsBtn;
         private UIButton _exitAllSwapsBtn;
 
         private readonly List<CimTransaction> _cachedTransactions = new List<CimTransaction>();
+        private readonly List<QuarterlyReport> _cachedReports = new List<QuarterlyReport>();
+        private int _reportViewIndex;
+        private int _reportMode;
+        private UIButton _reportLatestBtn;
+        private UIButton _reportHistoryBtn;
 
         public override void Start()
         {
@@ -169,14 +175,14 @@ namespace MyFirstMod
         private void CreateTabs()
         {
             float tabY = HEADER_HEIGHT + 2f;
-            float tabW = 88f;
+            float tabW = 76f;
             float gap = 4f;
 
             _marketTabBtn = AddUIComponent<UIButton>();
             _marketTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _marketTabBtn.relativePosition = new Vector3(12f, tabY);
             _marketTabBtn.text = "Market";
-            _marketTabBtn.textScale = 0.85f;
+            _marketTabBtn.textScale = 0.8f;
             _marketTabBtn.normalBgSprite = "ButtonMenu";
             _marketTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _marketTabBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -187,7 +193,7 @@ namespace MyFirstMod
             _portfolioTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _portfolioTabBtn.relativePosition = new Vector3(12f + tabW + gap, tabY);
             _portfolioTabBtn.text = "Portfolio";
-            _portfolioTabBtn.textScale = 0.85f;
+            _portfolioTabBtn.textScale = 0.8f;
             _portfolioTabBtn.normalBgSprite = "ButtonMenu";
             _portfolioTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _portfolioTabBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -198,7 +204,7 @@ namespace MyFirstMod
             _cityDebtTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _cityDebtTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 2f, tabY);
             _cityDebtTabBtn.text = "Debt";
-            _cityDebtTabBtn.textScale = 0.85f;
+            _cityDebtTabBtn.textScale = 0.8f;
             _cityDebtTabBtn.normalBgSprite = "ButtonMenu";
             _cityDebtTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _cityDebtTabBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -209,7 +215,7 @@ namespace MyFirstMod
             _hedgingTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _hedgingTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 3f, tabY);
             _hedgingTabBtn.text = "Hedging";
-            _hedgingTabBtn.textScale = 0.85f;
+            _hedgingTabBtn.textScale = 0.8f;
             _hedgingTabBtn.normalBgSprite = "ButtonMenu";
             _hedgingTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _hedgingTabBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -220,7 +226,7 @@ namespace MyFirstMod
             _positionsTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _positionsTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 4f, tabY);
             _positionsTabBtn.text = "Positions";
-            _positionsTabBtn.textScale = 0.85f;
+            _positionsTabBtn.textScale = 0.8f;
             _positionsTabBtn.normalBgSprite = "ButtonMenu";
             _positionsTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _positionsTabBtn.pressedBgSprite = "ButtonMenuPressed";
@@ -231,12 +237,23 @@ namespace MyFirstMod
             _activityTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _activityTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 5f, tabY);
             _activityTabBtn.text = "Activity";
-            _activityTabBtn.textScale = 0.85f;
+            _activityTabBtn.textScale = 0.8f;
             _activityTabBtn.normalBgSprite = "ButtonMenu";
             _activityTabBtn.hoveredBgSprite = "ButtonMenuHovered";
             _activityTabBtn.pressedBgSprite = "ButtonMenuPressed";
             _activityTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _activityTabBtn.eventClick += OnActivityTab;
+
+            _reportTabBtn = AddUIComponent<UIButton>();
+            _reportTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
+            _reportTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 6f, tabY);
+            _reportTabBtn.text = "Report";
+            _reportTabBtn.textScale = 0.8f;
+            _reportTabBtn.normalBgSprite = "ButtonMenu";
+            _reportTabBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _reportTabBtn.pressedBgSprite = "ButtonMenuPressed";
+            _reportTabBtn.focusedBgSprite = "ButtonMenuFocused";
+            _reportTabBtn.eventClick += OnReportTab;
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
@@ -358,6 +375,30 @@ namespace MyFirstMod
             _exitAllSwapsBtn.eventClick += OnExitAllSwapsClick;
             _exitAllSwapsBtn.isVisible = false;
 
+            _reportLatestBtn = AddUIComponent<UIButton>();
+            _reportLatestBtn.size = new Vector2(90f, TAB_HEIGHT);
+            _reportLatestBtn.relativePosition = new Vector3(WIDTH - 200f, ACTION_Y);
+            _reportLatestBtn.text = "Latest";
+            _reportLatestBtn.textScale = 0.8f;
+            _reportLatestBtn.normalBgSprite = "ButtonMenu";
+            _reportLatestBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _reportLatestBtn.pressedBgSprite = "ButtonMenuPressed";
+            _reportLatestBtn.focusedBgSprite = "ButtonMenuFocused";
+            _reportLatestBtn.eventClick += OnReportLatestClick;
+            _reportLatestBtn.isVisible = false;
+
+            _reportHistoryBtn = AddUIComponent<UIButton>();
+            _reportHistoryBtn.size = new Vector2(90f, TAB_HEIGHT);
+            _reportHistoryBtn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
+            _reportHistoryBtn.text = "History";
+            _reportHistoryBtn.textScale = 0.8f;
+            _reportHistoryBtn.normalBgSprite = "ButtonMenu";
+            _reportHistoryBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _reportHistoryBtn.pressedBgSprite = "ButtonMenuPressed";
+            _reportHistoryBtn.focusedBgSprite = "ButtonMenuFocused";
+            _reportHistoryBtn.eventClick += OnReportHistoryClick;
+            _reportHistoryBtn.isVisible = false;
+
             _activeTab = 0;
             UpdateTabHighlights();
         }
@@ -468,7 +509,16 @@ namespace MyFirstMod
             float yieldPct = engine.RequiredYield * 100f;
             float dscrVal = engine.DSCR;
 
-            if (_activeTab == 5)
+            if (_activeTab == 6)
+            {
+                int rCount = engine.ReportCount;
+                int qNum = engine.CurrentQuarter;
+                _summaryLabel.text = string.Format(
+                    "Quarterly Economic Report  |  {0} reports available\n" +
+                    "Current Quarter: Q{1}  |  Rating: {2}  |  DSCR: {3:F2}",
+                    rCount, qNum, ratingStr, dscrVal);
+            }
+            else if (_activeTab == 5)
             {
                 _summaryLabel.text = string.Format(
                     "Citizen Bond Activity  |  Demand: {0}  |  Pressure: {1}\n" +
@@ -547,8 +597,10 @@ namespace MyFirstMod
                 RefreshHedging(engine);
             else if (_activeTab == 4)
                 RefreshPositions(engine);
-            else
+            else if (_activeTab == 5)
                 RefreshActivity(engine);
+            else
+                RefreshReport(engine);
         }
 
         private void RefreshMarket(BondMarketEngine engine)
@@ -563,6 +615,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
@@ -612,6 +666,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
@@ -682,6 +738,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
             bool hasDebt = engine.IssuedCount > 0;
             _pay25Btn.isVisible = hasDebt;
             _pay25Btn.isEnabled = hasDebt;
@@ -775,6 +833,8 @@ namespace MyFirstMod
             _buy1BBtn.isVisible = false;
             _pay25Btn.isVisible = false;
             _pay50Btn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
             bool hasSwaps = engine.SwapCount > 0;
             _autoHedgeBtn.isVisible = true;
             _autoHedgeBtn.isEnabled = engine.SwapCount < engine.MaxActiveSwaps && engine.IssuedCount > 0;
@@ -846,6 +906,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
@@ -950,6 +1012,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
 
             engine.GetTransactionLogSnapshot(_cachedTransactions);
 
@@ -998,11 +1062,170 @@ namespace MyFirstMod
                 total, engine.DemandLabelText, engine.PressureLabelText);
         }
 
+        private void RefreshReport(BondMarketEngine engine)
+        {
+            _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
+            _buy1BBtn.isVisible = false;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
+            _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
+            _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = true;
+            _reportHistoryBtn.isVisible = true;
+
+            _reportLatestBtn.normalBgSprite = _reportMode == 0 ? "ButtonMenuFocused" : "ButtonMenu";
+            _reportHistoryBtn.normalBgSprite = _reportMode == 1 ? "ButtonMenuFocused" : "ButtonMenu";
+
+            engine.GetReportSnapshot(_cachedReports);
+            int total = _cachedReports.Count;
+
+            if (total == 0)
+            {
+                for (int i = 0; i < MAX_ROWS; i++)
+                {
+                    _infoLabels[i].text = i == 2 ? "No quarterly reports yet. First report generates after 3 periods." : "";
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+                _scrollHintLabel.text = "";
+                _footerLabel.text = "Awaiting first quarterly report...";
+                return;
+            }
+
+            if (_reportMode == 0)
+                RefreshReportLatest(total);
+            else
+                RefreshReportHistory(total);
+        }
+
+        private void RefreshReportLatest(int total)
+        {
+            if (_reportViewIndex >= total)
+                _reportViewIndex = total - 1;
+            if (_reportViewIndex < 0)
+                _reportViewIndex = 0;
+
+            QuarterlyReport rp = _cachedReports[total - 1 - _reportViewIndex];
+            string ratingStr = BondPricing.RatingLabel(rp.Rating);
+            string demandLabel = CimDemandEngine.DemandLabel(rp.DemandScore);
+            string pressureLabel = CimDemandEngine.PressureLabel(rp.SmoothedPressure);
+
+            _infoLabels[0].text = string.Format(
+                "Q{0} ECONOMIC REPORT  |  Rating: {1}  |  {2}",
+                rp.Quarter, ratingStr, rp.CreditStatus);
+            _priceLabels[0].text = string.Format("DSCR: {0:F2}", rp.DSCR);
+
+            _infoLabels[1].text = string.Format(
+                "Revenue: {0:N0}  |  Expenses: {1:N0}  |  NOI: {2:N0}",
+                rp.GrossIncome, rp.TotalExpenses, rp.NOI);
+            _priceLabels[1].text = string.Format("Burden: {0:F1}%", rp.DebtBurden * 100f);
+
+            _infoLabels[2].text = string.Format(
+                "Bonds: {0}/{1}  |  Face: {2:N0}  |  Sub: {3:F0}%  |  Coupons: {4:N0}",
+                rp.IssuedBonds, rp.MaxBonds, rp.DebtFace,
+                rp.AvgSubscription * 100f, rp.CouponsPaid);
+            string dfltsStr = rp.QuarterDefaults > 0
+                ? string.Format("Dflts: {0}", rp.QuarterDefaults)
+                : "No Dflts";
+            _priceLabels[2].text = dfltsStr;
+
+            _infoLabels[3].text = string.Format(
+                "Bench: {0:F1}%  |  Yield: {1:F1}%  |  Demand: {2}  |  Risk: {3:F1}%",
+                rp.BenchmarkRate * 100f, rp.RequiredYield * 100f,
+                demandLabel, rp.DefaultProbability * 100f);
+            _priceLabels[3].text = string.Format("Pop: {0:N0}", rp.Population);
+
+            _infoLabels[4].text = string.Format(
+                "Portfolio: {0} bonds  |  Swaps: {1}  |  Hedged: {2:N0}",
+                rp.PortfolioBonds, rp.SwapCount, rp.HedgedNotional);
+            string bondPLStr = rp.RealizedPL >= 0
+                ? "+" + rp.RealizedPL.ToString("N0")
+                : rp.RealizedPL.ToString("N0");
+            string swapPLStr = rp.SwapPL >= 0
+                ? "+" + rp.SwapPL.ToString("N0")
+                : rp.SwapPL.ToString("N0");
+            _priceLabels[4].text = string.Format("P/L: {0}", bondPLStr);
+
+            _infoLabels[5].text = rp.Outlook;
+            _priceLabels[5].text = string.Format("Swap: {0}", swapPLStr);
+
+            for (int i = 0; i < MAX_ROWS; i++)
+                _actionButtons[i].isVisible = false;
+
+            if (total > 1)
+                _scrollHintLabel.text = string.Format("Viewing Q{0}  |  Scroll for {1} more reports",
+                    rp.Quarter, total - 1);
+            else
+                _scrollHintLabel.text = "";
+
+            _footerLabel.text = string.Format("Q{0}  |  {1}  |  {2}  |  Vol: {3:F1}%",
+                rp.Quarter, pressureLabel, demandLabel, rp.RevenueVolatility * 100f);
+        }
+
+        private void RefreshReportHistory(int total)
+        {
+            int maxOffset = Math.Max(0, total - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
+
+            for (int i = 0; i < MAX_ROWS; i++)
+            {
+                int rpIdx = total - 1 - _scrollOffset - i;
+                if (rpIdx >= 0 && rpIdx < total)
+                {
+                    QuarterlyReport rp = _cachedReports[rpIdx];
+                    string ratingStr = BondPricing.RatingLabel(rp.Rating);
+                    string noiStr = rp.NOI >= 0
+                        ? "+" + rp.NOI.ToString("N0")
+                        : rp.NOI.ToString("N0");
+
+                    _infoLabels[i].text = string.Format(
+                        "Q{0}  |  {1}  |  DSCR: {2:F2}  |  NOI: {3}  |  Debt: {4:N0}  |  {5}",
+                        rp.Quarter, ratingStr, rp.DSCR, noiStr,
+                        rp.DebtFace, rp.CreditStatus);
+                    _priceLabels[i].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
+                    _actionButtons[i].text = "View";
+                    _actionButtons[i].isVisible = true;
+                    _actionButtons[i].isEnabled = true;
+                }
+                else
+                {
+                    _infoLabels[i].text = "";
+                    _priceLabels[i].text = "";
+                    _actionButtons[i].isVisible = false;
+                }
+            }
+
+            if (total > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("{0} reports  (scroll to see more)", total);
+            else
+                _scrollHintLabel.text = "";
+
+            _footerLabel.text = string.Format("Report History  |  {0} quarterly reports", total);
+        }
+
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
             if (_activeTab == 0) return;
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
+
+            if (_activeTab == 6 && _reportMode == 0)
+            {
+                int reportTotal = engine.ReportCount;
+                if (reportTotal <= 1) return;
+                if (eventParam.wheelDelta < 0f)
+                    _reportViewIndex = Math.Min(reportTotal - 1, _reportViewIndex + 1);
+                else if (eventParam.wheelDelta > 0f)
+                    _reportViewIndex = Math.Max(0, _reportViewIndex - 1);
+                eventParam.Use();
+                RefreshData();
+                return;
+            }
 
             int totalItems;
             if (_activeTab == 1)
@@ -1013,6 +1236,8 @@ namespace MyFirstMod
                 totalItems = engine.SwapCount;
             else if (_activeTab == 5)
                 totalItems = engine.TransactionLogCount;
+            else if (_activeTab == 6)
+                totalItems = engine.ReportCount;
             else
                 totalItems = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
             int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
@@ -1116,6 +1341,19 @@ namespace MyFirstMod
                         int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
                         int maxOff = Math.Max(0, total - MAX_ROWS);
                         if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                        RefreshData();
+                    }
+                }
+            }
+            else if (_activeTab == 6)
+            {
+                if (_reportMode == 1)
+                {
+                    int rpIdx = _cachedReports.Count - 1 - _scrollOffset - index;
+                    if (rpIdx >= 0 && rpIdx < _cachedReports.Count)
+                    {
+                        _reportMode = 0;
+                        _reportViewIndex = _cachedReports.Count - 1 - rpIdx;
                         RefreshData();
                     }
                 }
@@ -1251,6 +1489,29 @@ namespace MyFirstMod
             RefreshData();
         }
 
+        private void OnReportTab(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _activeTab = 6;
+            _scrollOffset = 0;
+            _reportViewIndex = 0;
+            UpdateTabHighlights();
+            RefreshData();
+        }
+
+        private void OnReportLatestClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _reportMode = 0;
+            _reportViewIndex = 0;
+            RefreshData();
+        }
+
+        private void OnReportHistoryClick(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _reportMode = 1;
+            _scrollOffset = 0;
+            RefreshData();
+        }
+
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)
         {
             BondMarketEngine engine = BondMarketEngine.Instance;
@@ -1304,6 +1565,7 @@ namespace MyFirstMod
             _hedgingTabBtn.normalBgSprite = _activeTab == 3 ? "ButtonMenuFocused" : "ButtonMenu";
             _positionsTabBtn.normalBgSprite = _activeTab == 4 ? "ButtonMenuFocused" : "ButtonMenu";
             _activityTabBtn.normalBgSprite = _activeTab == 5 ? "ButtonMenuFocused" : "ButtonMenu";
+            _reportTabBtn.normalBgSprite = _activeTab == 6 ? "ButtonMenuFocused" : "ButtonMenu";
         }
 
         public override void OnDestroy()
