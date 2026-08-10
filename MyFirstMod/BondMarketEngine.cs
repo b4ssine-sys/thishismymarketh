@@ -630,6 +630,13 @@ namespace MyFirstMod
             {
                 _citizenBuyVolume = 0f;
                 _citizenSellVolume = 0f;
+                _marketPressure = 0f;
+                _pressureHistory[_pressureHistoryIndex] = 0f;
+                _pressureHistoryIndex = (_pressureHistoryIndex + 1) % _pressureHistory.Length;
+                float sum0 = 0f;
+                for (int i = 0; i < _pressureHistory.Length; i++)
+                    sum0 += _pressureHistory[i];
+                _smoothedPressure = sum0 / _pressureHistory.Length;
                 return;
             }
 
@@ -1072,16 +1079,9 @@ namespace MyFirstMod
 
                 float couponRate = _requiredYield;
 
-                float initialSubscription = _demandScore;
-                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
-                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
-
-                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
-                AddCashToCity(proceedsInternal);
-
                 _nextBondId++;
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = initialSubscription;
+                ib.SoldFraction = 0f;
                 _issuedBonds.Add(ib);
                 return true;
             }
@@ -1116,17 +1116,10 @@ namespace MyFirstMod
                 int periods = 60;
                 float couponRate = _requiredYield;
 
-                float initialSubscription = _demandScore;
-                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
-                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
-
-                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
-                AddCashToCity(proceedsInternal);
-
                 _nextBondId++;
                 string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = initialSubscription;
+                ib.SoldFraction = 0f;
                 _issuedBonds.Add(ib);
                 return true;
             }

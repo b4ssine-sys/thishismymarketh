@@ -819,6 +819,7 @@ namespace MyFirstMod
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
                     string subStatus = ib.SoldFraction >= 0.99f ? "FULL"
+                        : ib.SoldFraction <= 0.01f ? "PENDING"
                         : ib.SoldFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.SoldFraction * 100f);
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
