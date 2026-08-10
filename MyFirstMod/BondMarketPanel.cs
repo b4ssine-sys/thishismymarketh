@@ -46,7 +46,7 @@ namespace MyFirstMod
         //  y=388-418  Action buttons (per-tab, right-aligned, hidden when inactive)
         //    Tab 0 Market:    [Buy 1B @x472 w90] [10x10M @x570 w105] [10x1M @x683 w105]
         //    Tab 1 Portfolio: [Sell All @x698 w90]
-        //    Tab 2 Debt:      [Pay 25% @x600 w90] [Pay 50% @x698 w90]
+        //    Tab 2 Debt:      [Iss25% @x404 w90] [Iss50% @x502 w90] [Pay25% @x600 w90] [Pay50% @x698 w90]
         //    Tab 3 Hedging:   [Auto-Hedge @x474 w95] [Sell25% @x577 w65] [Sell50% @x650 w65] [ExitAll @x723 w65]
         //    Tab 4 Positions: (none)
         //    Tab 5 Activity:  (none)
@@ -108,6 +108,8 @@ namespace MyFirstMod
         private int _reportMode;
         private UIButton _reportLatestBtn;
         private UIButton _reportHistoryBtn;
+        private UIButton _issue25Btn;
+        private UIButton _issue50Btn;
 
         public override void Start()
         {
@@ -326,6 +328,30 @@ namespace MyFirstMod
             _pay25Btn.disabledBgSprite = "ButtonMenuDisabled";
             _pay25Btn.eventClick += OnPay25Click;
             _pay25Btn.isVisible = false;
+
+            _issue50Btn = AddUIComponent<UIButton>();
+            _issue50Btn.size = new Vector2(90f, TAB_HEIGHT);
+            _issue50Btn.relativePosition = new Vector3(WIDTH - 298f, ACTION_Y);
+            _issue50Btn.text = "Issue 50%";
+            _issue50Btn.textScale = 0.75f;
+            _issue50Btn.normalBgSprite = "ButtonMenu";
+            _issue50Btn.hoveredBgSprite = "ButtonMenuHovered";
+            _issue50Btn.pressedBgSprite = "ButtonMenuPressed";
+            _issue50Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _issue50Btn.eventClick += OnIssue50Click;
+            _issue50Btn.isVisible = false;
+
+            _issue25Btn = AddUIComponent<UIButton>();
+            _issue25Btn.size = new Vector2(90f, TAB_HEIGHT);
+            _issue25Btn.relativePosition = new Vector3(WIDTH - 396f, ACTION_Y);
+            _issue25Btn.text = "Issue 25%";
+            _issue25Btn.textScale = 0.75f;
+            _issue25Btn.normalBgSprite = "ButtonMenu";
+            _issue25Btn.hoveredBgSprite = "ButtonMenuHovered";
+            _issue25Btn.pressedBgSprite = "ButtonMenuPressed";
+            _issue25Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _issue25Btn.eventClick += OnIssue25Click;
+            _issue25Btn.isVisible = false;
 
             _autoHedgeBtn = AddUIComponent<UIButton>();
             _autoHedgeBtn.size = new Vector2(95f, TAB_HEIGHT);
@@ -617,6 +643,8 @@ namespace MyFirstMod
             _exitAllSwapsBtn.isVisible = false;
             _reportLatestBtn.isVisible = false;
             _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
             _scrollHintLabel.text = "";
 
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
@@ -668,6 +696,8 @@ namespace MyFirstMod
             _exitAllSwapsBtn.isVisible = false;
             _reportLatestBtn.isVisible = false;
             _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
@@ -745,6 +775,11 @@ namespace MyFirstMod
             _pay25Btn.isEnabled = hasDebt;
             _pay50Btn.isVisible = hasDebt;
             _pay50Btn.isEnabled = hasDebt;
+            bool canIssueNew = engine.CanIssueBonds;
+            _issue25Btn.isVisible = true;
+            _issue25Btn.isEnabled = canIssueNew;
+            _issue50Btn.isVisible = true;
+            _issue50Btn.isEnabled = canIssueNew;
 
             engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
             int issuedCount = _cachedIssuedBonds.Count;
@@ -835,6 +870,8 @@ namespace MyFirstMod
             _pay50Btn.isVisible = false;
             _reportLatestBtn.isVisible = false;
             _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
             bool hasSwaps = engine.SwapCount > 0;
             _autoHedgeBtn.isVisible = true;
             _autoHedgeBtn.isEnabled = engine.SwapCount < engine.MaxActiveSwaps && engine.IssuedCount > 0;
@@ -908,6 +945,8 @@ namespace MyFirstMod
             _exitAllSwapsBtn.isVisible = false;
             _reportLatestBtn.isVisible = false;
             _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
 
             engine.GetPortfolioSnapshot(_cachedBonds, _cachedPrices);
             engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
@@ -1014,6 +1053,8 @@ namespace MyFirstMod
             _exitAllSwapsBtn.isVisible = false;
             _reportLatestBtn.isVisible = false;
             _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
 
             engine.GetTransactionLogSnapshot(_cachedTransactions);
 
@@ -1074,6 +1115,8 @@ namespace MyFirstMod
             _sell25SwapsBtn.isVisible = false;
             _sell50SwapsBtn.isVisible = false;
             _exitAllSwapsBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
             _reportLatestBtn.isVisible = true;
             _reportHistoryBtn.isVisible = true;
 
@@ -1434,6 +1477,28 @@ namespace MyFirstMod
             if (retired > 0)
                 Debug.Log("[MyFirstMod] Early repayment: retired " + retired.ToString() + " bonds (50% target)");
             RefreshData();
+        }
+
+        private void OnIssue25Click(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            if (engine.IssueBondPercent(0.25f))
+                RefreshData();
+            else
+                Debug.Log("[MyFirstMod] Issue 25% failed - at capacity, rating D, or no demand.");
+        }
+
+        private void OnIssue50Click(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            BondMarketEngine engine = BondMarketEngine.Instance;
+            if (engine == null) return;
+
+            if (engine.IssueBondPercent(0.50f))
+                RefreshData();
+            else
+                Debug.Log("[MyFirstMod] Issue 50% failed - at capacity, rating D, or no demand.");
         }
 
         private void OnCloseClick(UIComponent component, UIMouseEventParameter eventParam)

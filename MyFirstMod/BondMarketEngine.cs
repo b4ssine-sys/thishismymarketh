@@ -1021,6 +1021,51 @@ namespace MyFirstMod
             }
         }
 
+        public bool IssueBondPercent(float percent)
+        {
+            lock (_lock)
+            {
+                if (_issuedBonds.Count >= MAX_ISSUED_BONDS)
+                    return false;
+                if (_rating == CreditRating.D)
+                    return false;
+                if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
+                    return false;
+
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em == null) return false;
+
+                float bankBalance = (float)em.LastCashAmount / INTERNAL_UNIT_SCALE;
+                if (bankBalance <= 0f) return false;
+
+                float face = bankBalance * percent;
+                if (face < 1000f) face = 1000f;
+
+                float currentFace = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    currentFace += _issuedBonds[i].FaceValue;
+                if (currentFace + face > _absorptionCapacity)
+                    return false;
+
+                int periods = 60;
+                float couponRate = _requiredYield;
+
+                float initialSubscription = _demandScore;
+                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
+                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
+
+                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
+                AddCashToCity(proceedsInternal);
+
+                _nextBondId++;
+                string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
+                Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
+                ib.SoldFraction = initialSubscription;
+                _issuedBonds.Add(ib);
+                return true;
+            }
+        }
+
         public int PayDebtPercent(float percent)
         {
             lock (_lock)
