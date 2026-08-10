@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 2;
+        private const byte SAVE_VERSION = 3;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -64,6 +64,8 @@ namespace MyFirstMod
         private float _smoothedPressure;
         private readonly float[] _pressureHistory = new float[12];
         private int _pressureHistoryIndex;
+        private float _citizenProceedsThisPeriod;
+        private float _totalCitizenProceeds;
 
         private readonly List<CimTransaction> _transactionLog = new List<CimTransaction>();
         private const int MAX_TRANSACTION_LOG = 50;
@@ -134,6 +136,8 @@ namespace MyFirstMod
         public float CitizenSellVolume { get { return _citizenSellVolume; } }
         public float MarketPressure { get { return _smoothedPressure; } }
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
+        public float CitizenProceedsThisPeriod { get { return _citizenProceedsThisPeriod; } }
+        public float TotalCitizenProceeds { get { return _totalCitizenProceeds; } }
         public int TransactionLogCount { get { return _transactionLog.Count; } }
         public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
         public int CurrentQuarter { get { return _quarterNumber; } }
@@ -608,6 +612,8 @@ namespace MyFirstMod
 
         private void SimulateCitizenTradingInternal()
         {
+            _citizenProceedsThisPeriod = 0f;
+
             if (_issuedBonds.Count == 0)
             {
                 _citizenBuyVolume = 0f;
@@ -652,23 +658,60 @@ namespace MyFirstMod
 
                         float share = unsold / totalUnsold;
                         float bought = buyable * share;
-                        ib.SoldFraction += bought / ib.FaceValue;
+                        float fractionBought = bought / ib.FaceValue;
+                        ib.SoldFraction += fractionBought;
                         if (ib.SoldFraction > 1f) ib.SoldFraction = 1f;
+
+                        long proceeds = (long)(bought * INTERNAL_UNIT_SCALE);
+                        if (proceeds > 0)
+                        {
+                            AddCashToCity(proceeds);
+                            _citizenProceedsThisPeriod += bought;
+                            _totalCitizenProceeds += bought;
+                        }
+                    }
+                }
+            }
+
+            if (_citizenSellVolume > 0f)
+            {
+                float totalSold = 0f;
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    totalSold += _issuedBonds[i].FaceValue * _issuedBonds[i].SoldFraction;
+
+                if (totalSold > 0f)
+                {
+                    float sellable = _citizenSellVolume;
+                    if (sellable > totalSold) sellable = totalSold;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                    {
+                        Bond ib = _issuedBonds[i];
+                        float soldValue = ib.FaceValue * ib.SoldFraction;
+                        if (soldValue <= 0f) continue;
+
+                        float share = soldValue / totalSold;
+                        float sold = sellable * share;
+                        float fractionSold = sold / ib.FaceValue;
+                        ib.SoldFraction -= fractionSold;
+                        if (ib.SoldFraction < 0.05f) ib.SoldFraction = 0.05f;
                     }
                 }
             }
 
             string detail = "";
+            float periodProceeds = _citizenProceedsThisPeriod;
             for (int i = 0; i < _issuedBonds.Count; i++)
             {
                 Bond ib = _issuedBonds[i];
                 float before = beforeFractions[i];
                 float after = ib.SoldFraction;
-                if (after > before + 0.001f)
+                float delta = after - before;
+                if (delta > 0.001f || delta < -0.001f)
                 {
                     if (detail.Length > 0) detail += "  ";
-                    detail += string.Format("{0}: {1:F0}%>{2:F0}%",
-                        ib.Id, before * 100f, after * 100f);
+                    string arrow = delta > 0 ? ">" : "<";
+                    detail += string.Format("{0}: {1:F0}%{2}{3:F0}%",
+                        ib.Id, before * 100f, arrow, after * 100f);
                 }
             }
             if (detail.Length == 0)
@@ -678,6 +721,8 @@ namespace MyFirstMod
                 else
                     detail = "Sell pressure only";
             }
+            if (periodProceeds > 0f)
+                detail += string.Format("  +{0:N0} proceeds", periodProceeds);
 
             _transactionSeq++;
             CimTransaction tx = new CimTransaction();
@@ -886,6 +931,8 @@ namespace MyFirstMod
             _smoothedPressure = 0f;
             Array.Clear(_pressureHistory, 0, _pressureHistory.Length);
             _pressureHistoryIndex = 0;
+            _citizenProceedsThisPeriod = 0f;
+            _totalCitizenProceeds = 0f;
             _transactionLog.Clear();
             _transactionSeq = 0;
             _periodsSinceReport = 0;
@@ -1535,6 +1582,8 @@ namespace MyFirstMod
                         w.Write(rp.Outlook != null ? rp.Outlook : "");
                     }
 
+                    w.Write(_totalCitizenProceeds);
+
                     w.Flush();
                     return ms.ToArray();
                 }
@@ -1659,6 +1708,11 @@ namespace MyFirstMod
                         rp.Outlook = r.ReadString();
                         _reportHistory.Add(rp);
                     }
+                }
+
+                if (version >= 3)
+                {
+                    _totalCitizenProceeds = r.ReadSingle();
                 }
 
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +
