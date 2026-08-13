@@ -50,7 +50,7 @@ namespace MyFirstMod
         private float _demandScore;
         private float _defaultProbability;
         private float _cityVitals;
-        private float _fiscalStrength;
+        private float _financialHealth;
         private float _citizenConfidence;
         private float _bondAppeal;
         private float _absorptionCapacity;
@@ -152,7 +152,7 @@ namespace MyFirstMod
         public float CrimeRate { get { return _crimeRate; } }
         public float CashReserves { get { return _cashReserves; } }
         public float CityVitals { get { return _cityVitals; } }
-        public float FiscalStrength { get { return _fiscalStrength; } }
+        public float FinancialHealth { get { return _financialHealth; } }
         public float Momentum { get { return CimDemandEngine.CalculateMomentumMultiplier(_currentMarketState, _previousMarketState, 1.5f); } }
         public int TransactionLogCount { get { return _transactionLog.Count; } }
         public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
@@ -417,7 +417,7 @@ namespace MyFirstMod
             ReadCityDemographicsInternal(cashDisplay);
             _cityVitals = CimDemandEngine.CalculateCityVitals(
                 _population, _happiness, _health, _education, _landValue, _crimeRate);
-            _fiscalStrength = CimDemandEngine.CalculateFiscalStrength(
+            _financialHealth = CimDemandEngine.CalculateFinancialHealth(
                 _cashReserves, _debtBurden, _dscr, _rating);
             _defaultProbability = CimDemandEngine.CalculateDefaultProbability(
                 _debtBurden, _dscr, _defaultPenalty, _revenueVolatility);
@@ -428,7 +428,7 @@ namespace MyFirstMod
 
             _previousMarketState = _currentMarketState;
             _currentMarketState.CityVitals = _cityVitals;
-            _currentMarketState.FiscalStrength = _fiscalStrength;
+            _currentMarketState.FinancialHealth = _financialHealth;
             _currentMarketState.CitizenConfidence = _citizenConfidence;
             _currentMarketState.BondAppeal = _bondAppeal;
 
@@ -998,7 +998,7 @@ namespace MyFirstMod
             _demandScore = 0f;
             _defaultProbability = 0f;
             _cityVitals = 0f;
-            _fiscalStrength = 0f;
+            _financialHealth = 0f;
             _citizenConfidence = 0f;
             _bondAppeal = 0f;
             _absorptionCapacity = 0f;

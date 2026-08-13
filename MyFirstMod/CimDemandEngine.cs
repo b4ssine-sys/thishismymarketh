@@ -4,18 +4,17 @@ namespace MyFirstMod
 {
     public struct MarketState
     {
-        public float CityVitals;
-        public float FiscalStrength;
+        public float FinancialHealth;
         public float CitizenConfidence;
         public float BondAppeal;
+        public float CityVitals;
     }
 
     public static class CimDemandEngine
     {
-        private const float W_CITY_VITALS = 0.40f;
-        private const float W_FISCAL = 0.20f;
-        private const float W_CONFIDENCE = 0.20f;
-        private const float W_APPEAL = 0.20f;
+        private const float W_FINANCIAL = 0.35f;
+        private const float W_CONFIDENCE = 0.30f;
+        private const float W_APPEAL = 0.35f;
         private const float WEALTH_PER_CAPITA = 500f;
         public const float MIN_ISSUABLE_DEMAND = 0.10f;
 
@@ -64,7 +63,7 @@ namespace MyFirstMod
                  + safetyScore * 0.15f;
         }
 
-        public static float CalculateFiscalStrength(
+        public static float CalculateFinancialHealth(
             float cashReserves, float debtBurden, float dscr, CreditRating rating)
         {
             float ratingScore = RatingToScore(rating);
@@ -138,17 +137,16 @@ namespace MyFirstMod
         public static float CalculateMomentumMultiplier(
             MarketState current, MarketState previous, float sensitivity)
         {
-            float deltaV = current.CityVitals - previous.CityVitals;
-            float deltaF = current.FiscalStrength - previous.FiscalStrength;
+            float deltaF = current.FinancialHealth - previous.FinancialHealth;
             float deltaC = current.CitizenConfidence - previous.CitizenConfidence;
             float deltaA = current.BondAppeal - previous.BondAppeal;
 
-            float rawMomentum = (deltaV + deltaF + deltaC + deltaA) * sensitivity;
+            float rawMomentum = (deltaF + deltaC + deltaA) * sensitivity;
 
-            // Asymmetric damping: downward momentum is harder to sustain than upward
-            // This prevents runaway death spirals while still allowing recovery rallies
             if (rawMomentum < 0f)
+            {
                 rawMomentum *= 0.6f;
+            }
 
             float result = 1.0f + rawMomentum;
             if (result < 0.5f) result = 0.5f;
@@ -159,25 +157,19 @@ namespace MyFirstMod
         public static float CalculateDemandScore(
             MarketState current, MarketState previous)
         {
-            float baseDemand = W_CITY_VITALS * current.CityVitals
-                             + W_FISCAL * current.FiscalStrength
-                             + W_CONFIDENCE * current.CitizenConfidence
-                             + W_APPEAL * current.BondAppeal;
+            float baseDemand = (W_FINANCIAL * current.FinancialHealth)
+                             + (W_CONFIDENCE * current.CitizenConfidence)
+                             + (W_APPEAL * current.BondAppeal);
 
             float momentum = CalculateMomentumMultiplier(current, previous, 1.5f);
-
             float raw = baseDemand * momentum;
 
-            // Anti-spiral floor: even in worst conditions, a city with real population
-            // and game vitals retains some base demand from city vitals alone.
-            // This prevents the financial feedback loop from zeroing out demand
-            // when the city itself is still functional.
             float vitalFloor = current.CityVitals * 0.15f;
-            if (raw < vitalFloor) raw = vitalFloor;
 
-            if (raw < 0f) raw = 0f;
-            if (raw > 1f) raw = 1f;
-            return raw;
+            float result = Math.Max(raw, vitalFloor);
+            if (result < 0f) result = 0f;
+            if (result > 1f) result = 1f;
+            return result;
         }
 
         public static float AdjustYieldForDemand(float baseYield, float demandScore)
