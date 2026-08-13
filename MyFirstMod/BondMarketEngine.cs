@@ -86,6 +86,8 @@ namespace MyFirstMod
         private int _quarterDefaults;
         private readonly List<QuarterlyReport> _reportHistory = new List<QuarterlyReport>();
 
+        private float _prevRequiredYield;
+
         private float _grossIncome;
         private float _totalExpenses;
         private float _debtBurden;
@@ -435,6 +437,17 @@ namespace MyFirstMod
             _requiredYield = CimDemandEngine.AdjustYieldForDemand(_requiredYield, _demandScore);
             _requiredYield = CimDemandEngine.AdjustYieldForPressure(_requiredYield, _smoothedPressure);
             if (_requiredYield > 0.50f) _requiredYield = 0.50f;
+
+            // Rate-limit yield changes to prevent death spiral feedback loops.
+            // Yield can move at most 2% per tick in either direction.
+            if (_prevRequiredYield > 0f)
+            {
+                float maxDelta = 0.02f;
+                float delta = _requiredYield - _prevRequiredYield;
+                if (delta > maxDelta) _requiredYield = _prevRequiredYield + maxDelta;
+                else if (delta < -maxDelta) _requiredYield = _prevRequiredYield - maxDelta;
+            }
+            _prevRequiredYield = _requiredYield;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
                 _population, _cashReserves, _demandScore);
         }
@@ -977,6 +990,7 @@ namespace MyFirstMod
             _rating = CreditRating.AAA;
             _benchmarkRate = 0f;
             _requiredYield = 0f;
+            _prevRequiredYield = 0f;
             _activeSwaps.Clear();
             _nextSwapId = 0;
             _revenueVolatility = 0f;

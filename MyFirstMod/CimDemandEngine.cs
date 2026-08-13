@@ -145,6 +145,11 @@ namespace MyFirstMod
 
             float rawMomentum = (deltaV + deltaF + deltaC + deltaA) * sensitivity;
 
+            // Asymmetric damping: downward momentum is harder to sustain than upward
+            // This prevents runaway death spirals while still allowing recovery rallies
+            if (rawMomentum < 0f)
+                rawMomentum *= 0.6f;
+
             float result = 1.0f + rawMomentum;
             if (result < 0.5f) result = 0.5f;
             if (result > 1.5f) result = 1.5f;
@@ -162,6 +167,14 @@ namespace MyFirstMod
             float momentum = CalculateMomentumMultiplier(current, previous, 1.5f);
 
             float raw = baseDemand * momentum;
+
+            // Anti-spiral floor: even in worst conditions, a city with real population
+            // and game vitals retains some base demand from city vitals alone.
+            // This prevents the financial feedback loop from zeroing out demand
+            // when the city itself is still functional.
+            float vitalFloor = current.CityVitals * 0.15f;
+            if (raw < vitalFloor) raw = vitalFloor;
+
             if (raw < 0f) raw = 0f;
             if (raw > 1f) raw = 1f;
             return raw;
