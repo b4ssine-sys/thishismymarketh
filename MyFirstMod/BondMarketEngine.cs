@@ -480,7 +480,7 @@ namespace MyFirstMod
                 DistrictManager dm = Singleton<DistrictManager>.instance;
                 if (dm != null)
                 {
-                    District city = dm.m_districts[0];
+                    District city = dm.m_districts.m_buffer[0];
 
                     uint realPop = city.m_populationData.m_finalCount;
                     if (realPop > 0)
@@ -490,9 +490,6 @@ namespace MyFirstMod
                     }
 
                     _happiness = city.m_finalHappiness / 100f;
-                    _landValue = city.m_finalLandValue / 100f;
-                    _crimeRate = city.m_finalCrimeRate / 100f;
-                    _employmentRate = 1f - (city.m_finalUnemployment / 100f);
                 }
             }
             catch
@@ -525,9 +522,11 @@ namespace MyFirstMod
                     {
                         float healthSum = 0f;
                         float eduSum = 0f;
+                        float wellbeingSum = 0f;
                         int sampled = 0;
                         uint bufSize = cm.m_citizens.m_size;
                         int step = Math.Max(1, (int)(bufSize / 200));
+                        int employed = 0;
 
                         for (uint i = 0; i < bufSize && sampled < 200; i += (uint)step)
                         {
@@ -535,7 +534,9 @@ namespace MyFirstMod
                             if ((cit.m_flags & Citizen.Flags.Created) != 0)
                             {
                                 healthSum += cit.m_health;
-                                eduSum += (int)cit.Education;
+                                wellbeingSum += cit.m_wellbeing;
+                                eduSum += (int)cit.EducationLevel;
+                                if (cit.m_workBuilding != 0) employed++;
                                 sampled++;
                             }
                         }
@@ -543,14 +544,29 @@ namespace MyFirstMod
                         {
                             _health = (healthSum / sampled) / 255f;
                             _education = (eduSum / sampled) / 3f;
+                            float avgWellbeing = (wellbeingSum / sampled) / 255f;
+                            _landValue = avgWellbeing;
+                            _crimeRate = 1f - avgWellbeing;
+                            _employmentRate = (float)employed / sampled;
                         }
                     }
                 }
             }
             catch
             {
-                if (_health <= 0f) _health = _happiness * 0.6f + (1f - _crimeRate) * 0.4f;
-                if (_education <= 0f) _education = _employmentRate * 0.5f + _landValue * 0.5f;
+                float avgIncome = _grossIncome / WINDOW_SIZE;
+                float avgExpense = _totalExpenses / WINDOW_SIZE;
+                float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
+
+                if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
+                if (_education <= 0f) _education = 0.5f;
+                if (_landValue <= 0f) _landValue = dscrH * 0.5f + 0.25f;
+                _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
+                if (_employmentRate <= 0.2f)
+                {
+                    float totalFlow = avgIncome + avgExpense;
+                    _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+                }
             }
 
             if (_happiness < 0f) _happiness = 0f;
