@@ -140,6 +140,20 @@ namespace MyFirstMod
         public float DemandScore { get { return _demandScore; } }
         public float DefaultProbability { get { return _defaultProbability; } }
         public float AbsorptionCapacity { get { return _absorptionCapacity; } }
+        public float RemainingCapacity
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float currentFace = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                        currentFace += _issuedBonds[i].FaceValue;
+                    float remaining = _absorptionCapacity - currentFace;
+                    return remaining > 0f ? remaining : 0f;
+                }
+            }
+        }
         public int Population { get { return _population; } }
         public string DemandLabelText { get { return CimDemandEngine.DemandLabel(_demandScore); } }
         public float CitizenBuyVolume { get { return _citizenBuyVolume; } }
@@ -236,10 +250,13 @@ namespace MyFirstMod
                     if (_rating == CreditRating.D) return false;
                     if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
 
-                    float currentFace = 0f;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                        currentFace += _issuedBonds[i].FaceValue;
-                    if (currentFace >= _absorptionCapacity) return false;
+                    if (_absorptionCapacity > 0f)
+                    {
+                        float currentFace = 0f;
+                        for (int i = 0; i < _issuedBonds.Count; i++)
+                            currentFace += _issuedBonds[i].FaceValue;
+                        if (_absorptionCapacity - currentFace < 1000f) return false;
+                    }
 
                     return true;
                 }
@@ -1207,8 +1224,12 @@ namespace MyFirstMod
                 float currentFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
                     currentFace += _issuedBonds[i].FaceValue;
-                if (currentFace + face > _absorptionCapacity)
+
+                float remainingCapacity = _absorptionCapacity - currentFace;
+                if (remainingCapacity < 1000f)
                     return false;
+                if (face > remainingCapacity)
+                    face = remainingCapacity;
 
                 int periods = 60;
                 float couponRate = _requiredYield;
