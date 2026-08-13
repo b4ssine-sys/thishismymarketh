@@ -2,11 +2,20 @@ using System;
 
 namespace MyFirstMod
 {
+    public struct MarketState
+    {
+        public float CityVitals;
+        public float FiscalStrength;
+        public float CitizenConfidence;
+        public float BondAppeal;
+    }
+
     public static class CimDemandEngine
     {
-        private const float W_FINANCIAL = 0.35f;
-        private const float W_CONFIDENCE = 0.30f;
-        private const float W_APPEAL = 0.35f;
+        private const float W_CITY_VITALS = 0.40f;
+        private const float W_FISCAL = 0.20f;
+        private const float W_CONFIDENCE = 0.20f;
+        private const float W_APPEAL = 0.20f;
         private const float WEALTH_PER_CAPITA = 500f;
         public const float MIN_ISSUABLE_DEMAND = 0.10f;
 
@@ -26,7 +35,37 @@ namespace MyFirstMod
             }
         }
 
-        public static float CalculateFinancialHealth(CreditRating rating, float dscr, float debtBurden)
+        public static float CalculateCityVitals(
+            int population, float happiness, float health,
+            float education, float landValue, float crimeRate)
+        {
+            float popScore = (float)Math.Log10(Math.Max(population, 10)) / 5f;
+            if (popScore < 0f) popScore = 0f;
+            if (popScore > 1f) popScore = 1f;
+
+            float safetyScore = 1f - crimeRate;
+            if (safetyScore < 0f) safetyScore = 0f;
+            if (safetyScore > 1f) safetyScore = 1f;
+
+            if (happiness < 0f) happiness = 0f;
+            if (happiness > 1f) happiness = 1f;
+            if (health < 0f) health = 0f;
+            if (health > 1f) health = 1f;
+            if (education < 0f) education = 0f;
+            if (education > 1f) education = 1f;
+            if (landValue < 0f) landValue = 0f;
+            if (landValue > 1f) landValue = 1f;
+
+            return popScore * 0.15f
+                 + happiness * 0.25f
+                 + health * 0.20f
+                 + education * 0.15f
+                 + landValue * 0.10f
+                 + safetyScore * 0.15f;
+        }
+
+        public static float CalculateFiscalStrength(
+            float cashReserves, float debtBurden, float dscr, CreditRating rating)
         {
             float ratingScore = RatingToScore(rating);
 
@@ -38,7 +77,11 @@ namespace MyFirstMod
             if (burdenScore < 0f) burdenScore = 0f;
             if (burdenScore > 1f) burdenScore = 1f;
 
-            return ratingScore * 0.50f + dscrScore * 0.30f + burdenScore * 0.20f;
+            float cashScore = (float)Math.Log10(Math.Max(cashReserves, 1f)) / 8f;
+            if (cashScore < 0f) cashScore = 0f;
+            if (cashScore > 1f) cashScore = 1f;
+
+            return ratingScore * 0.20f + dscrScore * 0.15f + burdenScore * 0.30f + cashScore * 0.35f;
         }
 
         public static float CalculateCitizenConfidence(float happiness, float employmentRate, float populationGrowth)
@@ -92,12 +135,33 @@ namespace MyFirstMod
             return spreadScore * riskMultiplier;
         }
 
-        public static float CalculateDemandScore(
-            float financialHealth, float citizenConfidence, float bondAppeal)
+        public static float CalculateMomentumMultiplier(
+            MarketState current, MarketState previous, float sensitivity)
         {
-            float raw = W_FINANCIAL * financialHealth
-                      + W_CONFIDENCE * citizenConfidence
-                      + W_APPEAL * bondAppeal;
+            float deltaV = current.CityVitals - previous.CityVitals;
+            float deltaF = current.FiscalStrength - previous.FiscalStrength;
+            float deltaC = current.CitizenConfidence - previous.CitizenConfidence;
+            float deltaA = current.BondAppeal - previous.BondAppeal;
+
+            float rawMomentum = (deltaV + deltaF + deltaC + deltaA) * sensitivity;
+
+            float result = 1.0f + rawMomentum;
+            if (result < 0.5f) result = 0.5f;
+            if (result > 1.5f) result = 1.5f;
+            return result;
+        }
+
+        public static float CalculateDemandScore(
+            MarketState current, MarketState previous)
+        {
+            float baseDemand = W_CITY_VITALS * current.CityVitals
+                             + W_FISCAL * current.FiscalStrength
+                             + W_CONFIDENCE * current.CitizenConfidence
+                             + W_APPEAL * current.BondAppeal;
+
+            float momentum = CalculateMomentumMultiplier(current, previous, 1.5f);
+
+            float raw = baseDemand * momentum;
             if (raw < 0f) raw = 0f;
             if (raw > 1f) raw = 1f;
             return raw;
@@ -112,20 +176,16 @@ namespace MyFirstMod
         }
 
         public static float CalculateAbsorptionCapacity(
-            int population, float avgIncomePerTick, float demandScore)
+            int population, float cashReserves, float demandScore)
         {
             float popCapacity = population * WEALTH_PER_CAPITA;
 
-            float incomeMultiplier = 1f;
-            if (avgIncomePerTick > 0f)
-            {
-                incomeMultiplier = avgIncomePerTick / 1000f;
-                if (incomeMultiplier < 0.2f) incomeMultiplier = 0.2f;
-                if (incomeMultiplier > 10f) incomeMultiplier = 10f;
-            }
+            float cashFactor = 1f + (float)Math.Log10(Math.Max(cashReserves, 1000f)) / 5f;
+            if (cashFactor < 0.5f) cashFactor = 0.5f;
+            if (cashFactor > 3f) cashFactor = 3f;
 
             float demandMultiplier = 0.1f + demandScore * 0.9f;
-            return popCapacity * incomeMultiplier * demandMultiplier;
+            return popCapacity * cashFactor * demandMultiplier;
         }
 
         public static string DemandLabel(float demandScore)
