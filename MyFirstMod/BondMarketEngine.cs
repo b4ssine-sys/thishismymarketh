@@ -232,8 +232,16 @@ namespace MyFirstMod
             {
                 lock (_lock)
                 {
-                    return _issuedBonds.Count < MAX_ISSUED_BONDS && _rating != CreditRating.D
-                        && _demandScore >= CimDemandEngine.MIN_ISSUABLE_DEMAND;
+                    if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return false;
+                    if (_rating == CreditRating.D) return false;
+                    if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
+
+                    float currentFace = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                        currentFace += _issuedBonds[i].FaceValue;
+                    if (currentFace >= _absorptionCapacity) return false;
+
+                    return true;
                 }
             }
         }
@@ -958,6 +966,7 @@ namespace MyFirstMod
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null || em.LastCashAmount < internalAmount) return false;
 
+            long original = internalAmount;
             while (internalAmount > 0)
             {
                 int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
@@ -965,6 +974,7 @@ namespace MyFirstMod
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 internalAmount -= chunk;
             }
+            _prevMoney -= original;
             return true;
         }
 
@@ -973,6 +983,7 @@ namespace MyFirstMod
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null) return;
 
+            long original = internalAmount;
             while (internalAmount > 0)
             {
                 int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
@@ -980,6 +991,7 @@ namespace MyFirstMod
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 internalAmount -= chunk;
             }
+            _prevMoney += original;
         }
 
         private void ResetStateInternal()
