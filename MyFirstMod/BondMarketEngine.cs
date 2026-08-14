@@ -69,6 +69,7 @@ namespace MyFirstMod
         private CreditRating _rating;
         private float _benchmarkRate;
         private float _requiredYield;
+        private float _portfolioValue;
 
         private static readonly string[] ISSUE_NAMES = new string[]
         {
@@ -93,6 +94,7 @@ namespace MyFirstMod
         public CreditRating Rating { get { return _rating; } }
         public float BenchmarkRate { get { return _benchmarkRate; } }
         public float RequiredYield { get { return _requiredYield; } }
+        public float PortfolioValue { get { return _portfolioValue; } }
         public int DefaultPenalty { get { return _defaultPenalty; } }
         public int TotalDefaults { get { return _totalDefaults; } }
         public float RealizedPL { get { return _realizedPL; } }
@@ -300,6 +302,10 @@ namespace MyFirstMod
             if (cashDisplay > 500000f && _dscr < 3f) _dscr = Math.Min(_dscr + 1.0f, 10f);
             if (cashDisplay < 10000f && _dscr > 0.5f) _dscr = Math.Max(_dscr - 0.5f, 0f);
 
+            _portfolioValue = 0f;
+            for (int i = 0; i < _portfolioBonds.Count; i++)
+                _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], _requiredYield);
+
             _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
             _benchmarkRate = 0.02f + _debtBurden * 0.08f;
             if (_benchmarkRate < 0.01f) _benchmarkRate = 0.01f;
@@ -316,6 +322,17 @@ namespace MyFirstMod
             float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
             float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
             _requiredYield = baseYield + defaultSpike;
+
+            float totalWealth = cashDisplay + _portfolioValue;
+            float wealthBase = avgIncome * WINDOW_SIZE;
+            if (wealthBase < 50000f) wealthBase = 50000f;
+            float wealthRatio = totalWealth / wealthBase;
+            if (wealthRatio < 0f) wealthRatio = 0f;
+            if (wealthRatio > 4f) wealthRatio = 4f;
+            float wealthAdj = 0.02f * (1f - wealthRatio);
+            if (wealthAdj < -0.03f) wealthAdj = -0.03f;
+            if (wealthAdj > 0.05f) wealthAdj = 0.05f;
+            _requiredYield += wealthAdj;
 
             float avgPositiveFlow = totalPositive / WINDOW_SIZE;
             if (avgPositiveFlow > 0f)
@@ -680,6 +697,7 @@ namespace MyFirstMod
             _rating = CreditRating.AAA;
             _benchmarkRate = 0f;
             _requiredYield = 0f;
+            _portfolioValue = 0f;
             _activeSwaps.Clear();
             _nextSwapId = 0;
             _revenueVolatility = 0f;
