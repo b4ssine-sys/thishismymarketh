@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using ICities;
 using ColossalFramework;
 using UnityEngine;
@@ -10,6 +11,9 @@ namespace MyFirstMod
     {
         public static BondMarketEngine Instance;
         public static bool NeedsReset;
+        public static byte[] PendingSaveData;
+
+        private const int SAVE_VERSION = 1;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -718,6 +722,21 @@ namespace MyFirstMod
             _smoothedPressure = 0f;
             Array.Clear(_pressureHistory, 0, _pressureHistory.Length);
             _pressureHistoryIndex = 0;
+
+            if (PendingSaveData != null)
+            {
+                try
+                {
+                    RestoreState(PendingSaveData);
+                    _initialized = true;
+                    Debug.Log("[MyFirstMod] Bond market state restored from save.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.Log("[MyFirstMod] Failed to restore save data: " + ex.Message);
+                }
+                PendingSaveData = null;
+            }
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -875,6 +894,38 @@ namespace MyFirstMod
                     _issuedBonds.RemoveAt(i);
                     retired++;
                 }
+
+                if (retired == 0 && budget > 0f && _issuedBonds.Count > 0)
+                {
+                    int smallest = 0;
+                    for (int i = 1; i < _issuedBonds.Count; i++)
+                    {
+                        if (_issuedBonds[i].SubscribedFace < _issuedBonds[smallest].SubscribedFace)
+                            smallest = i;
+                    }
+
+                    Bond sb = _issuedBonds[smallest];
+                    float paydown = budget;
+                    if (paydown > sb.SubscribedFace)
+                        paydown = sb.SubscribedFace;
+
+                    long payInternal = (long)(paydown * INTERNAL_UNIT_SCALE);
+                    if (payInternal > 0 && TrySpendCash(payInternal))
+                    {
+                        float newSubscribed = sb.SubscribedFace - paydown;
+                        if (newSubscribed < 1f)
+                        {
+                            _issuedBonds.RemoveAt(smallest);
+                            retired++;
+                        }
+                        else
+                        {
+                            sb.SoldFraction = newSubscribed / sb.FaceValue;
+                            retired = -1;
+                        }
+                    }
+                }
+
                 return retired;
             }
         }
@@ -1163,6 +1214,165 @@ namespace MyFirstMod
                 _issuedBonds.RemoveAt(issuedIndex);
                 return true;
             }
+        }
+
+        public byte[] SerializeState()
+        {
+            lock (_lock)
+            {
+                MemoryStream ms = new MemoryStream();
+                BinaryWriter w = new BinaryWriter(ms);
+
+                w.Write((byte)SAVE_VERSION);
+
+                w.Write(_nextBondId);
+                w.Write(_nextSwapId);
+                w.Write(_tickCounter);
+                w.Write(_windowIndex);
+                w.Write(_prevMoney);
+                w.Write(_prevMoneySet);
+                w.Write(_defaultPenalty);
+                w.Write(_totalDefaults);
+                w.Write(_realizedPL);
+                w.Write(_swapPL);
+                w.Write(_pressureHistoryIndex);
+
+                for (int i = 0; i < WINDOW_SIZE; i++)
+                    w.Write(_cashFlowHistory[i]);
+
+                for (int i = 0; i < _pressureHistory.Length; i++)
+                    w.Write(_pressureHistory[i]);
+
+                w.Write(_marketBonds.Count);
+                for (int i = 0; i < _marketBonds.Count; i++)
+                    WriteBond(w, _marketBonds[i]);
+
+                w.Write(_portfolioBonds.Count);
+                for (int i = 0; i < _portfolioBonds.Count; i++)
+                    WriteBond(w, _portfolioBonds[i]);
+
+                w.Write(_issuedBonds.Count);
+                for (int i = 0; i < _issuedBonds.Count; i++)
+                    WriteBond(w, _issuedBonds[i]);
+
+                w.Write(_activeSwaps.Count);
+                for (int i = 0; i < _activeSwaps.Count; i++)
+                    WriteSwap(w, _activeSwaps[i]);
+
+                w.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        private void RestoreState(byte[] data)
+        {
+            MemoryStream ms = new MemoryStream(data);
+            BinaryReader r = new BinaryReader(ms);
+
+            int version = r.ReadByte();
+            if (version != SAVE_VERSION)
+                throw new InvalidOperationException("Unknown save version: " + version);
+
+            _nextBondId = r.ReadInt32();
+            _nextSwapId = r.ReadInt32();
+            _tickCounter = r.ReadInt32();
+            _windowIndex = r.ReadInt32();
+            _prevMoney = r.ReadInt64();
+            _prevMoneySet = r.ReadBoolean();
+            _defaultPenalty = r.ReadInt32();
+            _totalDefaults = r.ReadInt32();
+            _realizedPL = r.ReadSingle();
+            _swapPL = r.ReadSingle();
+            _pressureHistoryIndex = r.ReadInt32();
+
+            for (int i = 0; i < WINDOW_SIZE; i++)
+                _cashFlowHistory[i] = r.ReadSingle();
+
+            for (int i = 0; i < _pressureHistory.Length; i++)
+                _pressureHistory[i] = r.ReadSingle();
+
+            int marketCount = r.ReadInt32();
+            _marketBonds.Clear();
+            for (int i = 0; i < marketCount; i++)
+                _marketBonds.Add(ReadBond(r));
+
+            int portfolioCount = r.ReadInt32();
+            _portfolioBonds.Clear();
+            for (int i = 0; i < portfolioCount; i++)
+                _portfolioBonds.Add(ReadBond(r));
+
+            int issuedCount = r.ReadInt32();
+            _issuedBonds.Clear();
+            for (int i = 0; i < issuedCount; i++)
+                _issuedBonds.Add(ReadBond(r));
+
+            int swapCount = r.ReadInt32();
+            _activeSwaps.Clear();
+            for (int i = 0; i < swapCount; i++)
+                _activeSwaps.Add(ReadSwap(r));
+        }
+
+        private static void WriteBond(BinaryWriter w, Bond b)
+        {
+            w.Write(b.Id);
+            w.Write(b.Name);
+            w.Write(b.FaceValue);
+            w.Write(b.CouponRate);
+            w.Write(b.TotalPeriods);
+            w.Write(b.RemainingPeriods);
+            w.Write(b.PurchasePrice);
+            w.Write(b.CouponsReceived);
+            w.Write(b.SoldFraction);
+        }
+
+        private static Bond ReadBond(BinaryReader r)
+        {
+            string id = r.ReadString();
+            string name = r.ReadString();
+            float faceValue = r.ReadSingle();
+            float couponRate = r.ReadSingle();
+            int totalPeriods = r.ReadInt32();
+            int remainingPeriods = r.ReadInt32();
+            float purchasePrice = r.ReadSingle();
+            float couponsReceived = r.ReadSingle();
+            float soldFraction = r.ReadSingle();
+
+            Bond b = new Bond(id, name, faceValue, couponRate, totalPeriods);
+            b.RemainingPeriods = remainingPeriods;
+            b.PurchasePrice = purchasePrice;
+            b.CouponsReceived = couponsReceived;
+            b.SoldFraction = soldFraction;
+            return b;
+        }
+
+        private static void WriteSwap(BinaryWriter w, InterestRateSwap s)
+        {
+            w.Write(s.Id);
+            w.Write(s.NotionalAmount);
+            w.Write(s.FixedRate);
+            w.Write(s.TotalPeriods);
+            w.Write(s.RemainingPeriods);
+            w.Write(s.PayFixed);
+            w.Write(s.CumulativePL);
+            w.Write(s.LastSettlement);
+        }
+
+        private static InterestRateSwap ReadSwap(BinaryReader r)
+        {
+            string id = r.ReadString();
+            float notional = r.ReadSingle();
+            float fixedRate = r.ReadSingle();
+            int totalPeriods = r.ReadInt32();
+            int remainingPeriods = r.ReadInt32();
+            bool payFixed = r.ReadBoolean();
+            float cumulativePL = r.ReadSingle();
+            float lastSettlement = r.ReadSingle();
+
+            InterestRateSwap s = new InterestRateSwap(id, notional, fixedRate, totalPeriods, payFixed);
+            s.RemainingPeriods = remainingPeriods;
+            s.CumulativePL = cumulativePL;
+            s.LastSettlement = lastSettlement;
+            return s;
         }
     }
 }
