@@ -861,9 +861,13 @@ namespace MyFirstMod
                 _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
             else if (!canIssue && engine.DemandScore < 0.10f)
                 _scrollHintLabel.text = "NO DEMAND - CITIZENS UNWILLING TO BUY BONDS";
-            else if (!canIssue)
-                _scrollHintLabel.text = string.Format("MAX CAPACITY ({0}/{0}) - REPAY EXISTING DEBT FIRST",
+            else if (!canIssue && engine.IssuedCount >= engine.MaxIssuedBonds)
+                _scrollHintLabel.text = string.Format("MAX SLOTS ({0}/{0}) - REPAY EXISTING DEBT FIRST",
                     engine.MaxIssuedBonds);
+            else if (!canIssue && engine.RemainingCapacity < 1000f)
+                _scrollHintLabel.text = "MARKET SATURATED - CAPACITY FULL, WAIT FOR CITY GROWTH";
+            else if (!canIssue)
+                _scrollHintLabel.text = "CANNOT ISSUE - CHECK RATING AND DEMAND";
             else
                 _scrollHintLabel.text = "";
 
@@ -878,9 +882,9 @@ namespace MyFirstMod
             string pressureStr = " | " + engine.PressureLabelText;
 
             _footerLabel.text = string.Format(
-                "Debt: {0}/{1}  |  Paid: {2:N0}  |  {3}{4}{5}{6}",
+                "Outstanding: {0}/{1}  |  Capacity: {2:N0}  |  Paid: {3:N0}  |  {4}{5}{6}{7}",
                 engine.IssuedCount, engine.MaxIssuedBonds,
-                engine.TotalCouponsPaid, status, penaltyStr, citizenStr, pressureStr);
+                engine.RemainingCapacity, engine.TotalCouponsPaid, status, penaltyStr, citizenStr, pressureStr);
         }
 
         private void RefreshHedging(BondMarketEngine engine)

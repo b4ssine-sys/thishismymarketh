@@ -49,14 +49,24 @@ namespace MyFirstMod
 
         private float _demandScore;
         private float _defaultProbability;
+        private float _cityVitals;
         private float _financialHealth;
         private float _citizenConfidence;
         private float _bondAppeal;
         private float _absorptionCapacity;
         private int _population;
+        private int _prevPopulation;
         private float _happiness;
+        private float _health;
+        private float _education;
+        private float _landValue;
+        private float _crimeRate;
         private float _employmentRate;
         private float _populationGrowth;
+        private float _cashReserves;
+        private int _demographicSampleCounter;
+        private MarketState _currentMarketState;
+        private MarketState _previousMarketState;
 
         private float _citizenBuyVolume;
         private float _citizenSellVolume;
@@ -77,6 +87,8 @@ namespace MyFirstMod
         private int _quarterNumber;
         private int _quarterDefaults;
         private readonly List<QuarterlyReport> _reportHistory = new List<QuarterlyReport>();
+
+        private float _prevRequiredYield;
 
         private float _grossIncome;
         private float _totalExpenses;
@@ -132,6 +144,20 @@ namespace MyFirstMod
         public float DemandScore { get { return _demandScore; } }
         public float DefaultProbability { get { return _defaultProbability; } }
         public float AbsorptionCapacity { get { return _absorptionCapacity; } }
+        public float RemainingCapacity
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    float currentFace = 0f;
+                    for (int i = 0; i < _issuedBonds.Count; i++)
+                        currentFace += _issuedBonds[i].FaceValue;
+                    float remaining = _absorptionCapacity - currentFace;
+                    return remaining > 0f ? remaining : 0f;
+                }
+            }
+        }
         public int Population { get { return _population; } }
         public float Happiness { get { return _happiness; } }
         public float EmploymentRate { get { return _employmentRate; } }
@@ -146,6 +172,13 @@ namespace MyFirstMod
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
         public float CitizenProceedsThisPeriod { get { return _citizenProceedsThisPeriod; } }
         public float TotalCitizenProceeds { get { return _totalCitizenProceeds; } }
+        public float Health { get { return _health; } }
+        public float Education { get { return _education; } }
+        public float LandValue { get { return _landValue; } }
+        public float CrimeRate { get { return _crimeRate; } }
+        public float CashReserves { get { return _cashReserves; } }
+        public float CityVitals { get { return _cityVitals; } }
+        public float Momentum { get { return CimDemandEngine.CalculateMomentumMultiplier(_currentMarketState, _previousMarketState, 1.5f); } }
         public int TransactionLogCount { get { return _transactionLog.Count; } }
         public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
         public int CurrentQuarter { get { return _quarterNumber; } }
@@ -224,8 +257,19 @@ namespace MyFirstMod
             {
                 lock (_lock)
                 {
-                    return _issuedBonds.Count < MAX_ISSUED_BONDS && _rating != CreditRating.D
-                        && _demandScore >= CimDemandEngine.MIN_ISSUABLE_DEMAND;
+                    if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return false;
+                    if (_rating == CreditRating.D) return false;
+                    if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
+
+                    if (_absorptionCapacity > 0f)
+                    {
+                        float currentFace = 0f;
+                        for (int i = 0; i < _issuedBonds.Count; i++)
+                            currentFace += _issuedBonds[i].FaceValue;
+                        if (_absorptionCapacity - currentFace < 1000f) return false;
+                    }
+
+                    return true;
                 }
             }
         }
@@ -421,22 +465,42 @@ namespace MyFirstMod
                 _revenueVolatility = 0f;
             }
 
-            ReadCityDemographicsInternal();
-            _financialHealth = CimDemandEngine.CalculateFinancialHealth(_rating, _dscr, _debtBurden);
+            ReadCityDemographicsInternal(cashDisplay);
+            _cityVitals = CimDemandEngine.CalculateCityVitals(
+                _population, _happiness, _health, _education, _landValue, _crimeRate);
+            _financialHealth = CimDemandEngine.CalculateFinancialHealth(
+                _cashReserves, _debtBurden, _dscr, _rating);
             _defaultProbability = CimDemandEngine.CalculateDefaultProbability(
                 _debtBurden, _dscr, _defaultPenalty, _revenueVolatility);
             _citizenConfidence = CimDemandEngine.CalculateCitizenConfidence(
                 _happiness, _employmentRate, _populationGrowth);
             _bondAppeal = CimDemandEngine.CalculateBondAppeal(
                 _requiredYield, _benchmarkRate, _defaultProbability);
+
+            _previousMarketState = _currentMarketState;
+            _currentMarketState.CityVitals = _cityVitals;
+            _currentMarketState.FinancialHealth = _financialHealth;
+            _currentMarketState.CitizenConfidence = _citizenConfidence;
+            _currentMarketState.BondAppeal = _bondAppeal;
+
             _demandScore = CimDemandEngine.CalculateDemandScore(
-                _financialHealth, _citizenConfidence, _bondAppeal);
+                _currentMarketState, _previousMarketState);
             _requiredYield = CimDemandEngine.AdjustYieldForDemand(_requiredYield, _demandScore);
             _requiredYield = CimDemandEngine.AdjustYieldForPressure(_requiredYield, _smoothedPressure);
             if (_requiredYield > 0.50f) _requiredYield = 0.50f;
-            float avgIncomeForCap = _grossIncome / WINDOW_SIZE;
+
+            // Rate-limit yield changes to prevent death spiral feedback loops.
+            // Yield can move at most 2% per tick in either direction.
+            if (_prevRequiredYield > 0f)
+            {
+                float maxDelta = 0.02f;
+                float delta = _requiredYield - _prevRequiredYield;
+                if (delta > maxDelta) _requiredYield = _prevRequiredYield + maxDelta;
+                else if (delta < -maxDelta) _requiredYield = _prevRequiredYield - maxDelta;
+            }
+            _prevRequiredYield = _requiredYield;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
-                _population, avgIncomeForCap, _demandScore);
+                _population, _cashReserves, _demandScore);
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -456,32 +520,132 @@ namespace MyFirstMod
             return (hedgedNotional - totalDebtFace) / totalDebtFace;
         }
 
-        private void ReadCityDemographicsInternal()
+        private void ReadCityDemographicsInternal(float cashDisplay)
         {
-            float avgIncome = _grossIncome / WINDOW_SIZE;
-            float avgExpense = _totalExpenses / WINDOW_SIZE;
+            _cashReserves = cashDisplay;
 
-            _population = Math.Max(100, (int)(avgIncome * 10f));
+            bool gotGameData = false;
 
-            float dscrHappy = _dscr / 3f;
-            if (dscrHappy > 1f) dscrHappy = 1f;
-            if (dscrHappy < 0f) dscrHappy = 0f;
-            float noiHappy = _noi > 0f
-                ? 0.6f + Math.Min(_noi / 5000f, 0.4f)
-                : Math.Max(0.1f, 0.5f + _noi / 10000f);
-            _happiness = dscrHappy * 0.6f + noiHappy * 0.4f;
+            try
+            {
+                DistrictManager dm = Singleton<DistrictManager>.instance;
+                if (dm != null)
+                {
+                    District city = dm.m_districts.m_buffer[0];
+
+                    uint realPop = city.m_populationData.m_finalCount;
+                    if (realPop > 0)
+                    {
+                        _population = (int)realPop;
+                        gotGameData = true;
+                    }
+
+                    _happiness = city.m_finalHappiness / 100f;
+                }
+            }
+            catch
+            {
+                float avgIncome = _grossIncome / WINDOW_SIZE;
+                float avgExpense = _totalExpenses / WINDOW_SIZE;
+
+                if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
+
+                float dscrH = _dscr / 3f;
+                if (dscrH > 1f) dscrH = 1f;
+                if (dscrH < 0f) dscrH = 0f;
+                _happiness = dscrH;
+                _landValue = dscrH * 0.5f + 0.25f;
+                _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
+
+                float totalFlow = avgIncome + avgExpense;
+                _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+            }
+
+            try
+            {
+                CitizenManager cm = Singleton<CitizenManager>.instance;
+                if (cm != null)
+                {
+                    if (!gotGameData && cm.m_citizenCount > 0)
+                        _population = cm.m_citizenCount;
+
+                    if (_demographicSampleCounter == 0)
+                    {
+                        float healthSum = 0f;
+                        float eduSum = 0f;
+                        float wellbeingSum = 0f;
+                        int sampled = 0;
+                        uint bufSize = cm.m_citizens.m_size;
+                        int step = Math.Max(1, (int)(bufSize / 200));
+                        int employed = 0;
+
+                        for (uint i = 0; i < bufSize && sampled < 200; i += (uint)step)
+                        {
+                            Citizen cit = cm.m_citizens.m_buffer[i];
+                            if ((cit.m_flags & Citizen.Flags.Created) != 0)
+                            {
+                                healthSum += cit.m_health;
+                                wellbeingSum += cit.m_wellbeing;
+                                eduSum += (int)cit.EducationLevel;
+                                if (cit.m_workBuilding != 0) employed++;
+                                sampled++;
+                            }
+                        }
+                        if (sampled > 0)
+                        {
+                            _health = (healthSum / sampled) / 255f;
+                            _education = (eduSum / sampled) / 3f;
+                            float avgWellbeing = (wellbeingSum / sampled) / 255f;
+                            _landValue = avgWellbeing;
+                            _crimeRate = 1f - avgWellbeing;
+                            _employmentRate = (float)employed / sampled;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                float avgIncome = _grossIncome / WINDOW_SIZE;
+                float avgExpense = _totalExpenses / WINDOW_SIZE;
+                float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
+
+                if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
+                if (_education <= 0f) _education = 0.5f;
+                if (_landValue <= 0f) _landValue = dscrH * 0.5f + 0.25f;
+                _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
+                if (_employmentRate <= 0.2f)
+                {
+                    float totalFlow = avgIncome + avgExpense;
+                    _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+                }
+            }
+
             if (_happiness < 0f) _happiness = 0f;
             if (_happiness > 1f) _happiness = 1f;
-
-            float totalFlow = avgIncome + avgExpense;
-            _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+            if (_health < 0f) _health = 0f;
+            if (_health > 1f) _health = 1f;
+            if (_education < 0f) _education = 0f;
+            if (_education > 1f) _education = 1f;
+            if (_landValue < 0f) _landValue = 0f;
+            if (_landValue > 1f) _landValue = 1f;
+            if (_crimeRate < 0f) _crimeRate = 0f;
+            if (_crimeRate > 1f) _crimeRate = 1f;
             if (_employmentRate < 0.2f) _employmentRate = 0.2f;
             if (_employmentRate > 0.98f) _employmentRate = 0.98f;
+            if (_population < 100) _population = 100;
 
-            if (_noi > 0f)
-                _populationGrowth = Math.Min(_noi / 10000f, 0.05f);
-            else
-                _populationGrowth = Math.Max(_noi / 10000f, -0.05f);
+            _demographicSampleCounter++;
+            if (_demographicSampleCounter >= TICKS_PER_PERIOD)
+            {
+                _demographicSampleCounter = 0;
+                if (_prevPopulation > 0)
+                {
+                    _populationGrowth = (float)(_population - _prevPopulation) / (float)_prevPopulation;
+                    if (_populationGrowth < -0.05f) _populationGrowth = -0.05f;
+                    if (_populationGrowth > 0.05f) _populationGrowth = 0.05f;
+                }
+                _prevPopulation = _population;
+            }
         }
 
         private float CalculateActiveDebtService()
@@ -893,6 +1057,7 @@ namespace MyFirstMod
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null || em.LastCashAmount < internalAmount) return false;
 
+            long original = internalAmount;
             while (internalAmount > 0)
             {
                 int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
@@ -900,6 +1065,7 @@ namespace MyFirstMod
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 internalAmount -= chunk;
             }
+            _prevMoney -= original;
             return true;
         }
 
@@ -908,6 +1074,7 @@ namespace MyFirstMod
             EconomyManager em = Singleton<EconomyManager>.instance;
             if (em == null) return;
 
+            long original = internalAmount;
             while (internalAmount > 0)
             {
                 int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
@@ -915,6 +1082,7 @@ namespace MyFirstMod
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 internalAmount -= chunk;
             }
+            _prevMoney += original;
         }
 
         private void ResetStateInternal()
@@ -942,20 +1110,31 @@ namespace MyFirstMod
             _benchmarkRate = 0f;
             _requiredYield = 0f;
             _portfolioValue = 0f;
+            _prevRequiredYield = 0f;
             _activeSwaps.Clear();
             _nextSwapId = 0;
             _revenueVolatility = 0f;
             _swapPL = 0f;
             _demandScore = 0f;
             _defaultProbability = 0f;
+            _cityVitals = 0f;
             _financialHealth = 0f;
             _citizenConfidence = 0f;
             _bondAppeal = 0f;
             _absorptionCapacity = 0f;
             _population = 0;
+            _prevPopulation = 0;
             _happiness = 0.5f;
+            _health = 0.5f;
+            _education = 0.5f;
+            _landValue = 0.5f;
+            _crimeRate = 0.1f;
             _employmentRate = 0.7f;
             _populationGrowth = 0f;
+            _cashReserves = 0f;
+            _demographicSampleCounter = 0;
+            _currentMarketState = new MarketState();
+            _previousMarketState = new MarketState();
             _citizenBuyVolume = 0f;
             _citizenSellVolume = 0f;
             _marketPressure = 0f;
@@ -1137,8 +1316,12 @@ namespace MyFirstMod
                 float currentFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
                     currentFace += _issuedBonds[i].FaceValue;
-                if (currentFace + face > _absorptionCapacity)
+
+                float remainingCapacity = _absorptionCapacity - currentFace;
+                if (remainingCapacity < 1000f)
                     return false;
+                if (face > remainingCapacity)
+                    face = remainingCapacity;
 
                 int periods = 60;
                 float couponRate = _requiredYield;
