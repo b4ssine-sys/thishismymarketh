@@ -28,12 +28,17 @@ namespace MyFirstMod
             _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
             _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
 
+            ResidentialBuildingLog.Reset();
+            if (ResidentialBuildingLog.Instance != null)
+                ResidentialBuildingLog.Instance.ScanAll();
+
             Debug.Log("[MyFirstMod] Click the icon (top-left) to open the bond market.");
         }
 
         public override void OnLevelUnloading()
         {
             base.OnLevelUnloading();
+            ResidentialBuildingLog.Reset();
 
             if (_toggleButton != null)
             {
