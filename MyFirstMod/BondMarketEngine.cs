@@ -20,8 +20,9 @@ namespace MyFirstMod
         private const int MIN_MARKET_BONDS = 6;
         private const int INTERNAL_UNIT_SCALE = 100;
         private const int MAX_ISSUED_BONDS = 5;
-        private const float DEFAULT_YIELD_SPIKE = 0.012f;
+        private const float DEFAULT_YIELD_SPIKE_PER_POINT = 0.0025f;
         private const int DEFAULT_DECAY_PER_PERIOD = 1;
+        private const int DEFAULT_PENALTY_PER_EVENT = 12;
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
@@ -415,20 +416,25 @@ namespace MyFirstMod
                 _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], _requiredYield);
 
             _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
-            _benchmarkRate = 0.02f + _debtBurden * 0.08f;
-            if (_benchmarkRate < 0.01f) _benchmarkRate = 0.01f;
-            if (_benchmarkRate > 0.15f) _benchmarkRate = 0.15f;
+
+            float fedFundsProxy = 0.04f;
+            float termPremium = 0.005f + _revenueVolatility * 0.01f;
+            if (termPremium > 0.02f) termPremium = 0.02f;
+            float fiscalAdj = _debtBurden * 0.02f;
+            _benchmarkRate = fedFundsProxy + termPremium + fiscalAdj;
+            if (_benchmarkRate < 0.025f) _benchmarkRate = 0.025f;
+            if (_benchmarkRate > 0.08f) _benchmarkRate = 0.08f;
 
             float overHedgeR = CalculateOverHedgeRatioInternal();
             if (overHedgeR > 0f)
             {
-                float ohPenalty = overHedgeR * 0.04f;
-                if (ohPenalty > 0.10f) ohPenalty = 0.10f;
+                float ohPenalty = overHedgeR * 0.015f;
+                if (ohPenalty > 0.03f) ohPenalty = 0.03f;
                 _benchmarkRate += ohPenalty;
             }
 
             float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
-            float defaultSpike = _defaultPenalty * (DEFAULT_YIELD_SPIKE / 25f);
+            float defaultSpike = _defaultPenalty * DEFAULT_YIELD_SPIKE_PER_POINT;
             _requiredYield = baseYield + defaultSpike;
 
             float totalWealth = cashDisplay + _portfolioValue;
@@ -489,8 +495,6 @@ namespace MyFirstMod
             _requiredYield = CimDemandEngine.AdjustYieldForPressure(_requiredYield, _smoothedPressure);
             if (_requiredYield > 0.50f) _requiredYield = 0.50f;
 
-            // Rate-limit yield changes to prevent death spiral feedback loops.
-            // Yield can move at most 2% per tick in either direction.
             if (_prevRequiredYield > 0f)
             {
                 float maxDelta = 0.02f;
@@ -750,7 +754,7 @@ namespace MyFirstMod
 
         private void TriggerDefaultInternal(Bond bond, string reason)
         {
-            _defaultPenalty += 3;
+            _defaultPenalty += DEFAULT_PENALTY_PER_EVENT;
             _totalDefaults++;
             _quarterDefaults++;
         }
@@ -805,6 +809,13 @@ namespace MyFirstMod
             {
                 _citizenBuyVolume = 0f;
                 _citizenSellVolume = 0f;
+                _marketPressure = 0f;
+                _pressureHistory[_pressureHistoryIndex] = 0f;
+                _pressureHistoryIndex = (_pressureHistoryIndex + 1) % _pressureHistory.Length;
+                float sum0 = 0f;
+                for (int i = 0; i < _pressureHistory.Length; i++)
+                    sum0 += _pressureHistory[i];
+                _smoothedPressure = sum0 / _pressureHistory.Length;
                 return;
             }
 
@@ -878,9 +889,17 @@ namespace MyFirstMod
 
                         float share = soldValue / totalSold;
                         float sold = sellable * share;
+                        float prevFraction = ib.SoldFraction;
                         float fractionSold = sold / ib.FaceValue;
                         ib.SoldFraction -= fractionSold;
                         if (ib.SoldFraction < 0.05f) ib.SoldFraction = 0.05f;
+
+                        float actualRedeemed = (prevFraction - ib.SoldFraction) * ib.FaceValue;
+                        if (actualRedeemed > 0f)
+                        {
+                            long cost = (long)(actualRedeemed * INTERNAL_UNIT_SCALE);
+                            TrySpendCash(cost);
+                        }
                     }
                 }
             }
@@ -1021,12 +1040,12 @@ namespace MyFirstMod
         private void GenerateInitialBondsInternal()
         {
             _marketBonds.Clear();
-            _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.03f, 2));
-            _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.045f, 4));
-            _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.05f, 6));
-            _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.055f, 8));
-            _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.06f, 10));
-            _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.065f, 12));
+            _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.042f, 2));
+            _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.047f, 4));
+            _marketBonds.Add(MakeBond("Education Fund Bond", 50000f, 0.050f, 6));
+            _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.053f, 8));
+            _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.055f, 10));
+            _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.058f, 12));
         }
 
         private void RegenerateBondsInternal()
@@ -1037,10 +1056,10 @@ namespace MyFirstMod
                 float face = MARKET_FACES[_rng.Next(MARKET_FACES.Length)];
                 int term = MARKET_PERIODS[_rng.Next(MARKET_PERIODS.Length)];
 
-                float spread = (float)(_rng.NextDouble() * 0.02 - 0.005);
+                float spread = (float)(_rng.NextDouble() * 0.012 - 0.003);
                 float coupon = _requiredYield + spread;
-                if (coupon < 0.02f) coupon = 0.02f;
-                if (coupon > 0.25f) coupon = 0.25f;
+                if (coupon < 0.025f) coupon = 0.025f;
+                if (coupon > 0.10f) coupon = 0.10f;
 
                 _marketBonds.Add(MakeBond(issuer, face, coupon, term));
             }
@@ -1278,16 +1297,9 @@ namespace MyFirstMod
 
                 float couponRate = _requiredYield;
 
-                float initialSubscription = _demandScore;
-                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
-                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
-
-                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
-                AddCashToCity(proceedsInternal);
-
                 _nextBondId++;
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = initialSubscription;
+                ib.SoldFraction = 0f;
                 _issuedBonds.Add(ib);
                 return true;
             }
@@ -1326,17 +1338,10 @@ namespace MyFirstMod
                 int periods = 60;
                 float couponRate = _requiredYield;
 
-                float initialSubscription = _demandScore;
-                if (initialSubscription < 0.2f) initialSubscription = 0.2f;
-                if (initialSubscription > 1.0f) initialSubscription = 1.0f;
-
-                long proceedsInternal = (long)(face * initialSubscription * INTERNAL_UNIT_SCALE);
-                AddCashToCity(proceedsInternal);
-
                 _nextBondId++;
                 string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = initialSubscription;
+                ib.SoldFraction = 0f;
                 _issuedBonds.Add(ib);
                 return true;
             }

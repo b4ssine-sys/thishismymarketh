@@ -23,6 +23,7 @@ namespace MyFirstMod
         private const float W_CONFIDENCE = 0.30f;
         private const float W_APPEAL = 0.35f;
         private const float WEALTH_PER_CAPITA = 500f;
+        private const float TRADE_PER_CITIZEN = 12f;
         public const float MIN_ISSUABLE_DEMAND = 0.10f;
 
         public static float RatingToScore(CreditRating rating)
@@ -176,8 +177,8 @@ namespace MyFirstMod
             float noise = (float)(rng.NextDouble() * 0.2 - 0.1);
             float adjustedBias = Clamp(buyBias + noise, 0.05f, 0.95f);
 
-            buyVolume = activePopulation * adjustedBias * WEALTH_PER_CAPITA;
-            sellVolume = activePopulation * (1f - adjustedBias) * WEALTH_PER_CAPITA;
+            buyVolume = activePopulation * adjustedBias * TRADE_PER_CITIZEN;
+            sellVolume = activePopulation * (1f - adjustedBias) * TRADE_PER_CITIZEN;
         }
 
         public static float CalculateMarketPressure(float buyVolume, float sellVolume)

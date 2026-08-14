@@ -135,15 +135,15 @@ namespace MyFirstMod
             float spread;
             switch (rating)
             {
-                case CreditRating.AAA: spread = 0.005f; break;
-                case CreditRating.AA:  spread = 0.012f; break;
-                case CreditRating.A:   spread = 0.022f; break;
-                case CreditRating.BBB: spread = 0.038f; break;
-                case CreditRating.BB:  spread = 0.060f; break;
-                case CreditRating.B:   spread = 0.090f; break;
-                case CreditRating.CCC: spread = 0.140f; break;
-                case CreditRating.D:   spread = 0.300f; break;
-                default: spread = 0.050f; break;
+                case CreditRating.AAA: spread = 0.0020f; break;
+                case CreditRating.AA:  spread = 0.0045f; break;
+                case CreditRating.A:   spread = 0.0090f; break;
+                case CreditRating.BBB: spread = 0.0160f; break;
+                case CreditRating.BB:  spread = 0.0275f; break;
+                case CreditRating.B:   spread = 0.0450f; break;
+                case CreditRating.CCC: spread = 0.0800f; break;
+                case CreditRating.D:   spread = 0.1500f; break;
+                default: spread = 0.0200f; break;
             }
             return benchmarkRate + spread;
         }

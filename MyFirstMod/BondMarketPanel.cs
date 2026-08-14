@@ -819,6 +819,7 @@ namespace MyFirstMod
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
                     string subStatus = ib.SoldFraction >= 0.99f ? "FULL"
+                        : ib.SoldFraction <= 0.01f ? "PENDING"
                         : ib.SoldFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.SoldFraction * 100f);
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
@@ -874,7 +875,7 @@ namespace MyFirstMod
             string status = engine.CreditStatusLabel;
             int penalty = engine.DefaultPenalty;
             string penaltyStr = penalty > 0
-                ? " | Penalty: +" + (penalty * 0.048f).ToString("F2") + "%"
+                ? " | Penalty: +" + (penalty * 0.25f).ToString("F1") + "%"
                 : "";
             string citizenStr = engine.TotalCitizenProceeds > 0f
                 ? string.Format("  |  Citizen $: {0:N0}", engine.TotalCitizenProceeds)
