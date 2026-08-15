@@ -14,16 +14,30 @@ namespace MyFirstMod
             base.Start();
 
             _button = AddUIComponent<UIButton>();
-            _button.size = new Vector2(36f, 36f);
+            _button.size = new Vector2(46f, 46f);
             _button.relativePosition = Vector3.zero;
             _button.normalBgSprite = "InfoIconLevel";
             _button.hoveredBgSprite = "InfoIconLevelHovered";
             _button.pressedBgSprite = "InfoIconLevelPressed";
-            _button.tooltip = "Municipal Bond Market";
+            _button.tooltip = "Municipal Bond Market (Shift+B)";
             _button.eventClick += OnToggleClick;
 
-            absolutePosition = new Vector3(60f, 6f);
-            size = new Vector2(36f, 36f);
+            UIView view = GetUIView();
+            if (view != null)
+                absolutePosition = new Vector3(view.fixedWidth - 56f, 70f);
+            else
+                absolutePosition = new Vector3(10f, 70f);
+            size = new Vector2(46f, 46f);
+        }
+
+        public override void Update()
+        {
+            base.Update();
+            if (Input.GetKey(KeyCode.LeftShift) && Input.GetKeyDown(KeyCode.B))
+            {
+                if (BondMarketPanel.Instance != null)
+                    BondMarketPanel.Instance.Toggle();
+            }
         }
 
         private void OnToggleClick(UIComponent component, UIMouseEventParameter eventParam)
