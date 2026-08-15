@@ -118,7 +118,6 @@ namespace MyFirstMod
 
         private readonly List<CimTransaction> _cachedTransactions = new List<CimTransaction>();
         private readonly List<QuarterlyReport> _cachedReports = new List<QuarterlyReport>();
-        private readonly List<LiquidationEvent> _cachedLiquidationEvents = new List<LiquidationEvent>();
         private int _reportViewIndex;
         private int _reportMode;
         private UIButton _reportLatestBtn;
