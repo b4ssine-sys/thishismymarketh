@@ -104,6 +104,7 @@ namespace MyFirstMod
 
         private readonly List<CimTransaction> _cachedTransactions = new List<CimTransaction>();
         private readonly List<QuarterlyReport> _cachedReports = new List<QuarterlyReport>();
+        private readonly List<LiquidationEvent> _cachedLiquidationEvents = new List<LiquidationEvent>();
         private int _reportViewIndex;
         private int _reportMode;
         private UIButton _reportLatestBtn;
@@ -574,11 +575,16 @@ namespace MyFirstMod
                     ? string.Format("OVER-HEDGED {0:F0}%", overHedge * 100f)
                     : string.Format("Hedged: {0:N0}", engine.TotalHedgedNotional);
                 int totalPos = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+                string liqStr = engine.IsPostLiquidation
+                    ? string.Format("  |  LIQ: {0}p", engine.LiquidationCooldown)
+                    : engine.LiquidationRisk >= 0.40f
+                        ? string.Format("  |  Liq: {0}", engine.LiquidationRiskLabel)
+                        : "";
                 _summaryLabel.text = string.Format(
-                    "Positions: {0}  |  Bonds: {1}  |  Debt: {2}  |  Swaps: {3}  |  {4}\n" +
-                    "Rating: {5}  |  Yield: {6:F1}%  |  Debt Face: {7:N0}  |  {8}",
+                    "Positions: {0}  |  Bonds: {1}  |  Debt: {2}  |  Swaps: {3}  |  {4}{5}\n" +
+                    "Rating: {6}  |  Yield: {7:F1}%  |  Debt Face: {8:N0}  |  {9}",
                     totalPos, engine.PortfolioCount, engine.IssuedCount, engine.SwapCount,
-                    engine.PressureLabelText,
+                    engine.PressureLabelText, liqStr,
                     ratingStr, yieldPct, engine.TotalDebtFace, hedgeStatus);
             }
             else if (_activeTab == 2)
@@ -644,6 +650,11 @@ namespace MyFirstMod
                 RefreshActivity(engine);
             else
                 RefreshReport(engine);
+
+            if (engine.IsPostLiquidation)
+                _footerLabel.text += string.Format("  |  LIQ COOLDOWN: {0}", engine.LiquidationCooldown);
+            else if (engine.LiquidationRisk >= 0.60f)
+                _footerLabel.text += string.Format("  |  LIQ RISK: {0}", engine.LiquidationRiskLabel);
         }
 
         private void RefreshMarket(BondMarketEngine engine)
@@ -858,6 +869,8 @@ namespace MyFirstMod
             if (totalItems > MAX_ROWS)
                 _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
                     _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
+            else if (!canIssue && engine.IsPostLiquidation)
+                _scrollHintLabel.text = string.Format("LIQUIDATION EVENT - Bond issuance suspended ({0} periods remaining)", engine.LiquidationCooldown);
             else if (!canIssue && engine.Rating == CreditRating.D)
                 _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
             else if (!canIssue && engine.DemandScore < 0.10f)

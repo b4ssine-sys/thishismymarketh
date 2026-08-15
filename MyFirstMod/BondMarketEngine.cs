@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 4;
+        private const byte SAVE_VERSION = 5;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -43,10 +43,16 @@ namespace MyFirstMod
         private float _realizedPL;
 
         private const int MAX_ACTIVE_SWAPS = 5;
+        private const int LIQUIDATION_COOLDOWN_PERIODS = 12;
+        private const int LIQUIDATION_DEFAULT_PENALTY = 36;
+        private const float FIRE_SALE_HAIRCUT = 0.70f;
+        private const int MAX_LIQUIDATION_HISTORY = 4;
         private readonly List<InterestRateSwap> _activeSwaps = new List<InterestRateSwap>();
         private int _nextSwapId;
         private float _revenueVolatility;
         private float _swapPL;
+        private int _liquidationCooldown;
+        private readonly List<LiquidationEvent> _liquidationEvents = new List<LiquidationEvent>();
 
         private float _demandScore;
         private float _defaultProbability;
@@ -183,6 +189,23 @@ namespace MyFirstMod
         public int TransactionLogCount { get { return _transactionLog.Count; } }
         public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
         public int CurrentQuarter { get { return _quarterNumber; } }
+        public int LiquidationCooldown { get { return _liquidationCooldown; } }
+        public int LiquidationEventCount { get { lock (_lock) { return _liquidationEvents.Count; } } }
+        public bool IsPostLiquidation { get { return _liquidationCooldown > 0; } }
+        public float LiquidationRisk { get { lock (_lock) { return CalculateLiquidationRiskInternal(); } } }
+        public string LiquidationRiskLabel
+        {
+            get
+            {
+                float risk = CalculateLiquidationRiskInternal();
+                if (_liquidationCooldown > 0) return "COOLDOWN";
+                if (risk >= 0.80f) return "CRITICAL";
+                if (risk >= 0.60f) return "HIGH";
+                if (risk >= 0.40f) return "ELEVATED";
+                if (risk >= 0.20f) return "MODERATE";
+                return "LOW";
+            }
+        }
 
         public void GetReportSnapshot(List<QuarterlyReport> dest)
         {
@@ -258,6 +281,7 @@ namespace MyFirstMod
             {
                 lock (_lock)
                 {
+                    if (_liquidationCooldown > 0) return false;
                     if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return false;
                     if (_rating == CreditRating.D) return false;
                     if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
@@ -311,6 +335,7 @@ namespace MyFirstMod
         {
             get
             {
+                if (_liquidationCooldown > 0) return "LIQUIDATION - MARKET SUSPENDED";
                 if (_defaultPenalty >= 12) return "IN DEFAULT - YIELD CRITICAL";
                 if (_defaultPenalty >= 6) return "DISTRESSED - YIELD SPIKED";
                 if (_defaultPenalty >= 3) return "UNDER PRESSURE";
@@ -702,6 +727,11 @@ namespace MyFirstMod
             SettleSwapsInternal();
             SimulateCitizenTradingInternal();
 
+            if (_liquidationCooldown > 0)
+                _liquidationCooldown--;
+            else if (ShouldTriggerLiquidation())
+                ExecuteLiquidation(DetermineLiquidationReason());
+
             if (_defaultPenalty > 0)
             {
                 _defaultPenalty = Math.Max(0, _defaultPenalty - DEFAULT_DECAY_PER_PERIOD);
@@ -757,6 +787,106 @@ namespace MyFirstMod
             _defaultPenalty += DEFAULT_PENALTY_PER_EVENT;
             _totalDefaults++;
             _quarterDefaults++;
+        }
+
+        private float CalculateLiquidationRiskInternal()
+        {
+            if (_issuedBonds.Count == 0 && _portfolioBonds.Count == 0 && _activeSwaps.Count == 0)
+                return 0f;
+            float risk = 0f;
+            if (_rating == CreditRating.D) risk += 0.40f;
+            else if (_rating == CreditRating.CCC) risk += 0.20f;
+            if (_dscr < 0.5f) risk += 0.30f;
+            else if (_dscr < 1.0f) risk += 0.10f;
+            if (_defaultPenalty >= 18) risk += 0.25f;
+            else if (_defaultPenalty >= 12) risk += 0.10f;
+            if (_debtBurden > 0.40f) risk += 0.15f;
+            if (_cashReserves <= 0f && _issuedBonds.Count > 0) risk += 0.40f;
+            return risk > 1f ? 1f : risk;
+        }
+
+        private bool ShouldTriggerLiquidation()
+        {
+            if (_liquidationCooldown > 0) return false;
+            if (_issuedBonds.Count == 0 && _portfolioBonds.Count == 0 && _activeSwaps.Count == 0)
+                return false;
+            if (_rating == CreditRating.D && _defaultPenalty >= 18)
+                return true;
+            if (_dscr < 0.3f && _debtBurden > 0.40f && _issuedBonds.Count > 0)
+                return true;
+            if (_quarterDefaults >= 3)
+                return true;
+            return false;
+        }
+
+        private string DetermineLiquidationReason()
+        {
+            if (_quarterDefaults >= 3)
+                return "Mass default cascade";
+            if (_rating == CreditRating.D && _defaultPenalty >= 18)
+                return "Sustained default crisis";
+            if (_dscr < 0.3f && _debtBurden > 0.40f)
+                return "Fiscal insolvency";
+            return "Financial distress";
+        }
+
+        private void ExecuteLiquidation(string reason)
+        {
+            LiquidationEvent evt = new LiquidationEvent();
+            evt.Quarter = _quarterNumber;
+            evt.Reason = reason;
+
+            for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
+            {
+                Bond b = _portfolioBonds[i];
+                float fairValue = BondPricing.PresentValue(b, _requiredYield);
+                float salePrice = fairValue * FIRE_SALE_HAIRCUT;
+                long saleInternal = (long)(salePrice * INTERNAL_UNIT_SCALE);
+                AddCashToCity(saleInternal);
+                evt.PortfolioLoss += fairValue - salePrice;
+                _realizedPL += (salePrice + b.CouponsReceived) - b.PurchasePrice;
+                _portfolioBonds.RemoveAt(i);
+                evt.BondsLiquidated++;
+            }
+
+            for (int i = _issuedBonds.Count - 1; i >= 0; i--)
+            {
+                Bond ib = _issuedBonds[i];
+                long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
+                if (!TrySpendCash(faceInternal))
+                {
+                    evt.DebtDefaulted += ib.SubscribedFace;
+                    evt.DebtsDefaulted++;
+                    TriggerDefaultInternal(ib, "liquidation");
+                }
+                _issuedBonds.RemoveAt(i);
+            }
+
+            for (int i = _activeSwaps.Count - 1; i >= 0; i--)
+            {
+                float mtm = CalculateSwapMTM(_activeSwaps[i]);
+                SettleSwapCash(mtm);
+                evt.SwapSettlement += mtm;
+                _activeSwaps.RemoveAt(i);
+                evt.SwapsTerminated++;
+            }
+
+            _defaultPenalty += LIQUIDATION_DEFAULT_PENALTY;
+            _liquidationCooldown = LIQUIDATION_COOLDOWN_PERIODS;
+
+            _liquidationEvents.Add(evt);
+            if (_liquidationEvents.Count > MAX_LIQUIDATION_HISTORY)
+                _liquidationEvents.RemoveAt(0);
+        }
+
+        public void GetLiquidationEventsSnapshot(List<LiquidationEvent> dest)
+        {
+            dest.Clear();
+            lock (_lock)
+            {
+                for (int i = 0; i < _liquidationEvents.Count; i++)
+                    dest.Add(_liquidationEvents[i]);
+            }
         }
 
         private void SettleSwapsInternal()
@@ -1014,6 +1144,8 @@ namespace MyFirstMod
 
         private string GenerateOutlookInternal()
         {
+            if (_liquidationCooldown > 0)
+                return string.Format("LIQUIDATION EVENT: All positions unwound. Recovery in {0} periods.", _liquidationCooldown);
             if (_rating == CreditRating.D)
                 return "CRITICAL: City in default. Bond access suspended.";
             if (_rating == CreditRating.CCC)
@@ -1168,6 +1300,8 @@ namespace MyFirstMod
             _quarterNumber = 0;
             _quarterDefaults = 0;
             _reportHistory.Clear();
+            _liquidationCooldown = 0;
+            _liquidationEvents.Clear();
 
             if (PendingSaveData != null)
             {
@@ -1857,6 +1991,21 @@ namespace MyFirstMod
 
                     w.Write(_totalCitizenProceeds);
 
+                    w.Write(_liquidationCooldown);
+                    w.Write(_liquidationEvents.Count);
+                    for (int i = 0; i < _liquidationEvents.Count; i++)
+                    {
+                        LiquidationEvent le = _liquidationEvents[i];
+                        w.Write(le.Quarter);
+                        w.Write(le.Reason != null ? le.Reason : "");
+                        w.Write(le.PortfolioLoss);
+                        w.Write(le.DebtDefaulted);
+                        w.Write(le.SwapSettlement);
+                        w.Write(le.BondsLiquidated);
+                        w.Write(le.DebtsDefaulted);
+                        w.Write(le.SwapsTerminated);
+                    }
+
                     w.Flush();
                     return ms.ToArray();
                 }
@@ -1996,6 +2145,26 @@ namespace MyFirstMod
                 if (version >= 3)
                 {
                     _totalCitizenProceeds = r.ReadSingle();
+                }
+
+                if (version >= 5)
+                {
+                    _liquidationCooldown = r.ReadInt32();
+                    _liquidationEvents.Clear();
+                    int leCount = r.ReadInt32();
+                    for (int i = 0; i < leCount; i++)
+                    {
+                        LiquidationEvent le = new LiquidationEvent();
+                        le.Quarter = r.ReadInt32();
+                        le.Reason = r.ReadString();
+                        le.PortfolioLoss = r.ReadSingle();
+                        le.DebtDefaulted = r.ReadSingle();
+                        le.SwapSettlement = r.ReadSingle();
+                        le.BondsLiquidated = r.ReadInt32();
+                        le.DebtsDefaulted = r.ReadInt32();
+                        le.SwapsTerminated = r.ReadInt32();
+                        _liquidationEvents.Add(le);
+                    }
                 }
 
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +

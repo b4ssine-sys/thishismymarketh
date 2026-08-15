@@ -65,6 +65,18 @@ namespace MyFirstMod
         public string Detail;
     }
 
+    public class LiquidationEvent
+    {
+        public int Quarter;
+        public string Reason;
+        public float PortfolioLoss;
+        public float DebtDefaulted;
+        public float SwapSettlement;
+        public int BondsLiquidated;
+        public int DebtsDefaulted;
+        public int SwapsTerminated;
+    }
+
     public class QuarterlyReport
     {
         public int Quarter;
