@@ -398,14 +398,19 @@ namespace MyFirstMod
             float avgExpense = _totalExpenses / WINDOW_SIZE;
 
             float scheduledDebtService = CalculateActiveDebtService();
-            if (scheduledDebtService <= 0f)
-            {
-                scheduledDebtService = avgExpense * 0.10f;
-            }
 
-            _debtBurden = avgIncome > 0f ? (scheduledDebtService / avgIncome) : 1f;
             _noi = avgIncome - avgExpense;
-            _dscr = scheduledDebtService > 0f ? (_noi / scheduledDebtService) : (_noi > 0f ? 10f : 0f);
+
+            if (scheduledDebtService > 0f)
+            {
+                _debtBurden = avgIncome > 0f ? (scheduledDebtService / avgIncome) : 1f;
+                _dscr = _noi / scheduledDebtService;
+            }
+            else
+            {
+                _debtBurden = 0f;
+                _dscr = avgIncome > 0f ? 10f : 0f;
+            }
 
             float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
             if (cashDisplay > 500000f && _dscr < 3f) _dscr = Math.Min(_dscr + 1.0f, 10f);
