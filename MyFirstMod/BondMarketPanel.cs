@@ -46,7 +46,7 @@ namespace MyFirstMod
         //  y=388-418  Action buttons (per-tab, right-aligned, hidden when inactive)
         //    Tab 0 Market:    [Buy 1B @x472 w90] [10x10M @x570 w105] [10x1M @x683 w105]
         //    Tab 1 Portfolio: [Sell All @x698 w90]
-        //    Tab 2 Debt:      [Iss25% @x404 w90] [Iss50% @x502 w90] [Pay25% @x600 w90] [Pay50% @x698 w90]
+        //    Tab 2 Debt:      [Iss25% @x386 w100] [Iss50% @x494 w100] [Pay25% @x600 w90] [Pay50% @x698 w90]
         //    Tab 3 Hedging:   [Auto-Hedge @x474 w95] [Sell25% @x577 w65] [Sell50% @x650 w65] [ExitAll @x723 w65]
         //    Tab 4 Positions: (none)
         //    Tab 5 Activity:  (none)
@@ -330,26 +330,36 @@ namespace MyFirstMod
             _pay25Btn.isVisible = false;
 
             _issue50Btn = AddUIComponent<UIButton>();
-            _issue50Btn.size = new Vector2(90f, TAB_HEIGHT);
-            _issue50Btn.relativePosition = new Vector3(WIDTH - 298f, ACTION_Y);
+            _issue50Btn.size = new Vector2(100f, TAB_HEIGHT);
+            _issue50Btn.relativePosition = new Vector3(WIDTH - 306f, ACTION_Y);
             _issue50Btn.text = "Issue 50%";
-            _issue50Btn.textScale = 0.75f;
+            _issue50Btn.textScale = 0.8f;
             _issue50Btn.normalBgSprite = "ButtonMenu";
             _issue50Btn.hoveredBgSprite = "ButtonMenuHovered";
             _issue50Btn.pressedBgSprite = "ButtonMenuPressed";
             _issue50Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _issue50Btn.textColor = new Color32(255, 200, 50, 255);
+            _issue50Btn.hoveredTextColor = new Color32(255, 220, 100, 255);
+            _issue50Btn.focusedTextColor = new Color32(255, 200, 50, 255);
+            _issue50Btn.disabledTextColor = new Color32(128, 128, 128, 255);
+            _issue50Btn.tooltip = "Issue bonds worth 50% of your bank balance";
             _issue50Btn.eventClick += OnIssue50Click;
             _issue50Btn.isVisible = false;
 
             _issue25Btn = AddUIComponent<UIButton>();
-            _issue25Btn.size = new Vector2(90f, TAB_HEIGHT);
-            _issue25Btn.relativePosition = new Vector3(WIDTH - 396f, ACTION_Y);
+            _issue25Btn.size = new Vector2(100f, TAB_HEIGHT);
+            _issue25Btn.relativePosition = new Vector3(WIDTH - 414f, ACTION_Y);
             _issue25Btn.text = "Issue 25%";
-            _issue25Btn.textScale = 0.75f;
+            _issue25Btn.textScale = 0.8f;
             _issue25Btn.normalBgSprite = "ButtonMenu";
             _issue25Btn.hoveredBgSprite = "ButtonMenuHovered";
             _issue25Btn.pressedBgSprite = "ButtonMenuPressed";
             _issue25Btn.disabledBgSprite = "ButtonMenuDisabled";
+            _issue25Btn.textColor = new Color32(100, 220, 100, 255);
+            _issue25Btn.hoveredTextColor = new Color32(150, 255, 150, 255);
+            _issue25Btn.focusedTextColor = new Color32(100, 220, 100, 255);
+            _issue25Btn.disabledTextColor = new Color32(128, 128, 128, 255);
+            _issue25Btn.tooltip = "Issue bonds worth 25% of your bank balance";
             _issue25Btn.eventClick += OnIssue25Click;
             _issue25Btn.isVisible = false;
 
@@ -539,10 +549,14 @@ namespace MyFirstMod
             {
                 int rCount = engine.ReportCount;
                 int qNum = engine.CurrentQuarter;
+                float unemp = (1f - engine.EmploymentRate) * 100f;
                 _summaryLabel.text = string.Format(
-                    "Quarterly Economic Report  |  {0} reports available\n" +
-                    "Current Quarter: Q{1}  |  Rating: {2}  |  DSCR: {3:F2}",
-                    rCount, qNum, ratingStr, dscrVal);
+                    "Q{0} Report  |  {1} avail  |  {2}  |  Health: {3:F0}%  |  Unemp: {4:F1}%\n" +
+                    "Jobs: {5:F0}%  |  Confidence: {6:F0}%  |  Fin Health: {7:F0}%  |  Pop: {8:N0}",
+                    qNum, rCount, ratingStr,
+                    engine.Happiness * 100f, unemp,
+                    engine.EmploymentRate * 100f, engine.CitizenConfidence * 100f,
+                    engine.FinancialHealth * 100f, engine.Population);
             }
             else if (_activeTab == 5)
             {
@@ -569,11 +583,14 @@ namespace MyFirstMod
             }
             else if (_activeTab == 2)
             {
+                string procStr = engine.CitizenProceedsThisPeriod > 0f
+                    ? string.Format("  |  +{0:N0} this period", engine.CitizenProceedsThisPeriod)
+                    : "";
                 _summaryLabel.text = string.Format(
-                    "Rating: {0}  |  Yield: {1:F1}%  |  Default: {2:F1}%  |  Demand: {3}  |  {4}\n" +
-                    "Debt: {5}/{6}  |  Owed: {7:N0}  |  Capacity: {8:N0}  |  {9}",
+                    "Rating: {0}  |  Yield: {1:F1}%  |  Default: {2:F1}%  |  Demand: {3}  |  {4}{5}\n" +
+                    "Debt: {6}/{7}  |  Owed: {8:N0}  |  Capacity: {9:N0}  |  {10}",
                     ratingStr, yieldPct, engine.DefaultProbability * 100f,
-                    engine.DemandLabelText, engine.PressureLabelText,
+                    engine.DemandLabelText, engine.PressureLabelText, procStr,
                     engine.IssuedCount, engine.MaxIssuedBonds,
                     engine.TotalDebtOwed, engine.AbsorptionCapacity,
                     engine.CreditStatusLabel);
@@ -801,9 +818,12 @@ namespace MyFirstMod
                     int monthsLeft = ib.RemainingPeriods;
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
+                    string subStatus = ib.SoldFraction >= 0.99f ? "FULL"
+                        : ib.SoldFraction <= 0.01f ? "PENDING"
+                        : ib.SoldFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.SoldFraction * 100f);
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:N0} ({2:F0}%)   {3:F1}%   {4}mo   Paid: {5:N0}",
-                        ib.Name, ib.SubscribedFace, ib.SoldFraction * 100f,
+                        "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
+                        ib.Name, ib.SubscribedFace, subStatus,
                         ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
                     _actionButtons[i].text = "Repay";
@@ -842,22 +862,30 @@ namespace MyFirstMod
                 _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
             else if (!canIssue && engine.DemandScore < 0.10f)
                 _scrollHintLabel.text = "NO DEMAND - CITIZENS UNWILLING TO BUY BONDS";
-            else if (!canIssue)
-                _scrollHintLabel.text = string.Format("MAX CAPACITY ({0}/{0}) - REPAY EXISTING DEBT FIRST",
+            else if (!canIssue && engine.IssuedCount >= engine.MaxIssuedBonds)
+                _scrollHintLabel.text = string.Format("MAX SLOTS ({0}/{0}) - REPAY EXISTING DEBT FIRST",
                     engine.MaxIssuedBonds);
+            else if (!canIssue && engine.RemainingCapacity < 1000f)
+                _scrollHintLabel.text = "MARKET SATURATED - CAPACITY FULL, WAIT FOR CITY GROWTH";
+            else if (!canIssue)
+                _scrollHintLabel.text = "CANNOT ISSUE - CHECK RATING AND DEMAND";
             else
                 _scrollHintLabel.text = "";
 
             string status = engine.CreditStatusLabel;
             int penalty = engine.DefaultPenalty;
             string penaltyStr = penalty > 0
-                ? " | Yield Penalty: +" + (penalty * 0.048f).ToString("F2") + "%"
+                ? " | Penalty: +" + (penalty * 0.25f).ToString("F1") + "%"
                 : "";
+            string citizenStr = engine.TotalCitizenProceeds > 0f
+                ? string.Format("  |  Citizen $: {0:N0}", engine.TotalCitizenProceeds)
+                : "";
+            string pressureStr = " | " + engine.PressureLabelText;
 
             _footerLabel.text = string.Format(
-                "Outstanding: {0}/{1}  |  Paid: {2:N0}  |  {3}{4}",
+                "Outstanding: {0}/{1}  |  Capacity: {2:N0}  |  Paid: {3:N0}  |  {4}{5}{6}{7}",
                 engine.IssuedCount, engine.MaxIssuedBonds,
-                engine.TotalCouponsPaid, status, penaltyStr);
+                engine.RemainingCapacity, engine.TotalCouponsPaid, status, penaltyStr, citizenStr, pressureStr);
         }
 
         private void RefreshHedging(BondMarketEngine engine)
@@ -1099,8 +1127,9 @@ namespace MyFirstMod
                 _scrollHintLabel.text = "";
 
             _footerLabel.text = string.Format(
-                "Transactions: {0}  |  Demand: {1}  |  Pressure: {2}",
-                total, engine.DemandLabelText, engine.PressureLabelText);
+                "Txns: {0}  |  Demand: {1}  |  Pressure: {2}  |  Citizen Proceeds: {3:N0}",
+                total, engine.DemandLabelText, engine.PressureLabelText,
+                engine.TotalCitizenProceeds);
         }
 
         private void RefreshReport(BondMarketEngine engine)
@@ -1158,43 +1187,50 @@ namespace MyFirstMod
             string pressureLabel = CimDemandEngine.PressureLabel(rp.SmoothedPressure);
 
             _infoLabels[0].text = string.Format(
-                "Q{0} ECONOMIC REPORT  |  Rating: {1}  |  {2}",
-                rp.Quarter, ratingStr, rp.CreditStatus);
-            _priceLabels[0].text = string.Format("DSCR: {0:F2}", rp.DSCR);
+                "Q{0} REPORT  |  {1}  |  DSCR: {2:F2}  |  {3}",
+                rp.Quarter, ratingStr, rp.DSCR, rp.CreditStatus);
+            _priceLabels[0].text = string.Format("Pop: {0:N0}", rp.Population);
 
             _infoLabels[1].text = string.Format(
-                "Revenue: {0:N0}  |  Expenses: {1:N0}  |  NOI: {2:N0}",
-                rp.GrossIncome, rp.TotalExpenses, rp.NOI);
-            _priceLabels[1].text = string.Format("Burden: {0:F1}%", rp.DebtBurden * 100f);
+                "Rev: {0:N0}  |  Exp: {1:N0}  |  NOI: {2:N0}  |  Burden: {3:F1}%",
+                rp.GrossIncome, rp.TotalExpenses, rp.NOI, rp.DebtBurden * 100f);
+            _priceLabels[1].text = string.Format("Vol: {0:F1}%", rp.RevenueVolatility * 100f);
 
+            string growthStr = rp.PopulationGrowth >= 0
+                ? "+" + (rp.PopulationGrowth * 100f).ToString("F1") + "%"
+                : (rp.PopulationGrowth * 100f).ToString("F1") + "%";
+            float unemploymentPct = (1f - rp.EmploymentRate) * 100f;
             _infoLabels[2].text = string.Format(
-                "Bonds: {0}/{1}  |  Face: {2:N0}  |  Sub: {3:F0}%  |  Coupons: {4:N0}",
-                rp.IssuedBonds, rp.MaxBonds, rp.DebtFace,
-                rp.AvgSubscription * 100f, rp.CouponsPaid);
+                "Health: {0:F0}%  |  Jobs: {1:F0}%  |  Unemp: {2:F1}%  |  Growth: {3}  |  Confidence: {4:F0}%",
+                rp.Happiness * 100f, rp.EmploymentRate * 100f,
+                unemploymentPct, growthStr, rp.CitizenConfidence * 100f);
+            _priceLabels[2].text = string.Format("Fin: {0:F0}%", rp.FinancialHealth * 100f);
+
             string dfltsStr = rp.QuarterDefaults > 0
-                ? string.Format("Dflts: {0}", rp.QuarterDefaults)
-                : "No Dflts";
-            _priceLabels[2].text = dfltsStr;
-
+                ? string.Format("  |  Dflts: {0}", rp.QuarterDefaults)
+                : "";
             _infoLabels[3].text = string.Format(
-                "Bench: {0:F1}%  |  Yield: {1:F1}%  |  Demand: {2}  |  Risk: {3:F1}%",
-                rp.BenchmarkRate * 100f, rp.RequiredYield * 100f,
-                demandLabel, rp.DefaultProbability * 100f);
-            _priceLabels[3].text = string.Format("Pop: {0:N0}", rp.Population);
+                "Debt: {0}/{1}  |  Face: {2:N0}  |  Sub: {3:F0}%  |  Risk: {4:F1}%{5}",
+                rp.IssuedBonds, rp.MaxBonds, rp.DebtFace,
+                rp.AvgSubscription * 100f, rp.DefaultProbability * 100f, dfltsStr);
+            _priceLabels[3].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
 
-            _infoLabels[4].text = string.Format(
-                "Portfolio: {0} bonds  |  Swaps: {1}  |  Hedged: {2:N0}",
-                rp.PortfolioBonds, rp.SwapCount, rp.HedgedNotional);
             string bondPLStr = rp.RealizedPL >= 0
                 ? "+" + rp.RealizedPL.ToString("N0")
                 : rp.RealizedPL.ToString("N0");
             string swapPLStr = rp.SwapPL >= 0
                 ? "+" + rp.SwapPL.ToString("N0")
                 : rp.SwapPL.ToString("N0");
-            _priceLabels[4].text = string.Format("P/L: {0}", bondPLStr);
+            string citizenStr = rp.CitizenProceeds > 0f
+                ? string.Format("  |  Citizen $: {0:N0}", rp.CitizenProceeds)
+                : "";
+            _infoLabels[4].text = string.Format(
+                "Bonds P/L: {0}  |  Swaps: {1} ({2})  |  Hedged: {3:N0}{4}",
+                bondPLStr, rp.SwapCount, swapPLStr, rp.HedgedNotional, citizenStr);
+            _priceLabels[4].text = string.Format("Appeal: {0:F0}%", rp.BondAppeal * 100f);
 
             _infoLabels[5].text = rp.Outlook;
-            _priceLabels[5].text = string.Format("Swap: {0}", swapPLStr);
+            _priceLabels[5].text = string.Format("{0} | {1}", pressureLabel, demandLabel);
 
             for (int i = 0; i < MAX_ROWS; i++)
                 _actionButtons[i].isVisible = false;
@@ -1205,8 +1241,9 @@ namespace MyFirstMod
             else
                 _scrollHintLabel.text = "";
 
-            _footerLabel.text = string.Format("Q{0}  |  {1}  |  {2}  |  Vol: {3:F1}%",
-                rp.Quarter, pressureLabel, demandLabel, rp.RevenueVolatility * 100f);
+            _footerLabel.text = string.Format("Q{0}  |  {1}  |  {2}  |  Health: {3:F0}%  |  Jobs: {4:F0}%",
+                rp.Quarter, pressureLabel, demandLabel,
+                rp.Happiness * 100f, rp.EmploymentRate * 100f);
         }
 
         private void RefreshReportHistory(int total)
@@ -1226,10 +1263,12 @@ namespace MyFirstMod
                         ? "+" + rp.NOI.ToString("N0")
                         : rp.NOI.ToString("N0");
 
+                    float unemp = (1f - rp.EmploymentRate) * 100f;
                     _infoLabels[i].text = string.Format(
-                        "Q{0}  |  {1}  |  DSCR: {2:F2}  |  NOI: {3}  |  Debt: {4:N0}  |  {5}",
+                        "Q{0}  {1}  DSCR:{2:F2}  NOI:{3}  Hlth:{4:F0}%  Jobs:{5:F0}%  Unemp:{6:F1}%  |  {7}",
                         rp.Quarter, ratingStr, rp.DSCR, noiStr,
-                        rp.DebtFace, rp.CreditStatus);
+                        rp.Happiness * 100f, rp.EmploymentRate * 100f, unemp,
+                        rp.CreditStatus);
                     _priceLabels[i].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
                     _actionButtons[i].text = "View";
                     _actionButtons[i].isVisible = true;
@@ -1462,9 +1501,11 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            int retired = engine.PayDebtPercent(0.25f);
-            if (retired > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + retired.ToString() + " bonds (25% target)");
+            int result = engine.PayDebtPercent(0.25f);
+            if (result > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + result.ToString() + " bonds (25% target)");
+            else if (result == -1)
+                Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (25% target)");
             RefreshData();
         }
 
@@ -1473,9 +1514,11 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            int retired = engine.PayDebtPercent(0.50f);
-            if (retired > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + retired.ToString() + " bonds (50% target)");
+            int result = engine.PayDebtPercent(0.50f);
+            if (result > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + result.ToString() + " bonds (50% target)");
+            else if (result == -1)
+                Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (50% target)");
             RefreshData();
         }
 
@@ -1485,9 +1528,14 @@ namespace MyFirstMod
             if (engine == null) return;
 
             if (engine.IssueBondPercent(0.25f))
+            {
+                Debug.Log("[MyFirstMod] Issued 25% bank bond successfully.");
                 RefreshData();
+            }
             else
+            {
                 Debug.Log("[MyFirstMod] Issue 25% failed - at capacity, rating D, or no demand.");
+            }
         }
 
         private void OnIssue50Click(UIComponent component, UIMouseEventParameter eventParam)
@@ -1496,9 +1544,14 @@ namespace MyFirstMod
             if (engine == null) return;
 
             if (engine.IssueBondPercent(0.50f))
+            {
+                Debug.Log("[MyFirstMod] Issued 50% bank bond successfully.");
                 RefreshData();
+            }
             else
+            {
                 Debug.Log("[MyFirstMod] Issue 50% failed - at capacity, rating D, or no demand.");
+            }
         }
 
         private void OnCloseClick(UIComponent component, UIMouseEventParameter eventParam)
