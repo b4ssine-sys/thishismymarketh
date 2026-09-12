@@ -110,7 +110,15 @@ namespace MyFirstMod
         private float _dscr;
         private float _noi;
         private CreditRating _rating;
-        private float _benchmarkRate;
+        // P0-5: two rates that used to be one. _benchmarkRate / _marketFloatingRate
+        // is the EXOGENOUS index - swaps and floating-rate debt settle against it
+        // and nothing the city does moves it. _cityBorrowingRate layers the city's
+        // own fiscal adjustment and over-hedge penalty on top and prices what the
+        // city issues. Folding the over-hedge penalty into the swap index was what
+        // turned the penalty into a self-reinforcing reward.
+        private float _benchmarkRate;       // exogenous benchmark (shown to player)
+        private float _marketFloatingRate;  // swap / floating-rate settlement index
+        private float _cityBorrowingRate;   // benchmark + fiscal adj + over-hedge penalty
         private float _requiredYield;
         private float _portfolioValue;
 
@@ -492,23 +500,32 @@ namespace MyFirstMod
 
             _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
 
+            // Exogenous market index: nothing the city does moves this. Swaps and
+            // floating-rate debt settle against it (P0-5).
             float fedFundsProxy = 0.04f;
             float termPremium = 0.005f + _revenueVolatility * 0.01f;
             if (termPremium > 0.02f) termPremium = 0.02f;
+            _marketFloatingRate = fedFundsProxy + termPremium;
+            if (_marketFloatingRate < 0.025f) _marketFloatingRate = 0.025f;
+            if (_marketFloatingRate > 0.08f) _marketFloatingRate = 0.08f;
+            _benchmarkRate = _marketFloatingRate;
+
+            // City borrowing rate: the index plus the city's own fiscal adjustment
+            // and over-hedge penalty. These price what the city ISSUES; they must
+            // never leak into the swap settlement index, or over-hedging would lift
+            // the floating leg that pays off the very swaps that caused it.
             float fiscalAdj = _debtBurden * 0.02f;
-            _benchmarkRate = fedFundsProxy + termPremium + fiscalAdj;
-            if (_benchmarkRate < 0.025f) _benchmarkRate = 0.025f;
-            if (_benchmarkRate > 0.08f) _benchmarkRate = 0.08f;
+            _cityBorrowingRate = _marketFloatingRate + fiscalAdj;
 
             float overHedgeR = CalculateOverHedgeRatioInternal();
             if (overHedgeR > 0f)
             {
                 float ohPenalty = overHedgeR * 0.015f;
                 if (ohPenalty > 0.03f) ohPenalty = 0.03f;
-                _benchmarkRate += ohPenalty;
+                _cityBorrowingRate += ohPenalty;
             }
 
-            float baseYield = BondPricing.GetRequiredYield(_benchmarkRate, _rating);
+            float baseYield = BondPricing.GetRequiredYield(_cityBorrowingRate, _rating);
             float defaultSpike = _defaultPenalty * DEFAULT_YIELD_SPIKE_PER_POINT;
             _requiredYield = baseYield + defaultSpike;
 
@@ -836,7 +853,8 @@ namespace MyFirstMod
 
         private void SettleSwapsInternal()
         {
-            float floatingRate = _benchmarkRate;
+            // P0-5: swaps settle against the exogenous index only.
+            float floatingRate = _marketFloatingRate;
 
             for (int i = _activeSwaps.Count - 1; i >= 0; i--)
             {
@@ -1244,6 +1262,8 @@ namespace MyFirstMod
             _noi = 0f;
             _rating = CreditRating.AAA;
             _benchmarkRate = 0f;
+            _marketFloatingRate = 0f;
+            _cityBorrowingRate = 0f;
             _requiredYield = 0f;
             _portfolioValue = 0f;
             _prevRequiredYield = 0f;
@@ -1633,7 +1653,8 @@ namespace MyFirstMod
 
         private float CalculateSwapMTM(InterestRateSwap swap)
         {
-            float floatingRate = _benchmarkRate;
+            // P0-5: mark against the exogenous index, not the city borrowing rate.
+            float floatingRate = _marketFloatingRate;
             float remainingYears = (float)swap.RemainingPeriods / BondPricing.PeriodsPerYear;
             if (swap.PayFixed)
                 return (floatingRate - swap.FixedRate) * swap.NotionalAmount * remainingYears;
