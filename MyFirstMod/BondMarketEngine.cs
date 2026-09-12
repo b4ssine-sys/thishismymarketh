@@ -38,6 +38,7 @@ namespace MyFirstMod
         private int _tickCounter;
         private int _nextBondId;
         private bool _initialized;
+        private bool _resetInProgress; // P0-1: re-entrancy guard for ResetStateInternal
         private int _defaultPenalty;
         private int _totalDefaults;
         private float _realizedPL;
@@ -337,9 +338,18 @@ namespace MyFirstMod
                 }
                 else if (PendingSaveData != null)
                 {
+                    // P0-1: null PendingSaveData BEFORE restoring, and reset to a
+                    // clean state if the restore fails. RestoreState no longer calls
+                    // back into ResetStateInternal, so a corrupt save can never loop
+                    // reset -> restore -> throw -> reset into a stack overflow.
                     byte[] data = PendingSaveData;
                     PendingSaveData = null;
-                    RestoreState(data);
+                    if (!RestoreState(data))
+                    {
+                        // Clean slate; the !_initialized block below seeds the
+                        // initial market, exactly as a fresh game does.
+                        ResetStateInternal();
+                    }
                 }
 
                 UpdateCashFlowHistory(internalMoneyAmount);
@@ -1111,6 +1121,23 @@ namespace MyFirstMod
 
         private void ResetStateInternal()
         {
+            // P0-1 belt-and-braces: even though the mutual recursion with
+            // RestoreState has been removed, refuse to re-enter so no future
+            // caller can reintroduce a reset loop.
+            if (_resetInProgress) return;
+            _resetInProgress = true;
+            try
+            {
+                ResetStateCore();
+            }
+            finally
+            {
+                _resetInProgress = false;
+            }
+        }
+
+        private void ResetStateCore()
+        {
             _marketBonds.Clear();
             _portfolioBonds.Clear();
             _issuedBonds.Clear();
@@ -1174,20 +1201,8 @@ namespace MyFirstMod
             _quarterDefaults = 0;
             _reportHistory.Clear();
 
-            if (PendingSaveData != null)
-            {
-                try
-                {
-                    RestoreState(PendingSaveData);
-                    _initialized = true;
-                    Debug.Log("[MyFirstMod] Bond market state restored from save.");
-                }
-                catch (Exception ex)
-                {
-                    Debug.Log("[MyFirstMod] Failed to restore save data: " + ex.Message);
-                }
-                PendingSaveData = null;
-            }
+            // P0-1: no RestoreState call here. Restore is orchestrated solely by
+            // OnUpdateMoneyAmount so reset and restore can never call each other.
         }
 
         public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
@@ -1873,7 +1888,11 @@ namespace MyFirstMod
             }
         }
 
-        private void RestoreState(byte[] data)
+        // P0-1: returns true on success, false on any failure (corrupt data or
+        // unknown version). On false the caller (OnUpdateMoneyAmount) resets to a
+        // clean state. This method never calls ResetStateInternal itself, which
+        // is what previously allowed reset<->restore to recurse into a crash.
+        private bool RestoreState(byte[] data)
         {
             try
             {
@@ -1883,8 +1902,8 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
                 if (version < 1 || version > SAVE_VERSION)
                 {
-                    Debug.Log("[MyFirstMod] RestoreState: Unknown version " + version + ", skipping.");
-                    return;
+                    Debug.Log("[MyFirstMod] RestoreState: Unknown version " + version + ", resetting to fresh state.");
+                    return false;
                 }
 
                 _nextBondId = r.ReadInt32();
@@ -2006,11 +2025,12 @@ namespace MyFirstMod
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +
                     _portfolioBonds.Count + "/" + _issuedBonds.Count + "/" + _marketBonds.Count +
                     " Swaps=" + _activeSwaps.Count + " Reports=" + _reportHistory.Count);
+                return true;
             }
             catch (Exception ex)
             {
-                Debug.Log("[MyFirstMod] RestoreState failed: " + ex.Message + " - resetting to fresh state.");
-                ResetStateInternal();
+                Debug.Log("[MyFirstMod] RestoreState failed: " + ex.Message + " - caller will reset to fresh state.");
+                return false;
             }
         }
 
