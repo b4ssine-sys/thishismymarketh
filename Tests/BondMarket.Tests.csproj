@@ -25,6 +25,7 @@
   <ItemGroup>
     <Compile Include="..\MyFirstMod\BondMarket.cs" Link="Linked\BondMarket.cs" />
     <Compile Include="..\MyFirstMod\CimDemandEngine.cs" Link="Linked\CimDemandEngine.cs" />
+    <Compile Include="..\MyFirstMod\DebtBook.cs" Link="Linked\DebtBook.cs" />
   </ItemGroup>
 
   <ItemGroup>

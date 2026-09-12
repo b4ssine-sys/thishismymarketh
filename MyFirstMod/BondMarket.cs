@@ -4,6 +4,10 @@ namespace MyFirstMod
 {
     public enum CreditRating { AAA, AA, A, BBB, BB, B, CCC, D }
 
+    // Schema v5 lifecycle (audit spec §3). A bond is never deleted on a missed
+    // payment; it transitions. Redeemed is terminal and retained for history.
+    public enum BondState { Active, Delinquent, Defaulted, Redeemed }
+
     public class Bond
     {
         public string Id;
@@ -33,14 +37,33 @@ namespace MyFirstMod
 
         // P0-2: a default keeps the liability instead of erasing it. A missed
         // coupon or maturity payment rolls into Arrears, which accrue a penalty
-        // each period until cleared; InDefault marks the bond so the rating is
-        // forced to D and issuance is suspended while it owes.
+        // each period until cleared.
         public float Arrears;
-        public bool InDefault;
+
+        // Schema v5 lifecycle (audit spec §3).
+        public BondState State;
+        public int PeriodsInArrears;   // consecutive periods carrying arrears
+        public int DefaultedAtPeriod;  // period the bond entered Defaulted, else -1
+        public int IssuePeriod;        // period the bond was issued (for age/history)
 
         // Debt service, capacity and repayment all key off the amount still
         // owed, so SubscribedFace now reports OutstandingPrincipal.
         public float SubscribedFace { get { return OutstandingPrincipal; } }
+
+        // Convenience views of the lifecycle for UI / reporting.
+        public bool IsDelinquent { get { return State == BondState.Delinquent; } }
+        public bool IsDefaulted { get { return State == BondState.Defaulted; } }
+        public bool IsDistressed { get { return State == BondState.Delinquent || State == BondState.Defaulted; } }
+        // Kept for existing call sites / UI: "in default" == the hard Defaulted state.
+        public bool InDefault { get { return State == BondState.Defaulted; } }
+
+        // Audit spec §2: one base for coupon. Unplaced notional is the primary
+        // inventory still available for take-up.
+        public float PeriodCoupon(int periodsPerYear)
+        {
+            return (OutstandingPrincipal * CouponRate) / periodsPerYear;
+        }
+        public float UnplacedNotional { get { return FaceValue * (1f - PlacedFraction); } }
 
         public Bond(string id, string name, float faceValue, float couponRate, int totalPeriods)
         {
@@ -54,6 +77,11 @@ namespace MyFirstMod
             CouponsReceived = 0f;
             PlacedFraction = 1f;
             OutstandingPrincipal = faceValue;
+            Arrears = 0f;
+            State = BondState.Active;
+            PeriodsInArrears = 0;
+            DefaultedAtPeriod = -1;
+            IssuePeriod = 0;
         }
     }
 
@@ -74,7 +102,8 @@ namespace MyFirstMod
         public float PlacedFraction;
         public float OutstandingPrincipal;
         public float Arrears;
-        public bool InDefault;
+        public BondState State;
+        public bool InDefault; // State == Defaulted, mirrored for existing UI checks
         public float Price; // market/portfolio present value at snapshot time (0 for issued)
 
         public float SubscribedFace { get { return OutstandingPrincipal; } }
@@ -94,6 +123,7 @@ namespace MyFirstMod
                 PlacedFraction = b.PlacedFraction,
                 OutstandingPrincipal = b.OutstandingPrincipal,
                 Arrears = b.Arrears,
+                State = b.State,
                 InDefault = b.InDefault,
                 Price = price
             };
