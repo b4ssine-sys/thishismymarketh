@@ -26,8 +26,20 @@ namespace MyFirstMod
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
+        private int _cashSamples;          // number of organic deltas recorded so far
         private long _prevMoney;
         private bool _prevMoneySet;
+
+        // P0-6: authoritative cash cursor. Seeded from the balance the game hands
+        // us each tick (and from LastCashAmount at the start of each UI action),
+        // then decremented/incremented by every mod cash op, so multiple ops in
+        // one tick do not all read the same pre-tick balance.
+        private long _tickCash;
+        // P0-7: net cash the mod itself moved since the last cash-flow sample
+        // (using the amounts the game actually moved, not the amounts requested).
+        // Subtracted out in UpdateCashFlowHistory so the credit model never
+        // mistakes the mod's own inflows/outflows for organic revenue.
+        private long _modCashDeltaPending;
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
@@ -352,6 +364,11 @@ namespace MyFirstMod
                     }
                 }
 
+                // P0-6: seed the cash cursor from the authoritative balance the
+                // game just handed us. Every mod cash op this tick settles against
+                // this cursor, not the stale LastCashAmount.
+                _tickCash = internalMoneyAmount;
+
                 UpdateCashFlowHistory(internalMoneyAmount);
                 RecalculateMetricsInternal(internalMoneyAmount);
 
@@ -381,12 +398,55 @@ namespace MyFirstMod
         {
             if (_prevMoneySet)
             {
-                float delta = (float)(internalMoneyAmount - _prevMoney);
-                _cashFlowHistory[_windowIndex] = delta;
-                _windowIndex = (_windowIndex + 1) % WINDOW_SIZE;
+                // P0-7: the raw balance change includes the cash the mod itself
+                // moved since the last sample (coupons, maturities, placement
+                // proceeds, swap settlements, UI buys/sells). Subtract the amounts
+                // the game ACTUALLY moved so only organic revenue/expense lands in
+                // the window. Using actual-moved (not requested) amounts makes this
+                // self-correcting and removes the old _prevMoney fixups.
+                long rawDelta = internalMoneyAmount - _prevMoney;
+                long organic = rawDelta - _modCashDeltaPending;
+                float delta = (float)organic;
+
+                if (ShouldRecordDelta(delta))
+                {
+                    _cashFlowHistory[_windowIndex] = delta;
+                    _windowIndex = (_windowIndex + 1) % WINDOW_SIZE;
+                    if (_cashSamples < WINDOW_SIZE) _cashSamples++;
+                }
+                // else: a >6 sigma spike (usually a one-off game grant or a
+                // desync). Re-baseline on the new balance rather than poison the
+                // rolling statistics with it.
             }
             _prevMoney = internalMoneyAmount;
             _prevMoneySet = true;
+            _modCashDeltaPending = 0; // consumed for this sample
+        }
+
+        // P0-7 sanity clamp: reject a delta that sits more than 6 standard
+        // deviations off the rolling mean, but only once the window holds enough
+        // samples to have a meaningful mean/stddev (otherwise everything looks
+        // extreme and nothing would ever be recorded).
+        private bool ShouldRecordDelta(float delta)
+        {
+            if (_cashSamples < WINDOW_SIZE) return true;
+
+            float mean = 0f;
+            for (int i = 0; i < WINDOW_SIZE; i++)
+                mean += _cashFlowHistory[i];
+            mean /= WINDOW_SIZE;
+
+            float sumSq = 0f;
+            for (int i = 0; i < WINDOW_SIZE; i++)
+            {
+                float d = _cashFlowHistory[i] - mean;
+                sumSq += d * d;
+            }
+            float stddev = (float)Math.Sqrt(sumSq / WINDOW_SIZE);
+            if (stddev <= 0f) return true;
+
+            float z = Math.Abs(delta - mean) / stddev;
+            return z <= 6f;
         }
 
         private void RecalculateMetricsInternal(long internalMoneyAmount)
@@ -1064,37 +1124,81 @@ namespace MyFirstMod
             return new Bond("B" + _nextBondId.ToString(), name, face, coupon, periods);
         }
 
-        private bool TrySpendCash(long internalAmount)
+        // P0-6: re-seed the cash cursor from the game at the start of a UI action,
+        // which can fire seconds after the last tick. Within a tick the cursor is
+        // already seeded from the authoritative balance, so this is only for the
+        // out-of-tick UI entry points.
+        private void SeedTickCashFromGame()
         {
             EconomyManager em = Singleton<EconomyManager>.instance;
-            if (em == null || em.LastCashAmount < internalAmount) return false;
+            _tickCash = em != null ? em.LastCashAmount : 0L;
+        }
 
-            long original = internalAmount;
-            while (internalAmount > 0)
+        // P0-6/P0-7: spend up to `desired` from the treasury, never more than the
+        // cursor says is available, and return the amount the game ACTUALLY moved.
+        // Updates the cursor and the pending mod delta. This is the single spend
+        // primitive; TrySpendCash is an all-or-nothing wrapper over it.
+        private long SpendCashUpTo(long desired)
+        {
+            if (desired <= 0) return 0L;
+            EconomyManager em = Singleton<EconomyManager>.instance;
+            if (em == null) return 0L;
+
+            long want = desired;
+            if (want > _tickCash) want = _tickCash;
+            if (want <= 0L) return 0L;
+
+            long moved = 0L;
+            long remaining = want;
+            while (remaining > 0L)
             {
-                int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
-                em.FetchResource(EconomyManager.Resource.LoanPayment, chunk,
+                int chunk = (int)Math.Min(remaining, (long)int.MaxValue);
+                int got = em.FetchResource(EconomyManager.Resource.LoanPayment, chunk,
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
-                internalAmount -= chunk;
+                moved += got;
+                remaining -= chunk;
+                if (got < chunk) break; // game capped the move; stop
             }
-            _prevMoney -= original;
+
+            _tickCash -= moved;
+            _modCashDeltaPending -= moved;
+            return moved;
+        }
+
+        private bool TrySpendCash(long internalAmount)
+        {
+            if (internalAmount <= 0L) return true;
+            // P0-6: affordability is checked against the live cursor, not the
+            // stale LastCashAmount, so repeated spends in one tick can't all
+            // approve against the same pre-tick balance.
+            if (_tickCash < internalAmount) return false;
+            SpendCashUpTo(internalAmount);
             return true;
         }
 
-        private void AddCashToCity(long internalAmount)
+        // Returns the amount the game actually added (P0-7). Callers that don't
+        // care may ignore it.
+        private long AddCashToCity(long internalAmount)
         {
+            if (internalAmount <= 0L) return 0L;
             EconomyManager em = Singleton<EconomyManager>.instance;
-            if (em == null) return;
+            if (em == null) return 0L;
 
-            long original = internalAmount;
-            while (internalAmount > 0)
+            long added = 0L;
+            long remaining = internalAmount;
+            while (remaining > 0L)
             {
-                int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
-                em.AddResource(EconomyManager.Resource.PublicIncome, chunk,
+                int chunk = (int)Math.Min(remaining, (long)int.MaxValue);
+                int got = em.AddResource(EconomyManager.Resource.PublicIncome, chunk,
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
-                internalAmount -= chunk;
+                added += got;
+                remaining -= chunk;
+                if (got < chunk) break; // game capped the move; stop
             }
-            _prevMoney += original;
+
+            _tickCash += added;
+            _modCashDeltaPending += added;
+            return added;
         }
 
         private void ResetStateInternal()
@@ -1124,6 +1228,9 @@ namespace MyFirstMod
             _windowIndex = 0;
             _prevMoney = 0;
             _prevMoneySet = false;
+            _cashSamples = 0;
+            _tickCash = 0;
+            _modCashDeltaPending = 0;
             _tickCounter = 0;
             _nextBondId = 0;
             _initialized = false;
@@ -1217,6 +1324,7 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
+                SeedTickCashFromGame();
                 if (marketIndex < 0 || marketIndex >= _marketBonds.Count)
                     return false;
 
@@ -1354,6 +1462,8 @@ namespace MyFirstMod
                 if (_issuedBonds.Count == 0)
                     return 0;
 
+                SeedTickCashFromGame();
+
                 float totalFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
                     totalFace += _issuedBonds[i].SubscribedFace;
@@ -1420,6 +1530,7 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
+                SeedTickCashFromGame();
                 float face = 1000000000f;
                 float coupon = _requiredYield;
                 int periods = 60;
@@ -1443,6 +1554,7 @@ namespace MyFirstMod
             {
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return 0;
+                SeedTickCashFromGame();
                 long remaining = em.LastCashAmount;
 
                 float coupon = _requiredYield;
@@ -1475,6 +1587,7 @@ namespace MyFirstMod
             {
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return 0;
+                SeedTickCashFromGame();
                 long remaining = em.LastCashAmount;
 
                 float coupon = _requiredYield;
@@ -1553,6 +1666,7 @@ namespace MyFirstMod
                 if (index < 0 || index >= _activeSwaps.Count)
                     return false;
 
+                SeedTickCashFromGame();
                 float mtm = CalculateSwapMTM(_activeSwaps[index]);
                 if (!SettleSwapCash(mtm))
                     return false;
@@ -1566,6 +1680,7 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
+                SeedTickCashFromGame();
                 int count = 0;
                 for (int i = _activeSwaps.Count - 1; i >= 0; i--)
                 {
@@ -1589,6 +1704,7 @@ namespace MyFirstMod
                 if (fraction <= 0f || fraction > 1f)
                     return false;
 
+                SeedTickCashFromGame();
                 InterestRateSwap swap = _activeSwaps[index];
                 float fullMTM = CalculateSwapMTM(swap);
                 float settleMTM = fullMTM * fraction;
@@ -1618,6 +1734,7 @@ namespace MyFirstMod
                 if (fraction <= 0f || fraction > 1f)
                     return 0;
 
+                SeedTickCashFromGame();
                 int affected = 0;
                 for (int i = _activeSwaps.Count - 1; i >= 0; i--)
                 {
@@ -1746,6 +1863,7 @@ namespace MyFirstMod
                 if (issuedIndex < 0 || issuedIndex >= _issuedBonds.Count)
                     return false;
 
+                SeedTickCashFromGame();
                 Bond ib = _issuedBonds[issuedIndex];
                 long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
                 if (!TrySpendCash(faceInternal))
