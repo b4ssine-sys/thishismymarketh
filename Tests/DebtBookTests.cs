@@ -161,6 +161,50 @@ namespace MyFirstMod.Tests
             Assert.True(book.RatingRecoveryAllowed(defaultPeriod + Lockout, Lockout));
         }
 
+        // TC-02 (plan section 5): a zero-cash MATURITY is a hard default - rating
+        // to D immediately, no grace window (grace applies only to missed coupons).
+        [Fact]
+        public void MaturityWithNoCash_DefaultsImmediately()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 100000f, 0.05f, 1); // matures next period
+            book.Add(b);
+            book.PlacePrimary(100000f);
+
+            book.ServicePeriod(1, 0f, Grace, Spread, Lockout, PPY, out _, out int newDefaults);
+
+            Assert.Equal(BondState.Defaulted, b.State); // immediate, despite Grace > 1
+            Assert.Equal(1, newDefaults);
+            Assert.True(book.AnyDefaulted);
+            Assert.True(b.Arrears > 0f);          // principal rolled into arrears
+            Assert.True(book.Count == 1);         // liability retained, not erased
+        }
+
+        // The O(1) Id index stays consistent through adds, removes and repayment.
+        [Fact]
+        public void IdIndex_StaysConsistentThroughChurn()
+        {
+            var book = new DebtBook();
+            book.Add(NewIssued("IB1", 10000f, 0.05f, 12));
+            book.Add(NewIssued("IB2", 20000f, 0.05f, 12));
+            book.Add(NewIssued("IB3", 30000f, 0.05f, 12));
+            book.PlacePrimary(60000f);
+
+            Assert.NotNull(book.FindActive("IB2"));
+            Assert.True(book.RemoveBond("IB2"));
+            Assert.Null(book.FindActive("IB2"));
+            Assert.NotNull(book.FindActive("IB1"));
+            Assert.NotNull(book.FindActive("IB3"));
+            Assert.Equal(2, book.Count);
+
+            // Retire everything via a large budget.
+            book.RepayByBudget(1, 1000000f, Lockout, out int retired, out _);
+            Assert.Equal(2, retired);
+            Assert.Null(book.FindActive("IB1"));
+            Assert.Null(book.FindActive("IB3"));
+            Assert.Equal(0, book.Count);
+        }
+
         // I3/I4 invariant violation is detected.
         [Fact]
         public void ValidateInvariants_RejectsOverPrincipal()

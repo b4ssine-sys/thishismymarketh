@@ -52,6 +52,7 @@ namespace MyFirstMod
         // MUTATIONS go through DebtBook methods, never this list directly.
         private List<Bond> _issuedBonds { get { return _debtBook.Bonds; } }
         private int _periodCounter; // monotonic period index driving the lifecycle
+        private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
         private readonly object _lock = new object();
         private readonly System.Random _rng = new System.Random();
 
@@ -922,9 +923,13 @@ namespace MyFirstMod
                 sum += _pressureHistory[i];
             _smoothedPressure = sum / _pressureHistory.Length;
 
-            float[] beforeFractions = new float[_issuedBonds.Count];
-            for (int i = 0; i < _issuedBonds.Count; i++)
-                beforeFractions[i] = _issuedBonds[i].PlacedFraction;
+            // Reuse a preallocated buffer rather than allocating each period on the
+            // simulation thread (plan section 4). Issuance is capped at
+            // MAX_ISSUED_BONDS, so the buffer always fits.
+            int snapCount = _issuedBonds.Count;
+            if (snapCount > _placementBefore.Length) snapCount = _placementBefore.Length;
+            for (int i = 0; i < snapCount; i++)
+                _placementBefore[i] = _issuedBonds[i].PlacedFraction;
 
             // Primary placement: citizen buying absorbs the still-unplaced part of
             // each issue. The DebtBook raises PlacedFraction and OutstandingPrincipal
@@ -948,10 +953,10 @@ namespace MyFirstMod
 
             string detail = "";
             float periodProceeds = _citizenProceedsThisPeriod;
-            for (int i = 0; i < _issuedBonds.Count; i++)
+            for (int i = 0; i < snapCount; i++)
             {
                 Bond ib = _issuedBonds[i];
-                float before = beforeFractions[i];
+                float before = _placementBefore[i];
                 float after = ib.PlacedFraction;
                 float delta = after - before;
                 if (delta > 0.001f || delta < -0.001f)

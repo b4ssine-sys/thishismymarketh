@@ -20,6 +20,9 @@ namespace MyFirstMod
 
         private readonly List<Bond> _bonds = new List<Bond>();
         private readonly List<Bond> _redeemed = new List<Bond>();
+        // O(1) active-bond lookup by Id (plan section 4). Kept in lock-step with
+        // _bonds by every mutator below.
+        private readonly Dictionary<string, Bond> _byId = new Dictionary<string, Bond>();
         private int _lastDefaultPeriod = -1;
 
         // Active, serviceable issues. Redeemed bonds are retained separately for
@@ -38,17 +41,29 @@ namespace MyFirstMod
         {
             _bonds.Clear();
             _redeemed.Clear();
+            _byId.Clear();
             _lastDefaultPeriod = -1;
         }
 
-        public void Add(Bond b) { _bonds.Add(b); }
+        public void Add(Bond b)
+        {
+            _bonds.Add(b);
+            if (b != null && b.Id != null) _byId[b.Id] = b;
+        }
 
         public Bond FindActive(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;
-            for (int i = 0; i < _bonds.Count; i++)
-                if (_bonds[i].Id == id) return _bonds[i];
-            return null;
+            Bond b;
+            return _byId.TryGetValue(id, out b) ? b : null;
+        }
+
+        // Remove an active bond from both the list and the index.
+        private void RemoveActiveAt(int i)
+        {
+            Bond b = _bonds[i];
+            _bonds.RemoveAt(i);
+            if (b != null && b.Id != null) _byId.Remove(b.Id);
         }
 
         // ---- totals and bases (audit spec section 2: one base per concept) ----
@@ -210,6 +225,10 @@ namespace MyFirstMod
 
                 float couponShort = coupon - couponPaid;
                 float principalShort = maturing ? (principalDue - principalPaid) : 0f;
+                // A failed maturity principal repayment is a HARD default (no grace);
+                // a missed coupon uses the grace window. (Matches real municipal
+                // behavior and the plan's TC-02.)
+                bool hardDefault = maturing && principalShort > EPS;
                 if (couponShort + principalShort > EPS)
                 {
                     b.Arrears += couponShort + principalShort;
@@ -218,13 +237,13 @@ namespace MyFirstMod
                 }
 
                 BondState before = b.State;
-                UpdateState(b, currentPeriod, gracePeriods, lockoutPeriods);
+                UpdateState(b, currentPeriod, gracePeriods, lockoutPeriods, hardDefault);
                 if (b.State == BondState.Defaulted && before != BondState.Defaulted)
                     newDefaults++;
 
                 if (b.State == BondState.Redeemed)
                 {
-                    _bonds.RemoveAt(i);
+                    RemoveActiveAt(i);
                     _redeemed.Add(b);
                     if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                 }
@@ -232,7 +251,7 @@ namespace MyFirstMod
             return totalPaid;
         }
 
-        private void UpdateState(Bond b, int currentPeriod, int gracePeriods, int lockoutPeriods)
+        private void UpdateState(Bond b, int currentPeriod, int gracePeriods, int lockoutPeriods, bool hardDefault)
         {
             bool hasArrears = b.Arrears > EPS;
             bool matured = b.RemainingPeriods <= 0;
@@ -251,7 +270,7 @@ namespace MyFirstMod
             {
                 b.PeriodsInArrears++;
                 if (b.State == BondState.Active) b.State = BondState.Delinquent;
-                if (b.State == BondState.Delinquent && b.PeriodsInArrears >= gracePeriods)
+                if (hardDefault || (b.State == BondState.Delinquent && b.PeriodsInArrears >= gracePeriods))
                 {
                     b.State = BondState.Defaulted;
                     b.DefaultedAtPeriod = currentPeriod;
@@ -293,7 +312,7 @@ namespace MyFirstMod
             {
                 if (_bonds[i].Id == id)
                 {
-                    _bonds.RemoveAt(i);
+                    RemoveActiveAt(i);
                     return true;
                 }
             }
@@ -323,7 +342,7 @@ namespace MyFirstMod
                 if (owed > budget) continue;
                 budget -= owed;
                 spent += owed;
-                _bonds.RemoveAt(i);
+                RemoveActiveAt(i);
                 retiredCount++;
             }
 
@@ -361,7 +380,7 @@ namespace MyFirstMod
 
                     if (sb.OutstandingPrincipal + sb.Arrears < 1f)
                     {
-                        _bonds.RemoveAt(smallest);
+                        RemoveActiveAt(smallest);
                         retiredCount++;
                     }
                     else
