@@ -818,12 +818,14 @@ namespace MyFirstMod
                     int monthsLeft = ib.RemainingPeriods;
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
-                    string subStatus = ib.PlacedFraction >= 0.99f ? "FULL"
+                    string subStatus = ib.InDefault || ib.Arrears > 0.01f ? "DEFAULT"
+                        : ib.PlacedFraction >= 0.99f ? "FULL"
                         : ib.PlacedFraction <= 0.01f ? "PENDING"
                         : ib.PlacedFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.PlacedFraction * 100f);
+                    float owedNow = ib.OutstandingPrincipal + ib.Arrears;
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
-                        ib.Name, ib.SubscribedFace, subStatus,
+                        ib.Name, owedNow, subStatus,
                         ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
                     _actionButtons[i].text = "Repay";
@@ -1017,9 +1019,11 @@ namespace MyFirstMod
                     Bond ib = _cachedIssuedBonds[iIdx];
                     float perPeriod = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
+                    string oweTag = ib.InDefault || ib.Arrears > 0.01f
+                        ? string.Format("[DEFAULT arrears {0:N0}]", ib.Arrears) : "[OWE]";
                     _infoLabels[i].text = string.Format(
-                        "[OWE] {0}  {1:F1}%  Sub: {2:N0} ({3:F0}%)  Paid: {4:N0}  {5}mo",
-                        ib.Name, ib.CouponRate * 100f, ib.SubscribedFace,
+                        "{0} {1}  {2:F1}%  Owed: {3:N0} ({4:F0}%)  Paid: {5:N0}  {6}mo",
+                        oweTag, ib.Name, ib.CouponRate * 100f, ib.OutstandingPrincipal + ib.Arrears,
                         ib.PlacedFraction * 100f, ib.CouponsReceived, ib.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriod);
                     _actionButtons[i].text = "Repay";

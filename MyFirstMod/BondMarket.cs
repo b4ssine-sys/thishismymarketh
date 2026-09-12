@@ -31,6 +31,13 @@ namespace MyFirstMod
         public float PlacedFraction;
         public float OutstandingPrincipal;
 
+        // P0-2: a default keeps the liability instead of erasing it. A missed
+        // coupon or maturity payment rolls into Arrears, which accrue a penalty
+        // each period until cleared; InDefault marks the bond so the rating is
+        // forced to D and issuance is suspended while it owes.
+        public float Arrears;
+        public bool InDefault;
+
         // Debt service, capacity and repayment all key off the amount still
         // owed, so SubscribedFace now reports OutstandingPrincipal.
         public float SubscribedFace { get { return OutstandingPrincipal; } }

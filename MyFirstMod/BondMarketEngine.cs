@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 5;
+        private const byte SAVE_VERSION = 6;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -23,6 +23,9 @@ namespace MyFirstMod
         private const float DEFAULT_YIELD_SPIKE_PER_POINT = 0.0025f;
         private const int DEFAULT_DECAY_PER_PERIOD = 1;
         private const int DEFAULT_PENALTY_PER_EVENT = 12;
+        private const int MAX_DEFAULT_PENALTY = 60;            // P0-2: cap so sustained default can't run the spike unbounded
+        private const float ARREARS_PENALTY_RATE_PER_PERIOD = 0.02f; // P0-2: penalty interest on unpaid arrears
+        private const int DEFAULT_LOCKOUT_PERIODS = 12;        // P0-2: issuance lock-out window after arrears clear
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
@@ -52,6 +55,7 @@ namespace MyFirstMod
         private bool _initialized;
         private bool _resetInProgress; // P0-1: re-entrancy guard for ResetStateInternal
         private int _defaultPenalty;
+        private int _defaultLockout; // P0-2: periods of issuance lock-out remaining after a default
         private int _totalDefaults;
         private float _realizedPL;
 
@@ -281,6 +285,7 @@ namespace MyFirstMod
                 {
                     if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return false;
                     if (_rating == CreditRating.D) return false;
+                    if (_defaultLockout > 0) return false; // P0-2: locked out after a default
                     if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
 
                     if (_absorptionCapacity > 0f)
@@ -307,7 +312,7 @@ namespace MyFirstMod
                     {
                         Bond ib = _issuedBonds[i];
                         float remainingCoupons = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
-                        total += ib.SubscribedFace + remainingCoupons;
+                        total += ib.SubscribedFace + remainingCoupons + ib.Arrears;
                     }
                     return total;
                 }
@@ -499,6 +504,8 @@ namespace MyFirstMod
                 _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], _requiredYield);
 
             _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
+            // P0-2: an unpaid default pins the rating at D regardless of ratios.
+            if (AnyBondInDefaultInternal()) _rating = CreditRating.D;
 
             // Exogenous market index: nothing the city does moves this. Swaps and
             // floating-rate debt settle against it (P0-5).
@@ -794,9 +801,19 @@ namespace MyFirstMod
             SettleSwapsInternal();
             SimulateCitizenTradingInternal();
 
-            if (_defaultPenalty > 0)
+            // P0-2: recovery is gated on clearing arrears. While any bond is in
+            // default the lock-out stays pinned and the penalty does not decay.
+            // Once cured, the lock-out counts down; only after it elapses does the
+            // default penalty (and its yield spike) start to fade.
+            if (AnyBondInDefaultInternal())
             {
-                _defaultPenalty = Math.Max(0, _defaultPenalty - DEFAULT_DECAY_PER_PERIOD);
+                _defaultLockout = DEFAULT_LOCKOUT_PERIODS;
+            }
+            else
+            {
+                if (_defaultLockout > 0) _defaultLockout--;
+                if (_defaultLockout == 0 && _defaultPenalty > 0)
+                    _defaultPenalty = Math.Max(0, _defaultPenalty - DEFAULT_DECAY_PER_PERIOD);
             }
 
             _periodsSinceReport++;
@@ -813,32 +830,60 @@ namespace MyFirstMod
             {
                 Bond ib = _issuedBonds[i];
                 ib.RemainingPeriods--;
+                if (ib.RemainingPeriods < 0) ib.RemainingPeriods = 0;
+                bool maturing = ib.RemainingPeriods <= 0;
 
-                if (ib.RemainingPeriods <= 0)
+                // P0-2: unpaid arrears compound a penalty each period, so ignoring
+                // a default gets more expensive the longer it festers.
+                if (ib.Arrears > 0f)
+                    ib.Arrears += ib.Arrears * ARREARS_PENALTY_RATE_PER_PERIOD;
+
+                float coupon = (ib.OutstandingPrincipal * ib.CouponRate) / BondPricing.PeriodsPerYear;
+                float principalDue = maturing ? ib.OutstandingPrincipal : 0f;
+                float totalDue = ib.Arrears + coupon + principalDue;
+
+                // P0-2 / P0-6: pay what cash actually allows, against the live
+                // cursor. A shortfall is a default that keeps the liability.
+                long paidInternal = SpendCashUpTo((long)(totalDue * INTERNAL_UNIT_SCALE));
+                float paid = (float)paidInternal / INTERNAL_UNIT_SCALE;
+
+                // Apply in priority order: arrears, then coupon, then principal.
+                float remain = paid;
+                float arrearsPaid = Math.Min(remain, ib.Arrears);
+                ib.Arrears -= arrearsPaid; remain -= arrearsPaid;
+
+                float couponPaid = Math.Min(remain, coupon);
+                remain -= couponPaid;
+
+                float principalPaid = 0f;
+                if (maturing)
                 {
-                    long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
-                    if (!TrySpendCash(faceInternal))
-                    {
-                        TriggerDefaultInternal(ib, "maturity repayment");
-                        _issuedBonds.RemoveAt(i);
-                        continue;
-                    }
-                    ib.CouponsReceived += ib.SubscribedFace;
-                    _issuedBonds.RemoveAt(i);
+                    principalPaid = Math.Min(remain, principalDue);
+                    ib.OutstandingPrincipal -= principalPaid;
+                    remain -= principalPaid;
                 }
-                else
+
+                ib.CouponsReceived += arrearsPaid + couponPaid + principalPaid; // total serviced (UI "Paid")
+
+                float couponShort = coupon - couponPaid;
+                float principalShort = maturing ? (principalDue - principalPaid) : 0f;
+                if (couponShort + principalShort > 0.01f)
                 {
-                    float couponPayment = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
-                    long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
-                    if (couponInternal > 0)
+                    // Roll the missed scheduled amount into arrears; the debt
+                    // survives. At maturity any unpaid principal becomes arrears.
+                    ib.Arrears += couponShort + principalShort;
+                    if (maturing) ib.OutstandingPrincipal -= principalShort; // -> 0
+                    TriggerDefaultInternal(ib, maturing ? "maturity repayment" : "coupon payment");
+                }
+
+                // Cure / retire.
+                if (ib.Arrears <= 0.01f)
+                {
+                    ib.Arrears = 0f;
+                    ib.InDefault = false;
+                    if (maturing && ib.OutstandingPrincipal <= 0.01f)
                     {
-                        if (!TrySpendCash(couponInternal))
-                        {
-                            TriggerDefaultInternal(ib, "coupon payment");
-                            _issuedBonds.RemoveAt(i);
-                            continue;
-                        }
-                        ib.CouponsReceived += couponPayment;
+                        _issuedBonds.RemoveAt(i); // fully repaid
                     }
                 }
             }
@@ -846,9 +891,29 @@ namespace MyFirstMod
 
         private void TriggerDefaultInternal(Bond bond, string reason)
         {
-            _defaultPenalty += DEFAULT_PENALTY_PER_EVENT;
-            _totalDefaults++;
-            _quarterDefaults++;
+            // P0-2: reset the issuance lock-out on every default event; only count
+            // the transition INTO default (not every period of sustained default)
+            // so the yield spike and statistics don't run away.
+            _defaultLockout = DEFAULT_LOCKOUT_PERIODS;
+            if (!bond.InDefault)
+            {
+                _defaultPenalty = Math.Min(_defaultPenalty + DEFAULT_PENALTY_PER_EVENT, MAX_DEFAULT_PENALTY);
+                _totalDefaults++;
+                _quarterDefaults++;
+                bond.InDefault = true;
+            }
+        }
+
+        // P0-2: true while any issued bond is unpaid. Forces rating to D and
+        // suspends issuance.
+        private bool AnyBondInDefaultInternal()
+        {
+            for (int i = 0; i < _issuedBonds.Count; i++)
+            {
+                Bond ib = _issuedBonds[i];
+                if (ib.InDefault || ib.Arrears > 0.01f) return true;
+            }
+            return false;
         }
 
         private void SettleSwapsInternal()
@@ -1040,7 +1105,7 @@ namespace MyFirstMod
                 Bond ib = _issuedBonds[i];
                 debtFace += ib.SubscribedFace;
                 float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
-                debtOwed += ib.SubscribedFace + rc;
+                debtOwed += ib.SubscribedFace + rc + ib.Arrears;
                 totalSub += ib.PlacedFraction;
                 couponsPaid += ib.CouponsReceived;
             }
@@ -1253,6 +1318,7 @@ namespace MyFirstMod
             _nextBondId = 0;
             _initialized = false;
             _defaultPenalty = 0;
+            _defaultLockout = 0;
             _totalDefaults = 0;
             _realizedPL = 0f;
             _grossIncome = 0f;
@@ -1408,6 +1474,8 @@ namespace MyFirstMod
                     return false;
                 if (_rating == CreditRating.D)
                     return false;
+                if (_defaultLockout > 0) // P0-2: locked out after a default
+                    return false;
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
 
@@ -1439,6 +1507,8 @@ namespace MyFirstMod
                 if (_issuedBonds.Count >= MAX_ISSUED_BONDS)
                     return false;
                 if (_rating == CreditRating.D)
+                    return false;
+                if (_defaultLockout > 0) // P0-2: locked out after a default
                     return false;
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
@@ -1484,24 +1554,28 @@ namespace MyFirstMod
 
                 SeedTickCashFromGame();
 
-                float totalFace = 0f;
+                // "Owed" per bond is outstanding principal PLUS default arrears, so
+                // a defaulted bond (principal already rolled into arrears) can't be
+                // retired for free (P0-2).
+                float totalOwed = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalFace += _issuedBonds[i].SubscribedFace;
+                    totalOwed += _issuedBonds[i].OutstandingPrincipal + _issuedBonds[i].Arrears;
 
-                float budget = totalFace * percent;
+                float budget = totalOwed * percent;
                 int retired = 0;
 
                 for (int i = _issuedBonds.Count - 1; i >= 0; i--)
                 {
                     Bond ib = _issuedBonds[i];
-                    if (ib.SubscribedFace > budget)
+                    float owed = ib.OutstandingPrincipal + ib.Arrears;
+                    if (owed > budget)
                         continue;
 
-                    long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
-                    if (!TrySpendCash(faceInternal))
+                    long owedInternal = (long)(owed * INTERNAL_UNIT_SCALE);
+                    if (!TrySpendCash(owedInternal))
                         continue;
 
-                    budget -= ib.SubscribedFace;
+                    budget -= owed;
                     _issuedBonds.RemoveAt(i);
                     retired++;
                 }
@@ -1509,34 +1583,43 @@ namespace MyFirstMod
                 if (retired == 0 && budget > 0f && _issuedBonds.Count > 0)
                 {
                     int smallest = 0;
+                    float smallestOwed = _issuedBonds[0].OutstandingPrincipal + _issuedBonds[0].Arrears;
                     for (int i = 1; i < _issuedBonds.Count; i++)
                     {
-                        if (_issuedBonds[i].SubscribedFace < _issuedBonds[smallest].SubscribedFace)
-                            smallest = i;
+                        float owedI = _issuedBonds[i].OutstandingPrincipal + _issuedBonds[i].Arrears;
+                        if (owedI < smallestOwed) { smallest = i; smallestOwed = owedI; }
                     }
 
                     Bond sb = _issuedBonds[smallest];
                     float paydown = budget;
-                    if (paydown > sb.SubscribedFace)
-                        paydown = sb.SubscribedFace;
+                    if (paydown > smallestOwed)
+                        paydown = smallestOwed;
 
                     long payInternal = (long)(paydown * INTERNAL_UNIT_SCALE);
                     if (payInternal > 0 && TrySpendCash(payInternal))
                     {
-                        // P0-3: a paydown retires OUTSTANDING PRINCIPAL only. It
-                        // must not touch PlacedFraction, or the engine would read
-                        // the retired principal as unsold inventory and let
-                        // citizens "re-buy" it next period, paying the treasury
-                        // par for principal it just retired (infinite money loop).
-                        float newOutstanding = sb.OutstandingPrincipal - paydown;
-                        if (newOutstanding < 1f)
+                        // P0-2/P0-3: apply arrears first, then outstanding principal.
+                        // Never touch PlacedFraction - that is placement take-up, not
+                        // the amount owed; moving it would let citizens "re-buy" the
+                        // retired principal (infinite money loop).
+                        float rem = paydown;
+                        float arrearsPaid = Math.Min(rem, sb.Arrears);
+                        sb.Arrears -= arrearsPaid; rem -= arrearsPaid;
+                        sb.OutstandingPrincipal -= rem;
+
+                        if (sb.Arrears <= 0.01f)
+                        {
+                            sb.Arrears = 0f;
+                            sb.InDefault = false; // cured by manual paydown
+                        }
+
+                        if (sb.OutstandingPrincipal + sb.Arrears < 1f)
                         {
                             _issuedBonds.RemoveAt(smallest);
                             retired++;
                         }
                         else
                         {
-                            sb.OutstandingPrincipal = newOutstanding;
                             retired = -1;
                         }
                     }
@@ -1886,8 +1969,11 @@ namespace MyFirstMod
 
                 SeedTickCashFromGame();
                 Bond ib = _issuedBonds[issuedIndex];
-                long faceInternal = (long)(ib.SubscribedFace * INTERNAL_UNIT_SCALE);
-                if (!TrySpendCash(faceInternal))
+                // P0-2: retiring a bond must clear its outstanding principal AND
+                // any default arrears, or a defaulted bond (principal already
+                // rolled into arrears) could be removed for free.
+                long owedInternal = (long)((ib.OutstandingPrincipal + ib.Arrears) * INTERNAL_UNIT_SCALE);
+                if (!TrySpendCash(owedInternal))
                     return false;
 
                 _issuedBonds.RemoveAt(issuedIndex);
@@ -2000,6 +2086,9 @@ namespace MyFirstMod
                     }
 
                     w.Write(_totalCitizenProceeds);
+
+                    // P0-2 (save v6): issuance lock-out countdown.
+                    w.Write(_defaultLockout);
 
                     w.Flush();
                     return ms.ToArray();
@@ -2146,6 +2235,11 @@ namespace MyFirstMod
                     _totalCitizenProceeds = r.ReadSingle();
                 }
 
+                if (version >= 6)
+                {
+                    _defaultLockout = r.ReadInt32();
+                }
+
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +
                     _portfolioBonds.Count + "/" + _issuedBonds.Count + "/" + _marketBonds.Count +
                     " Swaps=" + _activeSwaps.Count + " Reports=" + _reportHistory.Count);
@@ -2176,6 +2270,9 @@ namespace MyFirstMod
                 // now two independent fields.
                 w.Write(b.PlacedFraction);
                 w.Write(b.OutstandingPrincipal);
+                // P0-2 (save v6): default arrears and flag.
+                w.Write(b.Arrears);
+                w.Write(b.InDefault);
             }
         }
 
@@ -2212,6 +2309,12 @@ namespace MyFirstMod
                     float soldFrac = r.ReadSingle();
                     b.PlacedFraction = soldFrac;
                     b.OutstandingPrincipal = face * soldFrac;
+                }
+
+                if (version >= 6)
+                {
+                    b.Arrears = r.ReadSingle();
+                    b.InDefault = r.ReadBoolean();
                 }
                 bonds.Add(b);
             }
