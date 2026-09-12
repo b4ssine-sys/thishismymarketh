@@ -43,6 +43,17 @@ namespace MyFirstMod
         // mistakes the mod's own inflows/outflows for organic revenue.
         private long _modCashDeltaPending;
 
+        // Phase 2 (P1-1/P1-9): smoothed per-tick operating income/expense that feed
+        // the annualized credit model. Sourced from the game ledger when available
+        // (EconomyReader), otherwise from the balance-delta proxy window.
+        private float _avgIncomePerTick;
+        private float _avgExpensePerTick;
+        private long _prevLedgerIncome;
+        private long _prevLedgerExpense;
+        private bool _ledgerBaselineSet;
+        private float _monthsOfReserves;
+        private bool _creditModelNoticePending; // one-time Phase 2 migration banner flag
+
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
         // Schema v5: issued debt now lives in the pure DebtBook (single source of
@@ -150,6 +161,11 @@ namespace MyFirstMod
         public float TotalExpenses { get { return _totalExpenses; } }
         public float DebtBurden { get { return _debtBurden; } }
         public float DSCR { get { return _dscr; } }
+        public float MonthsOfReserves { get { return _monthsOfReserves; } }
+        // One-time Phase 2 migration banner: true after loading a pre-Phase-2 save;
+        // the UI reads it once and calls AckCreditModelNotice() to clear it.
+        public bool CreditModelNoticePending { get { return _creditModelNoticePending; } }
+        public void AckCreditModelNotice() { _creditModelNoticePending = false; }
         public float NOI { get { return _noi; } }
         public CreditRating Rating { get { return _rating; } }
         public float BenchmarkRate { get { return _benchmarkRate; } }
@@ -480,38 +496,45 @@ namespace MyFirstMod
                 else if (v < 0f) totalNegative += -v;
             }
 
-            _grossIncome = totalPositive / INTERNAL_UNIT_SCALE;
-            _totalExpenses = totalNegative / INTERNAL_UNIT_SCALE;
+            float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
 
-            float avgIncome = _grossIncome / WINDOW_SIZE;
-            float avgExpense = _totalExpenses / WINDOW_SIZE;
-
-            float scheduledDebtService = CalculateActiveDebtService();
-
-            _noi = avgIncome - avgExpense;
-
-            if (scheduledDebtService > 0f)
+            // Phase 2 (P1-9): source per-tick operating income/expense from the game
+            // ledger when available; otherwise fall back to the balance-delta proxy
+            // (net>0 -> income, net<0 -> expense) smoothed over the window.
+            float tickIncome, tickExpense;
+            if (SampleTickOperatingFlow(out tickIncome, out tickExpense))
             {
-                _debtBurden = avgIncome > 0f ? (scheduledDebtService / avgIncome) : 1f;
-                _dscr = _noi / scheduledDebtService;
+                float a = 1f / WINDOW_SIZE; // ~60-tick EMA to match the window horizon
+                _avgIncomePerTick = _avgIncomePerTick <= 0f ? tickIncome : _avgIncomePerTick + a * (tickIncome - _avgIncomePerTick);
+                _avgExpensePerTick = _avgExpensePerTick <= 0f ? tickExpense : _avgExpensePerTick + a * (tickExpense - _avgExpensePerTick);
             }
             else
             {
-                _debtBurden = 0f;
-                _dscr = avgIncome > 0f ? 10f : 0f;
+                _avgIncomePerTick = (totalPositive / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
+                _avgExpensePerTick = (totalNegative / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
             }
 
-            float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
-            if (cashDisplay > 500000f && _dscr < 3f) _dscr = Math.Min(_dscr + 1.0f, 10f);
-            if (cashDisplay < 10000f && _dscr > 0.5f) _dscr = Math.Max(_dscr - 0.5f, 0f);
+            // Phase 2 (P1-1): annualized credit metrics via the pure CreditModel -
+            // no more per-tick / per-period unit mix, no cash-threshold DSCR fudge.
+            CreditMetrics cm = CreditModel.CalculateMetrics(
+                _avgIncomePerTick, _avgExpensePerTick, _debtBook, cashDisplay,
+                TICKS_PER_PERIOD, BondPricing.PeriodsPerYear);
+
+            _grossIncome = cm.AnnualOperatingRevenue;
+            _totalExpenses = cm.AnnualOperatingExpense;
+            _noi = cm.AnnualNOI;
+            _debtBurden = cm.DebtBurden;
+            _dscr = cm.DSCR;
+            _monthsOfReserves = cm.MonthsOfReserves;
 
             _portfolioValue = 0f;
             for (int i = 0; i < _portfolioBonds.Count; i++)
                 _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], _requiredYield);
 
-            _rating = BondPricing.CalculateRating(_debtBurden, _dscr);
-            // P0-2: an unpaid default pins the rating at D regardless of ratios.
-            if (_debtBook.AnyDefaulted) _rating = CreditRating.D;
+            // Phase 2: calibrated rating grid + liquidity notch; hard D floor for
+            // active arrears is handled inside RatingEngine.
+            bool hasArrears = _debtBook.AnyDefaulted || _debtBook.TotalArrears > 0.01f;
+            _rating = RatingEngine.EvaluateRating(cm, hasArrears);
 
             // Exogenous market index: nothing the city does moves this. Swaps and
             // floating-rate debt settle against it (P0-5).
@@ -543,7 +566,7 @@ namespace MyFirstMod
             _requiredYield = baseYield + defaultSpike;
 
             float totalWealth = cashDisplay + _portfolioValue;
-            float wealthBase = avgIncome * WINDOW_SIZE;
+            float wealthBase = _avgIncomePerTick * WINDOW_SIZE;
             if (wealthBase < 50000f) wealthBase = 50000f;
             float wealthRatio = totalWealth / wealthBase;
             if (wealthRatio < 0f) wealthRatio = 0f;
@@ -654,8 +677,8 @@ namespace MyFirstMod
             }
             catch
             {
-                float avgIncome = _grossIncome / WINDOW_SIZE;
-                float avgExpense = _totalExpenses / WINDOW_SIZE;
+                float avgIncome = _avgIncomePerTick;
+                float avgExpense = _avgExpensePerTick;
 
                 if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
 
@@ -714,8 +737,8 @@ namespace MyFirstMod
             }
             catch
             {
-                float avgIncome = _grossIncome / WINDOW_SIZE;
-                float avgExpense = _totalExpenses / WINDOW_SIZE;
+                float avgIncome = _avgIncomePerTick;
+                float avgExpense = _avgExpensePerTick;
                 float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
 
                 if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
@@ -760,6 +783,40 @@ namespace MyFirstMod
         private float CalculateActiveDebtService()
         {
             return _debtBook.PeriodCouponTotal(BondPricing.PeriodsPerYear);
+        }
+
+        // Phase 2 (P1-9): per-tick operating income/expense from the game ledger.
+        // The ledger accumulators are cumulative, so we difference against the
+        // previous sample. Returns false on the first sample (no baseline), on an
+        // accumulator reset, or when the ledger API is unavailable - the caller
+        // then falls back to the balance-delta proxy.
+        private bool SampleTickOperatingFlow(out float tickIncome, out float tickExpense)
+        {
+            tickIncome = 0f;
+            tickExpense = 0f;
+
+            long incCum, expCum;
+            if (!EconomyReader.TryReadCumulative(out incCum, out expCum))
+                return false;
+
+            if (!_ledgerBaselineSet)
+            {
+                _prevLedgerIncome = incCum;
+                _prevLedgerExpense = expCum;
+                _ledgerBaselineSet = true;
+                return false;
+            }
+
+            long di = incCum - _prevLedgerIncome;
+            long de = expCum - _prevLedgerExpense;
+            _prevLedgerIncome = incCum;
+            _prevLedgerExpense = expCum;
+
+            if (di < 0 || de < 0) return false; // accumulator rolled over / reset
+
+            tickIncome = (float)di / INTERNAL_UNIT_SCALE;
+            tickExpense = (float)de / INTERNAL_UNIT_SCALE;
+            return true;
         }
 
         private void AgeBondsInternal()
@@ -1225,6 +1282,14 @@ namespace MyFirstMod
             _cashSamples = 0;
             _tickCash = 0;
             _modCashDeltaPending = 0;
+            _avgIncomePerTick = 0f;
+            _avgExpensePerTick = 0f;
+            _prevLedgerIncome = 0;
+            _prevLedgerExpense = 0;
+            _ledgerBaselineSet = false;
+            _monthsOfReserves = 0f;
+            _creditModelNoticePending = false;
+            EconomyReader.Reset();
             _tickCounter = 0;
             _periodCounter = 0;
             _nextBondId = 0;
@@ -1920,6 +1985,13 @@ namespace MyFirstMod
                 Debug.Log("[MyFirstMod] RestoreState: OK. Bonds P/I/M=" +
                     _portfolioBonds.Count + "/" + _issuedBonds.Count + "/" + _marketBonds.Count +
                     " Swaps=" + _activeSwaps.Count + " Reports=" + _reportHistory.Count);
+                // Phase 2 migration notice: existing saves now score under the
+                // annualized credit model (true DSCR + operating cash flows), so
+                // ratings may shift from what this save last displayed.
+                Debug.Log("[MyFirstMod] Credit Model Upgraded: Municipal bond ratings are now " +
+                    "calculated using annualized debt service coverage (DSCR) and true operating " +
+                    "cash flows. Existing city ratings may adjust accordingly.");
+                _creditModelNoticePending = true;
                 return true;
             }
             catch (Exception ex)
@@ -1986,6 +2058,9 @@ namespace MyFirstMod
 
             _cashSamples = WINDOW_SIZE; // the window array is restored; treat it as populated
             _prevMoneySet = false;      // re-baseline cash tracking on the first tick after load
+            _ledgerBaselineSet = false; // re-baseline the ledger diff after load
+            _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
+            _avgExpensePerTick = 0f;
         }
 
         private static void CopyInto(float[] dest, float[] src)
