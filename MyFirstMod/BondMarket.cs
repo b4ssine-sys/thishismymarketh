@@ -14,9 +14,26 @@ namespace MyFirstMod
         public int RemainingPeriods;
         public float PurchasePrice;
         public float CouponsReceived;
-        public float SoldFraction;
 
-        public float SubscribedFace { get { return FaceValue * SoldFraction; } }
+        // P0-3: one field used to carry two unrelated meanings (how much of an
+        // issue investors had taken up, AND how much principal was still owed),
+        // which let a partial paydown look like unsold inventory and created an
+        // infinite-money loop. They are now split:
+        //
+        //   PlacedFraction      - primary-market take-up [0,1]. Only ever moved
+        //                         up by citizen trading as the issue is placed.
+        //   OutstandingPrincipal - amortising balance in currency units. Only
+        //                         ever moved down by repayment (and up by
+        //                         placement as the city receives proceeds).
+        //
+        // For bonds the city BUYS (market / portfolio) these issuer-side fields
+        // are irrelevant and default to "fully placed, full principal".
+        public float PlacedFraction;
+        public float OutstandingPrincipal;
+
+        // Debt service, capacity and repayment all key off the amount still
+        // owed, so SubscribedFace now reports OutstandingPrincipal.
+        public float SubscribedFace { get { return OutstandingPrincipal; } }
 
         public Bond(string id, string name, float faceValue, float couponRate, int totalPeriods)
         {
@@ -28,7 +45,8 @@ namespace MyFirstMod
             RemainingPeriods = totalPeriods;
             PurchasePrice = 0f;
             CouponsReceived = 0f;
-            SoldFraction = 1f;
+            PlacedFraction = 1f;
+            OutstandingPrincipal = faceValue;
         }
     }
 

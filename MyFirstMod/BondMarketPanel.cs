@@ -818,9 +818,9 @@ namespace MyFirstMod
                     int monthsLeft = ib.RemainingPeriods;
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
-                    string subStatus = ib.SoldFraction >= 0.99f ? "FULL"
-                        : ib.SoldFraction <= 0.01f ? "PENDING"
-                        : ib.SoldFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.SoldFraction * 100f);
+                    string subStatus = ib.PlacedFraction >= 0.99f ? "FULL"
+                        : ib.PlacedFraction <= 0.01f ? "PENDING"
+                        : ib.PlacedFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.PlacedFraction * 100f);
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
                         ib.Name, ib.SubscribedFace, subStatus,
@@ -1020,7 +1020,7 @@ namespace MyFirstMod
                     _infoLabels[i].text = string.Format(
                         "[OWE] {0}  {1:F1}%  Sub: {2:N0} ({3:F0}%)  Paid: {4:N0}  {5}mo",
                         ib.Name, ib.CouponRate * 100f, ib.SubscribedFace,
-                        ib.SoldFraction * 100f, ib.CouponsReceived, ib.RemainingPeriods);
+                        ib.PlacedFraction * 100f, ib.CouponsReceived, ib.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriod);
                     _actionButtons[i].text = "Repay";
                     _actionButtons[i].isVisible = true;

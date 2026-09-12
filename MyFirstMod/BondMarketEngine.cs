@@ -13,7 +13,7 @@ namespace MyFirstMod
         public static bool NeedsReset;
         public static byte[] PendingSaveData;
 
-        private const byte SAVE_VERSION = 4;
+        private const byte SAVE_VERSION = 5;
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -851,13 +851,16 @@ namespace MyFirstMod
 
             float[] beforeFractions = new float[_issuedBonds.Count];
             for (int i = 0; i < _issuedBonds.Count; i++)
-                beforeFractions[i] = _issuedBonds[i].SoldFraction;
+                beforeFractions[i] = _issuedBonds[i].PlacedFraction;
 
+            // Primary placement: citizen buying absorbs the still-unplaced part of
+            // each issue. Placement raises both PlacedFraction AND the outstanding
+            // principal the city owes, and pays the city the proceeds it raised.
             if (_citizenBuyVolume > 0f)
             {
                 float totalUnsold = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalUnsold += _issuedBonds[i].FaceValue * (1f - _issuedBonds[i].SoldFraction);
+                    totalUnsold += _issuedBonds[i].FaceValue * (1f - _issuedBonds[i].PlacedFraction);
 
                 if (totalUnsold > 0f)
                 {
@@ -866,14 +869,16 @@ namespace MyFirstMod
                     for (int i = 0; i < _issuedBonds.Count; i++)
                     {
                         Bond ib = _issuedBonds[i];
-                        float unsold = ib.FaceValue * (1f - ib.SoldFraction);
+                        float unsold = ib.FaceValue * (1f - ib.PlacedFraction);
                         if (unsold <= 0f) continue;
 
                         float share = unsold / totalUnsold;
                         float bought = buyable * share;
+                        if (bought > unsold) bought = unsold;
                         float fractionBought = bought / ib.FaceValue;
-                        ib.SoldFraction += fractionBought;
-                        if (ib.SoldFraction > 1f) ib.SoldFraction = 1f;
+                        ib.PlacedFraction += fractionBought;
+                        if (ib.PlacedFraction > 1f) ib.PlacedFraction = 1f;
+                        ib.OutstandingPrincipal += bought; // city now owes this principal
 
                         long proceeds = (long)(bought * INTERNAL_UNIT_SCALE);
                         if (proceeds > 0)
@@ -886,38 +891,11 @@ namespace MyFirstMod
                 }
             }
 
-            if (_citizenSellVolume > 0f)
-            {
-                float totalSold = 0f;
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalSold += _issuedBonds[i].FaceValue * _issuedBonds[i].SoldFraction;
-
-                if (totalSold > 0f)
-                {
-                    float sellable = _citizenSellVolume;
-                    if (sellable > totalSold) sellable = totalSold;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                    {
-                        Bond ib = _issuedBonds[i];
-                        float soldValue = ib.FaceValue * ib.SoldFraction;
-                        if (soldValue <= 0f) continue;
-
-                        float share = soldValue / totalSold;
-                        float sold = sellable * share;
-                        float prevFraction = ib.SoldFraction;
-                        float fractionSold = sold / ib.FaceValue;
-                        ib.SoldFraction -= fractionSold;
-                        if (ib.SoldFraction < 0.05f) ib.SoldFraction = 0.05f;
-
-                        float actualRedeemed = (prevFraction - ib.SoldFraction) * ib.FaceValue;
-                        if (actualRedeemed > 0f)
-                        {
-                            long cost = (long)(actualRedeemed * INTERNAL_UNIT_SCALE);
-                            TrySpendCash(cost);
-                        }
-                    }
-                }
-            }
+            // P0-4: secondary-market selling is investor-to-investor. It does not
+            // retire the city's debt and must never touch the treasury. Its only
+            // effect is sell pressure, already captured in _marketPressure /
+            // _smoothedPressure above and fed into the required yield. So there is
+            // deliberately no sell-side cash or placement change here.
 
             string detail = "";
             float periodProceeds = _citizenProceedsThisPeriod;
@@ -925,7 +903,7 @@ namespace MyFirstMod
             {
                 Bond ib = _issuedBonds[i];
                 float before = beforeFractions[i];
-                float after = ib.SoldFraction;
+                float after = ib.PlacedFraction;
                 float delta = after - before;
                 if (delta > 0.001f || delta < -0.001f)
                 {
@@ -985,7 +963,7 @@ namespace MyFirstMod
                 debtFace += ib.SubscribedFace;
                 float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
                 debtOwed += ib.SubscribedFace + rc;
-                totalSub += ib.SoldFraction;
+                totalSub += ib.PlacedFraction;
                 couponsPaid += ib.CouponsReceived;
             }
             rp.DebtFace = debtFace;
@@ -1319,7 +1297,8 @@ namespace MyFirstMod
 
                 _nextBondId++;
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = 0f;
+                ib.PlacedFraction = 0f;       // nothing placed with investors yet
+                ib.OutstandingPrincipal = 0f; // and nothing owed until it is placed
                 _issuedBonds.Add(ib);
                 return true;
             }
@@ -1361,7 +1340,8 @@ namespace MyFirstMod
                 _nextBondId++;
                 string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.SoldFraction = 0f;
+                ib.PlacedFraction = 0f;       // nothing placed with investors yet
+                ib.OutstandingPrincipal = 0f; // and nothing owed until it is placed
                 _issuedBonds.Add(ib);
                 return true;
             }
@@ -1413,15 +1393,20 @@ namespace MyFirstMod
                     long payInternal = (long)(paydown * INTERNAL_UNIT_SCALE);
                     if (payInternal > 0 && TrySpendCash(payInternal))
                     {
-                        float newSubscribed = sb.SubscribedFace - paydown;
-                        if (newSubscribed < 1f)
+                        // P0-3: a paydown retires OUTSTANDING PRINCIPAL only. It
+                        // must not touch PlacedFraction, or the engine would read
+                        // the retired principal as unsold inventory and let
+                        // citizens "re-buy" it next period, paying the treasury
+                        // par for principal it just retired (infinite money loop).
+                        float newOutstanding = sb.OutstandingPrincipal - paydown;
+                        if (newOutstanding < 1f)
                         {
                             _issuedBonds.RemoveAt(smallest);
                             retired++;
                         }
                         else
                         {
-                            sb.SoldFraction = newSubscribed / sb.FaceValue;
+                            sb.OutstandingPrincipal = newOutstanding;
                             retired = -1;
                         }
                     }
@@ -1924,9 +1909,9 @@ namespace MyFirstMod
                 for (int i = 0; i < _pressureHistory.Length; i++)
                     _pressureHistory[i] = r.ReadSingle();
 
-                ReadBondList(r, _portfolioBonds);
-                ReadBondList(r, _issuedBonds);
-                ReadBondList(r, _marketBonds);
+                ReadBondList(r, _portfolioBonds, version);
+                ReadBondList(r, _issuedBonds, version);
+                ReadBondList(r, _marketBonds, version);
 
                 _activeSwaps.Clear();
                 int swapCount = r.ReadInt32();
@@ -2048,11 +2033,14 @@ namespace MyFirstMod
                 w.Write(b.RemainingPeriods);
                 w.Write(b.PurchasePrice);
                 w.Write(b.CouponsReceived);
-                w.Write(b.SoldFraction);
+                // P0-3 (save v5): placement take-up and outstanding principal are
+                // now two independent fields.
+                w.Write(b.PlacedFraction);
+                w.Write(b.OutstandingPrincipal);
             }
         }
 
-        private static void ReadBondList(BinaryReader r, List<Bond> bonds)
+        private static void ReadBondList(BinaryReader r, List<Bond> bonds, byte version)
         {
             bonds.Clear();
             int count = r.ReadInt32();
@@ -2066,13 +2054,26 @@ namespace MyFirstMod
                 int remainP = r.ReadInt32();
                 float purchase = r.ReadSingle();
                 float couponsRcvd = r.ReadSingle();
-                float soldFrac = r.ReadSingle();
 
                 Bond b = new Bond(id, name, face, coupon, totalP);
                 b.RemainingPeriods = remainP;
                 b.PurchasePrice = purchase;
                 b.CouponsReceived = couponsRcvd;
-                b.SoldFraction = soldFrac;
+
+                if (version >= 5)
+                {
+                    b.PlacedFraction = r.ReadSingle();
+                    b.OutstandingPrincipal = r.ReadSingle();
+                }
+                else
+                {
+                    // Legacy saves stored a single SoldFraction that carried both
+                    // meanings. Map it to both: take-up = soldFrac, owed = the
+                    // placed face.
+                    float soldFrac = r.ReadSingle();
+                    b.PlacedFraction = soldFrac;
+                    b.OutstandingPrincipal = face * soldFrac;
+                }
                 bonds.Add(b);
             }
         }
