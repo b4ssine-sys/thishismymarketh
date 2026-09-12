@@ -27,6 +27,8 @@
     <Compile Include="..\MyFirstMod\CimDemandEngine.cs" Link="Linked\CimDemandEngine.cs" />
     <Compile Include="..\MyFirstMod\DebtBook.cs" Link="Linked\DebtBook.cs" />
     <Compile Include="..\MyFirstMod\StateSerializer.cs" Link="Linked\StateSerializer.cs" />
+    <Compile Include="..\MyFirstMod\Credit\CreditModel.cs" Link="Linked\CreditModel.cs" />
+    <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
   </ItemGroup>
 
   <ItemGroup>
