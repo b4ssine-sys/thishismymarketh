@@ -57,6 +57,76 @@ namespace MyFirstMod
         }
     }
 
+    // P0-8: immutable snapshots handed to the UI thread. The engine used to pass
+    // live Bond / InterestRateSwap references that the sim thread kept mutating;
+    // these DTOs are deep-copied under the lock so the UI reads a stable picture,
+    // and every UI action is keyed by the stable Id, never a list index.
+    public class BondView
+    {
+        public string Id;
+        public string Name;
+        public float FaceValue;
+        public float CouponRate;
+        public int TotalPeriods;
+        public int RemainingPeriods;
+        public float PurchasePrice;
+        public float CouponsReceived;
+        public float PlacedFraction;
+        public float OutstandingPrincipal;
+        public float Arrears;
+        public bool InDefault;
+        public float Price; // market/portfolio present value at snapshot time (0 for issued)
+
+        public float SubscribedFace { get { return OutstandingPrincipal; } }
+
+        public static BondView From(Bond b, float price)
+        {
+            return new BondView
+            {
+                Id = b.Id,
+                Name = b.Name,
+                FaceValue = b.FaceValue,
+                CouponRate = b.CouponRate,
+                TotalPeriods = b.TotalPeriods,
+                RemainingPeriods = b.RemainingPeriods,
+                PurchasePrice = b.PurchasePrice,
+                CouponsReceived = b.CouponsReceived,
+                PlacedFraction = b.PlacedFraction,
+                OutstandingPrincipal = b.OutstandingPrincipal,
+                Arrears = b.Arrears,
+                InDefault = b.InDefault,
+                Price = price
+            };
+        }
+    }
+
+    public class SwapView
+    {
+        public string Id;
+        public float NotionalAmount;
+        public float FixedRate;
+        public int TotalPeriods;
+        public int RemainingPeriods;
+        public bool PayFixed;
+        public float CumulativePL;
+        public float LastSettlement;
+
+        public static SwapView From(InterestRateSwap s)
+        {
+            return new SwapView
+            {
+                Id = s.Id,
+                NotionalAmount = s.NotionalAmount,
+                FixedRate = s.FixedRate,
+                TotalPeriods = s.TotalPeriods,
+                RemainingPeriods = s.RemainingPeriods,
+                PayFixed = s.PayFixed,
+                CumulativePL = s.CumulativePL,
+                LastSettlement = s.LastSettlement
+            };
+        }
+    }
+
     public class InterestRateSwap
     {
         public string Id;

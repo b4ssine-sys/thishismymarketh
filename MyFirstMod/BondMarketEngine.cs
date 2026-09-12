@@ -1376,7 +1376,9 @@ namespace MyFirstMod
             // OnUpdateMoneyAmount so reset and restore can never call each other.
         }
 
-        public void GetMarketSnapshot(List<Bond> outBonds, List<float> outPrices)
+        // P0-8: snapshots emit immutable BondView/SwapView copies, never live
+        // references into simulation state.
+        public void GetMarketSnapshot(List<BondView> outBonds, List<float> outPrices)
         {
             outBonds.Clear();
             outPrices.Clear();
@@ -1385,13 +1387,14 @@ namespace MyFirstMod
                 float yield = _requiredYield;
                 for (int i = 0; i < _marketBonds.Count; i++)
                 {
-                    outBonds.Add(_marketBonds[i]);
-                    outPrices.Add(BondPricing.PresentValue(_marketBonds[i], yield));
+                    float price = BondPricing.PresentValue(_marketBonds[i], yield);
+                    outBonds.Add(BondView.From(_marketBonds[i], price));
+                    outPrices.Add(price);
                 }
             }
         }
 
-        public void GetPortfolioSnapshot(List<Bond> outBonds, List<float> outPrices)
+        public void GetPortfolioSnapshot(List<BondView> outBonds, List<float> outPrices)
         {
             outBonds.Clear();
             outPrices.Clear();
@@ -1400,18 +1403,23 @@ namespace MyFirstMod
                 float yield = _requiredYield;
                 for (int i = 0; i < _portfolioBonds.Count; i++)
                 {
-                    outBonds.Add(_portfolioBonds[i]);
-                    outPrices.Add(BondPricing.PresentValue(_portfolioBonds[i], yield));
+                    float price = BondPricing.PresentValue(_portfolioBonds[i], yield);
+                    outBonds.Add(BondView.From(_portfolioBonds[i], price));
+                    outPrices.Add(price);
                 }
             }
         }
 
-        public bool BuyBond(int marketIndex)
+        // P0-8: buy by stable Id. Returns false if the market bond is gone (aged
+        // out / already bought) since the UI snapshot was taken.
+        public bool BuyBond(string bondId)
         {
+            if (string.IsNullOrEmpty(bondId)) return false;
             lock (_lock)
             {
                 SeedTickCashFromGame();
-                if (marketIndex < 0 || marketIndex >= _marketBonds.Count)
+                int marketIndex = IndexOfById(_marketBonds, bondId);
+                if (marketIndex < 0)
                     return false;
 
                 Bond bond = _marketBonds[marketIndex];
@@ -1428,13 +1436,18 @@ namespace MyFirstMod
             }
         }
 
-        public bool SellBond(int portfolioIndex)
+        // P0-8: sell by stable Id. Returns false if the holding is gone since the
+        // UI snapshot was taken.
+        public bool SellBond(string bondId)
         {
+            if (string.IsNullOrEmpty(bondId)) return false;
             lock (_lock)
             {
-                if (portfolioIndex < 0 || portfolioIndex >= _portfolioBonds.Count)
+                int portfolioIndex = IndexOfById(_portfolioBonds, bondId);
+                if (portfolioIndex < 0)
                     return false;
 
+                SeedTickCashFromGame();
                 Bond bond = _portfolioBonds[portfolioIndex];
                 float price = BondPricing.PresentValue(bond, _requiredYield);
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
@@ -1763,11 +1776,15 @@ namespace MyFirstMod
             return true;
         }
 
-        public bool TerminateSwap(int index)
+        // P0-8: terminate by stable Id. Returns false if the swap is gone
+        // (matured/removed) since the UI snapshot was taken.
+        public bool TerminateSwap(string swapId)
         {
+            if (string.IsNullOrEmpty(swapId)) return false;
             lock (_lock)
             {
-                if (index < 0 || index >= _activeSwaps.Count)
+                int index = IndexOfSwapById(_activeSwaps, swapId);
+                if (index < 0)
                     return false;
 
                 SeedTickCashFromGame();
@@ -1940,35 +1957,38 @@ namespace MyFirstMod
             }
         }
 
-        public void GetActiveSwapsSnapshot(List<InterestRateSwap> outSwaps)
+        public void GetActiveSwapsSnapshot(List<SwapView> outSwaps)
         {
             outSwaps.Clear();
             lock (_lock)
             {
                 for (int i = 0; i < _activeSwaps.Count; i++)
-                    outSwaps.Add(_activeSwaps[i]);
+                    outSwaps.Add(SwapView.From(_activeSwaps[i]));
             }
         }
 
-        public void GetIssuedBondsSnapshot(List<Bond> outBonds)
+        public void GetIssuedBondsSnapshot(List<BondView> outBonds)
         {
             outBonds.Clear();
             lock (_lock)
             {
                 for (int i = 0; i < _issuedBonds.Count; i++)
-                    outBonds.Add(_issuedBonds[i]);
+                    outBonds.Add(BondView.From(_issuedBonds[i], 0f));
             }
         }
 
-        public bool RepaySingleBond(int issuedIndex)
+        // P0-8: retire by stable Id. Returns false if the bond is already gone
+        // (matured/removed) since the UI snapshot was taken.
+        public bool RepaySingleBond(string bondId)
         {
+            if (string.IsNullOrEmpty(bondId)) return false;
             lock (_lock)
             {
-                if (issuedIndex < 0 || issuedIndex >= _issuedBonds.Count)
-                    return false;
+                int idx = IndexOfById(_issuedBonds, bondId);
+                if (idx < 0) return false;
 
                 SeedTickCashFromGame();
-                Bond ib = _issuedBonds[issuedIndex];
+                Bond ib = _issuedBonds[idx];
                 // P0-2: retiring a bond must clear its outstanding principal AND
                 // any default arrears, or a defaulted bond (principal already
                 // rolled into arrears) could be removed for free.
@@ -1976,9 +1996,23 @@ namespace MyFirstMod
                 if (!TrySpendCash(owedInternal))
                     return false;
 
-                _issuedBonds.RemoveAt(issuedIndex);
+                _issuedBonds.RemoveAt(idx);
                 return true;
             }
+        }
+
+        private static int IndexOfById(List<Bond> list, string id)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].Id == id) return i;
+            return -1;
+        }
+
+        private static int IndexOfSwapById(List<InterestRateSwap> list, string id)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].Id == id) return i;
+            return -1;
         }
 
         public byte[] SerializeState()

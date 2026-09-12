@@ -88,10 +88,18 @@ namespace MyFirstMod
 
         private int _scrollOffset;
 
-        private readonly List<Bond> _cachedBonds = new List<Bond>();
+        private readonly List<BondView> _cachedBonds = new List<BondView>();
         private readonly List<float> _cachedPrices = new List<float>();
-        private readonly List<InterestRateSwap> _cachedSwaps = new List<InterestRateSwap>();
-        private readonly List<Bond> _cachedIssuedBonds = new List<Bond>();
+        private readonly List<SwapView> _cachedSwaps = new List<SwapView>();
+        private readonly List<BondView> _cachedIssuedBonds = new List<BondView>();
+
+        // P0-8: per-visible-row action metadata, captured at render time so a
+        // click dispatches on the stable instrument Id rather than re-deriving a
+        // list index that may have shifted since the last refresh.
+        private enum RowAction { None, Buy, Sell, Repay, Issue, Terminate, SelectReport }
+        private readonly RowAction[] _rowAction = new RowAction[MAX_ROWS];
+        private readonly string[] _rowId = new string[MAX_ROWS];  // bond/swap id for Buy/Sell/Repay/Terminate
+        private readonly int[] _rowArg = new int[MAX_ROWS];        // template index (Issue) / report index (SelectReport)
 
         private UIButton _hedgingTabBtn;
         private UIButton _positionsTabBtn;
@@ -630,6 +638,13 @@ namespace MyFirstMod
                     engine.PressureLabelText, engine.DefaultProbability * 100f);
             }
 
+            for (int i = 0; i < MAX_ROWS; i++)
+            {
+                _rowAction[i] = RowAction.None;
+                _rowId[i] = null;
+                _rowArg[i] = -1;
+            }
+
             if (_activeTab == 0)
                 RefreshMarket(engine);
             else if (_activeTab == 1)
@@ -674,7 +689,7 @@ namespace MyFirstMod
             {
                 if (i < count)
                 {
-                    Bond b = _cachedBonds[i];
+                    BondView b = _cachedBonds[i];
                     float price = _cachedPrices[i];
                     int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
 
@@ -685,6 +700,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Buy";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Buy;
+                    _rowId[i] = b.Id;
                 }
                 else
                 {
@@ -730,7 +747,7 @@ namespace MyFirstMod
             for (int j = 0; j < total; j++)
             {
                 float p = _cachedPrices[j];
-                Bond bj = _cachedBonds[j];
+                BondView bj = _cachedBonds[j];
                 totalValue += p;
                 unrealizedPL += (p + bj.CouponsReceived) - bj.PurchasePrice;
             }
@@ -742,7 +759,7 @@ namespace MyFirstMod
                 int bondIdx = _scrollOffset + i;
                 if (bondIdx < total)
                 {
-                    Bond b = _cachedBonds[bondIdx];
+                    BondView b = _cachedBonds[bondIdx];
                     float price = _cachedPrices[bondIdx];
                     float bondPL = (price + b.CouponsReceived) - b.PurchasePrice;
                     int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
@@ -755,6 +772,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Sell;
+                    _rowId[i] = b.Id;
                 }
                 else
                 {
@@ -814,7 +833,7 @@ namespace MyFirstMod
                 int itemIdx = _scrollOffset + i;
                 if (itemIdx < issuedCount)
                 {
-                    Bond ib = _cachedIssuedBonds[itemIdx];
+                    BondView ib = _cachedIssuedBonds[itemIdx];
                     int monthsLeft = ib.RemainingPeriods;
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
@@ -831,6 +850,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Repay";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Repay;
+                    _rowId[i] = ib.Id;
                 }
                 else if (itemIdx < totalItems)
                 {
@@ -848,6 +869,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Issue";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = canIssue;
+                    _rowAction[i] = RowAction.Issue;
+                    _rowArg[i] = tIdx; // template index is stable
                 }
                 else
                 {
@@ -924,7 +947,7 @@ namespace MyFirstMod
                 int swapIdx = _scrollOffset + i;
                 if (swapIdx < total)
                 {
-                    InterestRateSwap s = _cachedSwaps[swapIdx];
+                    SwapView s = _cachedSwaps[swapIdx];
                     string direction = s.PayFixed ? "Pay Fixed" : "Rcv Fixed";
                     string plStr = s.CumulativePL >= 0f
                         ? "+" + s.CumulativePL.ToString("N0")
@@ -939,6 +962,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Exit";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Terminate;
+                    _rowId[i] = s.Id;
                 }
                 else
                 {
@@ -1000,7 +1025,7 @@ namespace MyFirstMod
                 int itemIdx = _scrollOffset + i;
                 if (itemIdx < portfolioCount)
                 {
-                    Bond b = _cachedBonds[itemIdx];
+                    BondView b = _cachedBonds[itemIdx];
                     float price = _cachedPrices[itemIdx];
                     float bondPL = (price + b.CouponsReceived) - b.PurchasePrice;
                     string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
@@ -1012,11 +1037,13 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Sell;
+                    _rowId[i] = b.Id;
                 }
                 else if (itemIdx < portfolioCount + issuedCount)
                 {
                     int iIdx = itemIdx - portfolioCount;
-                    Bond ib = _cachedIssuedBonds[iIdx];
+                    BondView ib = _cachedIssuedBonds[iIdx];
                     float perPeriod = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
                     string oweTag = ib.InDefault || ib.Arrears > 0.01f
@@ -1029,11 +1056,13 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Repay";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Repay;
+                    _rowId[i] = ib.Id;
                 }
                 else if (itemIdx < totalItems)
                 {
                     int sIdx = itemIdx - portfolioCount - issuedCount;
-                    InterestRateSwap s = _cachedSwaps[sIdx];
+                    SwapView s = _cachedSwaps[sIdx];
                     string dir = s.PayFixed ? "PayFix" : "RcvFix";
                     string plStr = s.CumulativePL >= 0f
                         ? "+" + s.CumulativePL.ToString("N0")
@@ -1046,6 +1075,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "Exit";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.Terminate;
+                    _rowId[i] = s.Id;
                 }
                 else
                 {
@@ -1277,6 +1308,8 @@ namespace MyFirstMod
                     _actionButtons[i].text = "View";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
+                    _rowAction[i] = RowAction.SelectReport;
+                    _rowArg[i] = rpIdx; // index into _cachedReports
                 }
                 else
                 {
@@ -1340,117 +1373,86 @@ namespace MyFirstMod
         {
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
+            if (index < 0 || index >= MAX_ROWS) return;
 
-            if (_activeTab == 1)
-            {
-                int portfolioIdx = _scrollOffset + index;
-                if (engine.SellBond(portfolioIdx))
-                {
-                    int maxOffset = Math.Max(0, engine.PortfolioCount - MAX_ROWS);
-                    if (_scrollOffset > maxOffset)
-                        _scrollOffset = maxOffset;
-                    RefreshData();
-                }
-            }
-            else if (_activeTab == 2)
-            {
-                int itemIdx = _scrollOffset + index;
-                int issuedCount = _cachedIssuedBonds.Count;
+            // P0-8: dispatch on the action captured for this visible row at render
+            // time. Every instrument action keys off the stable Id, so if the list
+            // shifted since the last refresh (a bond matured, a swap settled) the
+            // engine simply reports the instrument is gone instead of hitting the
+            // wrong one.
+            RowAction action = _rowAction[index];
+            string id = _rowId[index];
 
-                if (itemIdx < issuedCount)
-                {
-                    if (engine.RepaySingleBond(itemIdx))
+            switch (action)
+            {
+                case RowAction.Buy:
+                    if (engine.BuyBond(id))
+                        RefreshData();
+                    else
+                        Debug.Log("[MyFirstMod] Buy failed - not enough funds or bond no longer available.");
+                    break;
+
+                case RowAction.Sell:
+                    if (engine.SellBond(id))
                     {
-                        int totalItems = engine.IssuedCount + engine.IssueTemplateCount;
-                        int maxOff = Math.Max(0, totalItems - MAX_ROWS);
-                        if (_scrollOffset > maxOff)
-                            _scrollOffset = maxOff;
+                        ClampScrollToContent(engine);
+                        RefreshData();
+                    }
+                    break;
+
+                case RowAction.Repay:
+                    if (engine.RepaySingleBond(id))
+                    {
+                        ClampScrollToContent(engine);
                         RefreshData();
                     }
                     else
-                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds.");
-                }
-                else
-                {
-                    int templateIdx = itemIdx - issuedCount;
-                    if (engine.IssueBond(templateIdx))
-                        RefreshData();
-                    else
-                        Debug.Log("[MyFirstMod] Cannot issue bond - at capacity or rating D.");
-                }
-            }
-            else if (_activeTab == 3)
-            {
-                int swapIdx = _scrollOffset + index;
-                if (engine.TerminateSwap(swapIdx))
-                {
-                    int maxOffset = Math.Max(0, engine.SwapCount - MAX_ROWS);
-                    if (_scrollOffset > maxOffset)
-                        _scrollOffset = maxOffset;
-                    RefreshData();
-                }
-            }
-            else if (_activeTab == 4)
-            {
-                int itemIdx = _scrollOffset + index;
-                int portfolioCount = _cachedBonds.Count;
-                int issuedCount = _cachedIssuedBonds.Count;
+                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds or bond no longer outstanding.");
+                    break;
 
-                if (itemIdx < portfolioCount)
-                {
-                    if (engine.SellBond(itemIdx))
-                    {
-                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
-                        int maxOff = Math.Max(0, total - MAX_ROWS);
-                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                case RowAction.Issue:
+                    if (engine.IssueBond(_rowArg[index]))
                         RefreshData();
-                    }
-                }
-                else if (itemIdx < portfolioCount + issuedCount)
-                {
-                    int issuedIdx = itemIdx - portfolioCount;
-                    if (engine.RepaySingleBond(issuedIdx))
-                    {
-                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
-                        int maxOff = Math.Max(0, total - MAX_ROWS);
-                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
-                        RefreshData();
-                    }
                     else
-                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds.");
-                }
-                else
-                {
-                    int swapIdx = itemIdx - portfolioCount - issuedCount;
-                    if (engine.TerminateSwap(swapIdx))
+                        Debug.Log("[MyFirstMod] Cannot issue bond - at capacity, locked out, or rating D.");
+                    break;
+
+                case RowAction.Terminate:
+                    if (engine.TerminateSwap(id))
                     {
-                        int total = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
-                        int maxOff = Math.Max(0, total - MAX_ROWS);
-                        if (_scrollOffset > maxOff) _scrollOffset = maxOff;
+                        ClampScrollToContent(engine);
                         RefreshData();
                     }
-                }
-            }
-            else if (_activeTab == 6)
-            {
-                if (_reportMode == 1)
-                {
-                    int rpIdx = _cachedReports.Count - 1 - _scrollOffset - index;
+                    break;
+
+                case RowAction.SelectReport:
+                    int rpIdx = _rowArg[index];
                     if (rpIdx >= 0 && rpIdx < _cachedReports.Count)
                     {
                         _reportMode = 0;
                         _reportViewIndex = _cachedReports.Count - 1 - rpIdx;
                         RefreshData();
                     }
-                }
+                    break;
             }
+        }
+
+        // Keep the scroll offset within the current item count after an action
+        // removes a row.
+        private void ClampScrollToContent(BondMarketEngine engine)
+        {
+            int totalItems;
+            if (_activeTab == 1)
+                totalItems = engine.PortfolioCount;
+            else if (_activeTab == 2)
+                totalItems = engine.IssuedCount + engine.IssueTemplateCount;
+            else if (_activeTab == 3)
+                totalItems = engine.SwapCount;
             else
-            {
-                if (engine.BuyBond(index))
-                    RefreshData();
-                else
-                    Debug.Log("[MyFirstMod] Buy failed - not enough funds or invalid index.");
-            }
+                totalItems = engine.PortfolioCount + engine.IssuedCount + engine.SwapCount;
+            int maxOffset = Math.Max(0, totalItems - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
         }
 
         private void OnBuy1MClick(UIComponent component, UIMouseEventParameter eventParam)
