@@ -29,6 +29,9 @@
     <Compile Include="..\MyFirstMod\StateSerializer.cs" Link="Linked\StateSerializer.cs" />
     <Compile Include="..\MyFirstMod\Credit\CreditModel.cs" Link="Linked\CreditModel.cs" />
     <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\YieldCurve.cs" Link="Linked\YieldCurve.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\SwapPricing.cs" Link="Linked\SwapPricing.cs" />
+    <Compile Include="..\MyFirstMod\Market\RateProcess.cs" Link="Linked\RateProcess.cs" />
   </ItemGroup>
 
   <ItemGroup>
