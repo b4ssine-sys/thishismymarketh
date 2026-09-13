@@ -78,6 +78,19 @@ namespace MyFirstMod.Tests
             Assert.InRange(pv, (float)expected - closedFormTol, (float)expected + closedFormTol);
         }
 
+        [Fact]
+        public void PresentValue_ZeroYield_IsUndiscountedSum()
+        {
+            // P2-1 guard: r <= 0 returns coupons + face with no discounting.
+            var bond = new Bond("B1", "ZeroYield", 100000f, 0.06f, 24);
+            float couponPerPeriod = 100000f * 0.06f / BondPricing.PeriodsPerYear; // 500
+            float expected = couponPerPeriod * 24 + 100000f; // 12,000 + 100,000
+
+            float pv = BondPricing.PresentValue(bond, 0f);
+
+            Assert.Equal(expected, pv, 1);
+        }
+
         [Theory]
         [InlineData(CreditRating.AAA, 0.0020f)]
         [InlineData(CreditRating.AA, 0.0045f)]

@@ -53,6 +53,8 @@ namespace MyFirstMod
         private bool _ledgerBaselineSet;
         private float _monthsOfReserves;
         private bool _creditModelNoticePending; // one-time Phase 2 migration banner flag
+        private bool _gameDataAvailable;        // P2-4: whether the game exposed usable demographics this pass
+        private bool _periodMetricsInitialized; // P2-2: has the per-period metrics block run at least once
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
@@ -64,6 +66,7 @@ namespace MyFirstMod
         private List<Bond> _issuedBonds { get { return _debtBook.Bonds; } }
         private int _periodCounter; // monotonic period index driving the lifecycle
         private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
+        private readonly System.Text.StringBuilder _detailBuilder = new System.Text.StringBuilder(64); // P2-3: reused
         private readonly object _lock = new object();
         private readonly System.Random _rng = new System.Random();
 
@@ -404,14 +407,23 @@ namespace MyFirstMod
                 // this cursor, not the stale LastCashAmount.
                 _tickCash = internalMoneyAmount;
 
+                // Per tick: only the cheap cash-flow sample must run every tick so no
+                // balance change is missed.
                 UpdateCashFlowHistory(internalMoneyAmount);
-                RecalculateMetricsInternal(internalMoneyAmount);
 
                 _tickCounter++;
-                if (_tickCounter >= TICKS_PER_PERIOD)
+                bool periodBoundary = _tickCounter >= TICKS_PER_PERIOD;
+                if (periodBoundary) _tickCounter = 0;
+
+                // P2-2: the heavy metrics block (portfolio revaluation, credit model,
+                // rate pipeline, demand chain, demographic sampling) runs ONCE per
+                // period, not every tick - a ~15x reduction in per-tick engine work.
+                // Run it once up front so the UI shows real numbers before the first
+                // period elapses.
+                if (periodBoundary || !_periodMetricsInitialized)
                 {
-                    _tickCounter = 0;
-                    AgeBondsInternal();
+                    _periodMetricsInitialized = true;
+                    RecalculateMetricsInternal(internalMoneyAmount);
                 }
 
                 if (!_initialized)
@@ -423,6 +435,11 @@ namespace MyFirstMod
                 if (_marketBonds.Count < MIN_MARKET_BONDS)
                 {
                     RegenerateBondsInternal();
+                }
+
+                if (periodBoundary)
+                {
+                    AgeBondsInternal();
                 }
             }
 
@@ -656,100 +673,55 @@ namespace MyFirstMod
         {
             _cashReserves = cashDisplay;
 
-            bool gotGameData = false;
+            bool gotPopulation = false;
+            _gameDataAvailable = false;
 
-            try
+            // P2-4: explicit null checks instead of exceptions as control flow.
+            // Reading a valid manager's buffers does not throw; we skip cleanly
+            // when the data isn't present yet.
+            DistrictManager dm = Singleton<DistrictManager>.instance;
+            if (dm != null && dm.m_districts.m_buffer != null && dm.m_districts.m_buffer.Length > 0)
             {
-                DistrictManager dm = Singleton<DistrictManager>.instance;
-                if (dm != null)
+                District city = dm.m_districts.m_buffer[0];
+                uint realPop = city.m_populationData.m_finalCount;
+                if (realPop > 0)
                 {
-                    District city = dm.m_districts.m_buffer[0];
-
-                    uint realPop = city.m_populationData.m_finalCount;
-                    if (realPop > 0)
-                    {
-                        _population = (int)realPop;
-                        gotGameData = true;
-                    }
-
-                    _happiness = city.m_finalHappiness / 100f;
+                    _population = (int)realPop;
+                    gotPopulation = true;
                 }
-            }
-            catch
-            {
-                float avgIncome = _avgIncomePerTick;
-                float avgExpense = _avgExpensePerTick;
-
-                if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
-
-                float dscrH = _dscr / 3f;
-                if (dscrH > 1f) dscrH = 1f;
-                if (dscrH < 0f) dscrH = 0f;
-                _happiness = dscrH;
-                _landValue = dscrH * 0.5f + 0.25f;
-                _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
-
-                float totalFlow = avgIncome + avgExpense;
-                _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
+                _happiness = city.m_finalHappiness / 100f;
+                _gameDataAvailable = true;
             }
 
-            try
+            CitizenManager cm = Singleton<CitizenManager>.instance;
+            if (cm != null && cm.m_citizens.m_buffer != null)
             {
-                CitizenManager cm = Singleton<CitizenManager>.instance;
-                if (cm != null)
+                if (!gotPopulation && cm.m_citizenCount > 0)
                 {
-                    if (!gotGameData && cm.m_citizenCount > 0)
-                        _population = cm.m_citizenCount;
+                    _population = cm.m_citizenCount;
+                    gotPopulation = true;
+                }
+                _gameDataAvailable = true;
 
-                    if (_demographicSampleCounter == 0)
-                    {
-                        float healthSum = 0f;
-                        float eduSum = 0f;
-                        float wellbeingSum = 0f;
-                        int sampled = 0;
-                        uint bufSize = cm.m_citizens.m_size;
-                        int step = Math.Max(1, (int)(bufSize / 200));
-                        int employed = 0;
-
-                        for (uint i = 0; i < bufSize && sampled < 200; i += (uint)step)
-                        {
-                            Citizen cit = cm.m_citizens.m_buffer[i];
-                            if ((cit.m_flags & Citizen.Flags.Created) != 0)
-                            {
-                                healthSum += cit.m_health;
-                                wellbeingSum += cit.m_wellbeing;
-                                eduSum += (int)cit.EducationLevel;
-                                if (cit.m_workBuilding != 0) employed++;
-                                sampled++;
-                            }
-                        }
-                        if (sampled > 0)
-                        {
-                            _health = (healthSum / sampled) / 255f;
-                            _education = (eduSum / sampled) / 3f;
-                            float avgWellbeing = (wellbeingSum / sampled) / 255f;
-                            _landValue = avgWellbeing;
-                            _crimeRate = 1f - avgWellbeing;
-                            _employmentRate = (float)employed / sampled;
-                        }
-                    }
+                // P2-2: this method now runs once per period, so sample every call
+                // (previously gated to once per 15 ticks = once per period).
+                // P2-4: one narrow try/catch around the raw buffer walk, logged if
+                // it ever fires instead of silently fabricating demographics.
+                try
+                {
+                    SampleCitizenDemographicsInternal(cm);
+                }
+                catch (Exception ex)
+                {
+                    Debug.Log("[MyFirstMod] Citizen sampling failed: " + ex.Message);
                 }
             }
-            catch
-            {
-                float avgIncome = _avgIncomePerTick;
-                float avgExpense = _avgExpensePerTick;
-                float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
 
-                if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
-                if (_education <= 0f) _education = 0.5f;
-                if (_landValue <= 0f) _landValue = dscrH * 0.5f + 0.25f;
-                _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
-                if (_employmentRate <= 0.2f)
-                {
-                    float totalFlow = avgIncome + avgExpense;
-                    _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
-                }
+            if (!_gameDataAvailable)
+            {
+                // No usable game data yet (early load): synthesize plausible
+                // demographics from fiscal state so the demand model stays sane.
+                ApplyFallbackDemographicsInternal();
             }
 
             if (_happiness < 0f) _happiness = 0f;
@@ -766,18 +738,69 @@ namespace MyFirstMod
             if (_employmentRate > 0.98f) _employmentRate = 0.98f;
             if (_population < 100) _population = 100;
 
-            _demographicSampleCounter++;
-            if (_demographicSampleCounter >= TICKS_PER_PERIOD)
+            // P2-2: population growth is computed once per period (this method now
+            // runs per period), matching the prior effective cadence.
+            if (_prevPopulation > 0)
             {
-                _demographicSampleCounter = 0;
-                if (_prevPopulation > 0)
-                {
-                    _populationGrowth = (float)(_population - _prevPopulation) / (float)_prevPopulation;
-                    if (_populationGrowth < -0.05f) _populationGrowth = -0.05f;
-                    if (_populationGrowth > 0.05f) _populationGrowth = 0.05f;
-                }
-                _prevPopulation = _population;
+                _populationGrowth = (float)(_population - _prevPopulation) / (float)_prevPopulation;
+                if (_populationGrowth < -0.05f) _populationGrowth = -0.05f;
+                if (_populationGrowth > 0.05f) _populationGrowth = 0.05f;
             }
+            _prevPopulation = _population;
+        }
+
+        // P2-4: the raw citizen buffer walk, isolated so it is the only code under
+        // a try/catch.
+        private void SampleCitizenDemographicsInternal(CitizenManager cm)
+        {
+            float healthSum = 0f;
+            float eduSum = 0f;
+            float wellbeingSum = 0f;
+            int sampled = 0;
+            int employed = 0;
+            uint bufSize = cm.m_citizens.m_size;
+            int step = Math.Max(1, (int)(bufSize / 200));
+
+            for (uint i = 0; i < bufSize && sampled < 200; i += (uint)step)
+            {
+                Citizen cit = cm.m_citizens.m_buffer[i];
+                if ((cit.m_flags & Citizen.Flags.Created) != 0)
+                {
+                    healthSum += cit.m_health;
+                    wellbeingSum += cit.m_wellbeing;
+                    eduSum += (int)cit.EducationLevel;
+                    if (cit.m_workBuilding != 0) employed++;
+                    sampled++;
+                }
+            }
+
+            if (sampled > 0)
+            {
+                _health = (healthSum / sampled) / 255f;
+                _education = (eduSum / sampled) / 3f;
+                float avgWellbeing = (wellbeingSum / sampled) / 255f;
+                _landValue = avgWellbeing;
+                _crimeRate = 1f - avgWellbeing;
+                _employmentRate = (float)employed / sampled;
+            }
+        }
+
+        // P2-4: fallback demographics synthesized from fiscal state, used only when
+        // the game exposes no usable data (e.g. very early in a load).
+        private void ApplyFallbackDemographicsInternal()
+        {
+            float avgIncome = _avgIncomePerTick;
+            float avgExpense = _avgExpensePerTick;
+            float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
+
+            if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
+            _happiness = dscrH;
+            if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
+            if (_education <= 0f) _education = 0.5f;
+            if (_landValue <= 0f) _landValue = dscrH * 0.5f + 0.25f;
+            _crimeRate = Math.Max(0f, 0.5f - dscrH * 0.4f);
+            float totalFlow = avgIncome + avgExpense;
+            _employmentRate = totalFlow > 0f ? avgIncome / totalFlow : 0.5f;
         }
 
         private float CalculateActiveDebtService()
@@ -1008,8 +1031,10 @@ namespace MyFirstMod
             // _smoothedPressure above and fed into the required yield. So there is
             // deliberately no sell-side cash or placement change here.
 
-            string detail = "";
+            // P2-3: reuse a StringBuilder instead of building the detail string by
+            // repeated concatenation each period.
             float periodProceeds = _citizenProceedsThisPeriod;
+            _detailBuilder.Length = 0;
             for (int i = 0; i < snapCount; i++)
             {
                 Bond ib = _issuedBonds[i];
@@ -1018,21 +1043,21 @@ namespace MyFirstMod
                 float delta = after - before;
                 if (delta > 0.001f || delta < -0.001f)
                 {
-                    if (detail.Length > 0) detail += "  ";
+                    if (_detailBuilder.Length > 0) _detailBuilder.Append("  ");
                     string arrow = delta > 0 ? ">" : "<";
-                    detail += string.Format("{0}: {1:F0}%{2}{3:F0}%",
-                        ib.Id, before * 100f, arrow, after * 100f);
+                    _detailBuilder.Append(string.Format("{0}: {1:F0}%{2}{3:F0}%",
+                        ib.Id, before * 100f, arrow, after * 100f));
                 }
             }
-            if (detail.Length == 0)
+            if (_detailBuilder.Length == 0)
             {
-                if (_citizenBuyVolume > _citizenSellVolume)
-                    detail = "Fully subscribed";
-                else
-                    detail = "Sell pressure only";
+                _detailBuilder.Append(_citizenBuyVolume > _citizenSellVolume
+                    ? "Fully subscribed" : "Sell pressure only");
             }
             if (periodProceeds > 0f)
-                detail += string.Format("  +{0:N0} proceeds", periodProceeds);
+                _detailBuilder.Append(string.Format("  +{0:N0} proceeds", periodProceeds));
+
+            string detail = _detailBuilder.ToString();
 
             _transactionSeq++;
             CimTransaction tx = new CimTransaction();
@@ -1292,6 +1317,7 @@ namespace MyFirstMod
             EconomyReader.Reset();
             _tickCounter = 0;
             _periodCounter = 0;
+            _periodMetricsInitialized = false;
             _nextBondId = 0;
             _initialized = false;
             _defaultPenalty = 0;
@@ -2061,6 +2087,7 @@ namespace MyFirstMod
             _ledgerBaselineSet = false; // re-baseline the ledger diff after load
             _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
             _avgExpensePerTick = 0f;
+            _periodMetricsInitialized = false; // recompute metrics on the first tick after load
         }
 
         private static void CopyInto(float[] dest, float[] src)

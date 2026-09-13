@@ -9,6 +9,12 @@ namespace MyFirstMod
     {
         public static ResidentialBuildingLog Instance;
 
+        // P2-5: per-building-event logging is off by default. It fired a formatted
+        // Debug.Log on every residential create/release on the simulation thread -
+        // a continuous stream of string.Format + file I/O in a growing city. Flip
+        // this on only for debugging.
+        public static bool VerboseLogging = false;
+
         private const int MAX_BUILDINGS = 49152;
 
         private static readonly object _lock = new object();
@@ -103,9 +109,10 @@ namespace MyFirstMod
                 AdjustSubType(b, 1);
             }
 
-            Debug.Log(string.Format(
-                "[MyFirstMod] Residential built: #{0} {1} Total: {2}",
-                id, SubTypeName(b), _totalCount));
+            if (VerboseLogging)
+                Debug.Log(string.Format(
+                    "[MyFirstMod] Residential built: #{0} {1} Total: {2}",
+                    id, SubTypeName(b), _totalCount));
         }
 
         public override void OnBuildingReleased(ushort id)
@@ -127,9 +134,10 @@ namespace MyFirstMod
                 _totalCount--;
             }
 
-            Debug.Log(string.Format(
-                "[MyFirstMod] Residential removed: #{0} Total: {1}",
-                id, _totalCount));
+            if (VerboseLogging)
+                Debug.Log(string.Format(
+                    "[MyFirstMod] Residential removed: #{0} Total: {1}",
+                    id, _totalCount));
         }
 
         private static bool IsResidential(Building b)

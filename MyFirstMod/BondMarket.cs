@@ -235,6 +235,10 @@ namespace MyFirstMod
     {
         public const int PeriodsPerYear = 12;
 
+        // P2-1: closed-form annuity + discounted principal, O(1) instead of the old
+        // O(n) discounting loop that ran for every portfolio bond every tick.
+        //   d  = (1 + r)^-n
+        //   PV = C * (1 - d) / r  +  F * d
         public static float PresentValue(Bond bond, float annualYield)
         {
             if (bond.RemainingPeriods <= 0)
@@ -243,16 +247,13 @@ namespace MyFirstMod
             float r = annualYield / PeriodsPerYear;
             float coupon = (bond.FaceValue * bond.CouponRate) / PeriodsPerYear;
 
-            float pvCoupons = 0f;
-            float discount = 1f;
-            for (int t = 0; t < bond.RemainingPeriods; t++)
-            {
-                discount *= (1f + r);
-                pvCoupons += coupon / discount;
-            }
+            // Guard r <= 0: with no discounting PV is just the undiscounted sum.
+            if (r <= 0f)
+                return coupon * bond.RemainingPeriods + bond.FaceValue;
 
-            float pvPrincipal = bond.FaceValue / discount;
-            return pvCoupons + pvPrincipal;
+            double d = Math.Pow(1.0 + r, -bond.RemainingPeriods);
+            double pv = coupon * (1.0 - d) / r + bond.FaceValue * d;
+            return (float)pv;
         }
 
         public static float GetRequiredYield(float benchmarkRate, CreditRating rating)
