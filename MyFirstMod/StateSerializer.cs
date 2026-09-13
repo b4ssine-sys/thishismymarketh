@@ -28,6 +28,10 @@ namespace MyFirstMod
         public int QuarterDefaults;
         public float TotalCitizenProceeds;
         public int LastDefaultPeriod = -1;
+        // Phase 4: short rate + business-cycle phase (defaults chosen so pre-Phase-4
+        // saves resume at the old constant rate).
+        public float ShortRate = 0.04f;
+        public float CyclePhase = 0f;
 
         // windows
         public float[] CashFlowHistory = new float[0];
@@ -104,6 +108,9 @@ namespace MyFirstMod
                 sw.Write(s.Initialized); sw.Write(s.TransactionSeq); sw.Write(s.PressureHistoryIndex);
                 sw.Write(s.PeriodsSinceReport); sw.Write(s.QuarterNumber); sw.Write(s.QuarterDefaults);
                 sw.Write(s.TotalCitizenProceeds); sw.Write(s.LastDefaultPeriod);
+                // Phase 4: appended at the end of the scalars section. Older readers
+                // simply stop before these; newer readers pick them up if present.
+                sw.Write(s.ShortRate); sw.Write(s.CyclePhase);
                 WriteSection(w, sec);
             }
 
@@ -306,6 +313,13 @@ namespace MyFirstMod
             s.Initialized = sc.ReadBoolean(); s.TransactionSeq = sc.ReadInt32(); s.PressureHistoryIndex = sc.ReadInt32();
             s.PeriodsSinceReport = sc.ReadInt32(); s.QuarterNumber = sc.ReadInt32(); s.QuarterDefaults = sc.ReadInt32();
             s.TotalCitizenProceeds = sc.ReadSingle(); s.LastDefaultPeriod = sc.ReadInt32();
+            // Phase 4: read the appended rate state only if the scalars section
+            // carries it (backward compatible with pre-Phase-4 v7 saves).
+            if (sc.BaseStream.Position + 8 <= sc.BaseStream.Length)
+            {
+                s.ShortRate = sc.ReadSingle();
+                s.CyclePhase = sc.ReadSingle();
+            }
 
             s.CashFlowHistory = ReadFloatArraySection(r);
             s.PressureHistory = ReadFloatArraySection(r);

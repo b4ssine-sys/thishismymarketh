@@ -28,6 +28,7 @@ namespace MyFirstMod.Tests
             s.WindowIndex = 17; s.Initialized = true; s.TransactionSeq = 88; s.PressureHistoryIndex = 4;
             s.PeriodsSinceReport = 1; s.QuarterNumber = 6; s.QuarterDefaults = 1;
             s.TotalCitizenProceeds = 9999.5f; s.LastDefaultPeriod = 40;
+            s.ShortRate = 0.037f; s.CyclePhase = 1.23f;
 
             s.CashFlowHistory = new float[60];
             for (int i = 0; i < 60; i++) s.CashFlowHistory[i] = i * 1.5f;
@@ -64,6 +65,8 @@ namespace MyFirstMod.Tests
             Assert.Equal(s.PeriodCounter, s2.PeriodCounter);
             Assert.Equal(s.LastDefaultPeriod, s2.LastDefaultPeriod);
             Assert.Equal(s.TotalCitizenProceeds, s2.TotalCitizenProceeds, 3);
+            Assert.Equal(0.037f, s2.ShortRate, 4);   // Phase 4 rate state round-trips
+            Assert.Equal(1.23f, s2.CyclePhase, 4);
 
             Assert.Equal(60, s2.CashFlowHistory.Length);
             Assert.Equal(58.5f, s2.CashFlowHistory[39], 3);
@@ -139,6 +142,7 @@ namespace MyFirstMod.Tests
             Assert.Equal(0f, ib.Arrears, 4);
             Assert.Equal(BondState.Active, ib.State);             // no distress to reconstruct
             Assert.Equal(-1, s.LastDefaultPeriod);
+            Assert.Equal(0.04f, s.ShortRate, 4);                 // pre-Phase-4 default rate
         }
 
         // Writes the exact v4 flat layout the legacy reader expects, with one issued

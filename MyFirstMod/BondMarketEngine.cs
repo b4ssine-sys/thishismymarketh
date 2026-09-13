@@ -145,6 +145,21 @@ namespace MyFirstMod
         private float _requiredYield;
         private float _portfolioValue;
 
+        // Phase 4 (P1-4): mean-reverting short rate on a business cycle, and the
+        // Nelson-Siegel curve derived from it (P1-3). Persisted so the market does
+        // not jump on reload.
+        private float _shortRate = 0.04f;
+        private float _cyclePhase;
+        private YieldCurve _yieldCurve;
+        private const float RATE_KAPPA = 0.15f;             // mean-reversion speed (per year)
+        private const float RATE_BASE_THETA = 0.04f;        // long-run mean of the short rate
+        private const float RATE_CYCLE_AMPLITUDE = 0.015f;  // business-cycle swing in theta
+        private const float RATE_SIGMA = 0.006f;            // short-rate volatility (per sqrt-year)
+        private const float RATE_TERM_PREMIUM = 0.01f;      // baseline long-minus-short slope
+        private const float RATE_CURVATURE = 0.0f;          // NS curvature factor
+        private const float RATE_LAMBDA = 2.0f;             // NS decay (years)
+        private const float CYCLE_PHASE_PER_PERIOD = 0.05f; // ~126 periods (~10.5 yr) per cycle
+
         private static readonly string[] ISSUE_NAMES = new string[]
         {
             "Emergency Note", "Municipal Note", "Revenue Bond", "Infrastructure Bond", "Capital Bond"
@@ -553,14 +568,19 @@ namespace MyFirstMod
             bool hasArrears = _debtBook.AnyDefaulted || _debtBook.TotalArrears > 0.01f;
             _rating = RatingEngine.EvaluateRating(cm, hasArrears);
 
-            // Exogenous market index: nothing the city does moves this. Swaps and
-            // floating-rate debt settle against it (P0-5).
-            float fedFundsProxy = 0.04f;
-            float termPremium = 0.005f + _revenueVolatility * 0.01f;
-            if (termPremium > 0.02f) termPremium = 0.02f;
-            _marketFloatingRate = fedFundsProxy + termPremium;
-            if (_marketFloatingRate < 0.025f) _marketFloatingRate = 0.025f;
-            if (_marketFloatingRate > 0.08f) _marketFloatingRate = 0.08f;
+            // Phase 4 (P1-4/P1-5): the exogenous short rate evolves once per period
+            // via a mean-reverting process whose long-run mean drifts on a business
+            // cycle. Nothing the city does moves it (P0-5). The Nelson-Siegel curve
+            // (P1-3) is derived from the short rate for pricing and swaps.
+            _cyclePhase = RateProcess.AdvancePhase(_cyclePhase, CYCLE_PHASE_PER_PERIOD);
+            float theta = RateProcess.CycleTheta(RATE_BASE_THETA, RATE_CYCLE_AMPLITUDE, _cyclePhase);
+            float z = RateProcess.NextGaussian(_rng);
+            float dtYears = 1f / BondPricing.PeriodsPerYear;
+            _shortRate = RateProcess.Step(_shortRate, RATE_KAPPA, theta, RATE_SIGMA, dtYears, z);
+
+            float longLevel = _shortRate + RATE_TERM_PREMIUM + _revenueVolatility * 0.01f;
+            _yieldCurve = YieldCurve.FromShortRate(_shortRate, longLevel, RATE_CURVATURE, RATE_LAMBDA);
+            _marketFloatingRate = _shortRate;
             _benchmarkRate = _marketFloatingRate;
 
             // City borrowing rate: the index plus the city's own fiscal adjustment
@@ -642,7 +662,10 @@ namespace MyFirstMod
 
             if (_prevRequiredYield > 0f)
             {
-                float maxDelta = 0.02f;
+                // P1-5: this block now runs per period (P2-2), so cap the required
+                // yield's move at 50bp/period - it trends visibly instead of
+                // snapping, and the limiter actually binds.
+                float maxDelta = 0.005f;
                 float delta = _requiredYield - _prevRequiredYield;
                 if (delta > maxDelta) _requiredYield = _prevRequiredYield + maxDelta;
                 else if (delta < -maxDelta) _requiredYield = _prevRequiredYield - maxDelta;
@@ -1332,6 +1355,9 @@ namespace MyFirstMod
             _benchmarkRate = 0f;
             _marketFloatingRate = 0f;
             _cityBorrowingRate = 0f;
+            _shortRate = RATE_BASE_THETA;
+            _cyclePhase = 0f;
+            _yieldCurve = YieldCurve.FromShortRate(RATE_BASE_THETA, RATE_BASE_THETA + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA);
             _requiredYield = 0f;
             _portfolioValue = 0f;
             _prevRequiredYield = 0f;
@@ -1702,13 +1728,10 @@ namespace MyFirstMod
 
         private float CalculateSwapMTM(InterestRateSwap swap)
         {
-            // P0-5: mark against the exogenous index, not the city borrowing rate.
-            float floatingRate = _marketFloatingRate;
-            float remainingYears = (float)swap.RemainingPeriods / BondPricing.PeriodsPerYear;
-            if (swap.PayFixed)
-                return (floatingRate - swap.FixedRate) * swap.NotionalAmount * remainingYears;
-            else
-                return (swap.FixedRate - floatingRate) * swap.NotionalAmount * remainingYears;
+            // P1-6: mark to market off the term structure (PV float - PV fixed),
+            // not the old linear (floating - fixed) x years approximation.
+            return SwapPricing.SwapValue(_yieldCurve, swap.NotionalAmount, swap.FixedRate,
+                swap.RemainingPeriods, BondPricing.PeriodsPerYear, swap.PayFixed);
         }
 
         private bool SettleSwapCash(float mtmValue)
@@ -1794,9 +1817,9 @@ namespace MyFirstMod
                 if (!SettleSwapCash(settleMTM))
                     return false;
 
-                float remainFraction = 1f - fraction;
-                swap.NotionalAmount *= remainFraction;
-                swap.CumulativePL *= remainFraction;
+                // P1-6: only the notional scales down. CumulativePL is REALISED
+                // history and must stay immutable.
+                swap.NotionalAmount *= (1f - fraction);
                 return true;
             }
         }
@@ -1826,9 +1849,8 @@ namespace MyFirstMod
                         float settleMTM = fullMTM * fraction;
                         if (!SettleSwapCash(settleMTM))
                             continue;
-                        float remainFraction = 1f - fraction;
-                        swap.NotionalAmount *= remainFraction;
-                        swap.CumulativePL *= remainFraction;
+                        // P1-6: scale notional only; realised P/L is immutable.
+                        swap.NotionalAmount *= (1f - fraction);
                     }
                     affected++;
                 }
@@ -1866,9 +1888,13 @@ namespace MyFirstMod
                     : 60;
                 if (avgPeriods < 6) avgPeriods = 6;
 
+                // P1-6: a swap's fixed leg is the par swap rate off the risk-free
+                // curve, not the city's credit-adjusted borrowing yield.
+                float parRate = SwapPricing.ParSwapRate(_yieldCurve, avgPeriods, BondPricing.PeriodsPerYear);
+
                 _nextSwapId++;
                 InterestRateSwap swap = new InterestRateSwap(
-                    "SW" + _nextSwapId.ToString(), unhedged, _requiredYield, avgPeriods, true);
+                    "SW" + _nextSwapId.ToString(), unhedged, parRate, avgPeriods, true);
                 _activeSwaps.Add(swap);
                 return true;
             }
@@ -2041,6 +2067,7 @@ namespace MyFirstMod
             s.Initialized = _initialized; s.TransactionSeq = _transactionSeq; s.PressureHistoryIndex = _pressureHistoryIndex;
             s.PeriodsSinceReport = _periodsSinceReport; s.QuarterNumber = _quarterNumber; s.QuarterDefaults = _quarterDefaults;
             s.TotalCitizenProceeds = _totalCitizenProceeds; s.LastDefaultPeriod = _debtBook.LastDefaultPeriod;
+            s.ShortRate = _shortRate; s.CyclePhase = _cyclePhase;
 
             s.CashFlowHistory = (float[])_cashFlowHistory.Clone();
             s.PressureHistory = (float[])_pressureHistory.Clone();
@@ -2064,6 +2091,9 @@ namespace MyFirstMod
             _initialized = s.Initialized; _transactionSeq = s.TransactionSeq; _pressureHistoryIndex = s.PressureHistoryIndex;
             _periodsSinceReport = s.PeriodsSinceReport; _quarterNumber = s.QuarterNumber; _quarterDefaults = s.QuarterDefaults;
             _totalCitizenProceeds = s.TotalCitizenProceeds;
+            _shortRate = s.ShortRate;
+            _cyclePhase = s.CyclePhase;
+            _yieldCurve = YieldCurve.FromShortRate(_shortRate, _shortRate + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA);
 
             CopyInto(_cashFlowHistory, s.CashFlowHistory);
             CopyInto(_pressureHistory, s.PressureHistory);
