@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Pure-logic test project for the Municipal Bond Market mod.
+
+    BondMarket.cs and CimDemandEngine.cs have zero Cities: Skylines / Unity
+    dependencies, so they are linked directly into this project and exercised
+    as plain C#. The game DLLs are NOT required to build or run these tests,
+    which is why CI can run them on a stock .NET runner.
+
+    The mod itself targets net35 (Unity Mono); this project targets a modern
+    framework purely so the test runner works on CI. The source under test is
+    framework-agnostic (System.Math / System.Random only).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>MyFirstMod.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Link the pure-logic source files from the mod. No copy, single source of truth. -->
+  <ItemGroup>
+    <Compile Include="..\MyFirstMod\BondMarket.cs" Link="Linked\BondMarket.cs" />
+    <Compile Include="..\MyFirstMod\CimDemandEngine.cs" Link="Linked\CimDemandEngine.cs" />
+    <Compile Include="..\MyFirstMod\DebtBook.cs" Link="Linked\DebtBook.cs" />
+    <Compile Include="..\MyFirstMod\StateSerializer.cs" Link="Linked\StateSerializer.cs" />
+    <Compile Include="..\MyFirstMod\Credit\CreditModel.cs" Link="Linked\CreditModel.cs" />
+    <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\YieldCurve.cs" Link="Linked\YieldCurve.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\SwapPricing.cs" Link="Linked\SwapPricing.cs" />
+    <Compile Include="..\MyFirstMod\Market\RateProcess.cs" Link="Linked\RateProcess.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

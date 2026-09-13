@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+*.user
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# Test results
+TestResults/
+[Tt]est[Rr]esults/
+*.trx

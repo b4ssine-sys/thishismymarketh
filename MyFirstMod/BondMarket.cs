@@ -4,6 +4,10 @@ namespace MyFirstMod
 {
     public enum CreditRating { AAA, AA, A, BBB, BB, B, CCC, D }
 
+    // Schema v5 lifecycle (audit spec §3). A bond is never deleted on a missed
+    // payment; it transitions. Redeemed is terminal and retained for history.
+    public enum BondState { Active, Delinquent, Defaulted, Redeemed }
+
     public class Bond
     {
         public string Id;
@@ -14,9 +18,52 @@ namespace MyFirstMod
         public int RemainingPeriods;
         public float PurchasePrice;
         public float CouponsReceived;
-        public float SoldFraction;
 
-        public float SubscribedFace { get { return FaceValue * SoldFraction; } }
+        // P0-3: one field used to carry two unrelated meanings (how much of an
+        // issue investors had taken up, AND how much principal was still owed),
+        // which let a partial paydown look like unsold inventory and created an
+        // infinite-money loop. They are now split:
+        //
+        //   PlacedFraction      - primary-market take-up [0,1]. Only ever moved
+        //                         up by citizen trading as the issue is placed.
+        //   OutstandingPrincipal - amortising balance in currency units. Only
+        //                         ever moved down by repayment (and up by
+        //                         placement as the city receives proceeds).
+        //
+        // For bonds the city BUYS (market / portfolio) these issuer-side fields
+        // are irrelevant and default to "fully placed, full principal".
+        public float PlacedFraction;
+        public float OutstandingPrincipal;
+
+        // P0-2: a default keeps the liability instead of erasing it. A missed
+        // coupon or maturity payment rolls into Arrears, which accrue a penalty
+        // each period until cleared.
+        public float Arrears;
+
+        // Schema v5 lifecycle (audit spec §3).
+        public BondState State;
+        public int PeriodsInArrears;   // consecutive periods carrying arrears
+        public int DefaultedAtPeriod;  // period the bond entered Defaulted, else -1
+        public int IssuePeriod;        // period the bond was issued (for age/history)
+
+        // Debt service, capacity and repayment all key off the amount still
+        // owed, so SubscribedFace now reports OutstandingPrincipal.
+        public float SubscribedFace { get { return OutstandingPrincipal; } }
+
+        // Convenience views of the lifecycle for UI / reporting.
+        public bool IsDelinquent { get { return State == BondState.Delinquent; } }
+        public bool IsDefaulted { get { return State == BondState.Defaulted; } }
+        public bool IsDistressed { get { return State == BondState.Delinquent || State == BondState.Defaulted; } }
+        // Kept for existing call sites / UI: "in default" == the hard Defaulted state.
+        public bool InDefault { get { return State == BondState.Defaulted; } }
+
+        // Audit spec §2: one base for coupon. Unplaced notional is the primary
+        // inventory still available for take-up.
+        public float PeriodCoupon(int periodsPerYear)
+        {
+            return (OutstandingPrincipal * CouponRate) / periodsPerYear;
+        }
+        public float UnplacedNotional { get { return FaceValue * (1f - PlacedFraction); } }
 
         public Bond(string id, string name, float faceValue, float couponRate, int totalPeriods)
         {
@@ -28,7 +75,85 @@ namespace MyFirstMod
             RemainingPeriods = totalPeriods;
             PurchasePrice = 0f;
             CouponsReceived = 0f;
-            SoldFraction = 1f;
+            PlacedFraction = 1f;
+            OutstandingPrincipal = faceValue;
+            Arrears = 0f;
+            State = BondState.Active;
+            PeriodsInArrears = 0;
+            DefaultedAtPeriod = -1;
+            IssuePeriod = 0;
+        }
+    }
+
+    // P0-8: immutable snapshots handed to the UI thread. The engine used to pass
+    // live Bond / InterestRateSwap references that the sim thread kept mutating;
+    // these DTOs are deep-copied under the lock so the UI reads a stable picture,
+    // and every UI action is keyed by the stable Id, never a list index.
+    public class BondView
+    {
+        public string Id;
+        public string Name;
+        public float FaceValue;
+        public float CouponRate;
+        public int TotalPeriods;
+        public int RemainingPeriods;
+        public float PurchasePrice;
+        public float CouponsReceived;
+        public float PlacedFraction;
+        public float OutstandingPrincipal;
+        public float Arrears;
+        public BondState State;
+        public bool InDefault; // State == Defaulted, mirrored for existing UI checks
+        public float Price; // market/portfolio present value at snapshot time (0 for issued)
+
+        public float SubscribedFace { get { return OutstandingPrincipal; } }
+
+        public static BondView From(Bond b, float price)
+        {
+            return new BondView
+            {
+                Id = b.Id,
+                Name = b.Name,
+                FaceValue = b.FaceValue,
+                CouponRate = b.CouponRate,
+                TotalPeriods = b.TotalPeriods,
+                RemainingPeriods = b.RemainingPeriods,
+                PurchasePrice = b.PurchasePrice,
+                CouponsReceived = b.CouponsReceived,
+                PlacedFraction = b.PlacedFraction,
+                OutstandingPrincipal = b.OutstandingPrincipal,
+                Arrears = b.Arrears,
+                State = b.State,
+                InDefault = b.InDefault,
+                Price = price
+            };
+        }
+    }
+
+    public class SwapView
+    {
+        public string Id;
+        public float NotionalAmount;
+        public float FixedRate;
+        public int TotalPeriods;
+        public int RemainingPeriods;
+        public bool PayFixed;
+        public float CumulativePL;
+        public float LastSettlement;
+
+        public static SwapView From(InterestRateSwap s)
+        {
+            return new SwapView
+            {
+                Id = s.Id,
+                NotionalAmount = s.NotionalAmount,
+                FixedRate = s.FixedRate,
+                TotalPeriods = s.TotalPeriods,
+                RemainingPeriods = s.RemainingPeriods,
+                PayFixed = s.PayFixed,
+                CumulativePL = s.CumulativePL,
+                LastSettlement = s.LastSettlement
+            };
         }
     }
 
@@ -110,6 +235,10 @@ namespace MyFirstMod
     {
         public const int PeriodsPerYear = 12;
 
+        // P2-1: closed-form annuity + discounted principal, O(1) instead of the old
+        // O(n) discounting loop that ran for every portfolio bond every tick.
+        //   d  = (1 + r)^-n
+        //   PV = C * (1 - d) / r  +  F * d
         public static float PresentValue(Bond bond, float annualYield)
         {
             if (bond.RemainingPeriods <= 0)
@@ -118,16 +247,13 @@ namespace MyFirstMod
             float r = annualYield / PeriodsPerYear;
             float coupon = (bond.FaceValue * bond.CouponRate) / PeriodsPerYear;
 
-            float pvCoupons = 0f;
-            float discount = 1f;
-            for (int t = 0; t < bond.RemainingPeriods; t++)
-            {
-                discount *= (1f + r);
-                pvCoupons += coupon / discount;
-            }
+            // Guard r <= 0: with no discounting PV is just the undiscounted sum.
+            if (r <= 0f)
+                return coupon * bond.RemainingPeriods + bond.FaceValue;
 
-            float pvPrincipal = bond.FaceValue / discount;
-            return pvCoupons + pvPrincipal;
+            double d = Math.Pow(1.0 + r, -bond.RemainingPeriods);
+            double pv = coupon * (1.0 - d) / r + bond.FaceValue * d;
+            return (float)pv;
         }
 
         public static float GetRequiredYield(float benchmarkRate, CreditRating rating)

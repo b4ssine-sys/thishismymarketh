@@ -134,9 +134,10 @@ namespace MyFirstMod
             float momentum = CalculateMomentumMultiplier(current, previous, 1.5f);
             float raw = baseDemand * momentum;
 
-            float vitalFloor = current.CityVitals * 0.15f;
-
-            return Clamp(Math.Max(raw, vitalFloor), 0f, 1f);
+            // Phase 2: the vitalFloor hack (a demand floor propping up the score)
+            // existed to mask the broken credit signal; with the annualized model
+            // the demand inputs are meaningful on their own, so it is removed.
+            return Clamp(raw, 0f, 1f);
         }
 
         public static float AdjustYieldForDemand(float baseYield, float demandScore)
