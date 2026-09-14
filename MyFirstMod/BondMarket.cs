@@ -46,6 +46,12 @@ namespace MyFirstMod
         public int DefaultedAtPeriod;  // period the bond entered Defaulted, else -1
         public int IssuePeriod;        // period the bond was issued (for age/history)
 
+        // Phase 5 (P1-2): market/portfolio bonds carry the issuer that stands behind
+        // them, so they price off that issuer's credit - not the city's. Empty /
+        // default-A for the city's own issued bonds and legacy holdings.
+        public string IssuerName;
+        public CreditRating IssuerRating;
+
         // Debt service, capacity and repayment all key off the amount still
         // owed, so SubscribedFace now reports OutstandingPrincipal.
         public float SubscribedFace { get { return OutstandingPrincipal; } }
@@ -82,6 +88,8 @@ namespace MyFirstMod
             PeriodsInArrears = 0;
             DefaultedAtPeriod = -1;
             IssuePeriod = 0;
+            IssuerName = "";
+            IssuerRating = CreditRating.A;
         }
     }
 
@@ -104,6 +112,8 @@ namespace MyFirstMod
         public float Arrears;
         public BondState State;
         public bool InDefault; // State == Defaulted, mirrored for existing UI checks
+        public string IssuerName;      // Phase 5: issuer behind a market/portfolio bond
+        public CreditRating IssuerRating;
         public float Price; // market/portfolio present value at snapshot time (0 for issued)
 
         public float SubscribedFace { get { return OutstandingPrincipal; } }
@@ -125,6 +135,8 @@ namespace MyFirstMod
                 Arrears = b.Arrears,
                 State = b.State,
                 InDefault = b.InDefault,
+                IssuerName = b.IssuerName,
+                IssuerRating = b.IssuerRating,
                 Price = price
             };
         }

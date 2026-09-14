@@ -32,6 +32,10 @@ namespace MyFirstMod
         // saves resume at the old constant rate).
         public float ShortRate = 0.04f;
         public float CyclePhase = 0f;
+        // Phase 5 (G-1): the PRNG's serialized state (xorshift128, 4 words). Empty
+        // means "no persisted stream" - the engine reseeds. Pre-Phase-5 saves leave
+        // this empty and the engine seeds fresh on load.
+        public uint[] RngState = new uint[0];
 
         // windows
         public float[] CashFlowHistory = new float[0];
@@ -45,17 +49,22 @@ namespace MyFirstMod
         public List<InterestRateSwap> Swaps = new List<InterestRateSwap>();
         public List<CimTransaction> Transactions = new List<CimTransaction>();
         public List<QuarterlyReport> Reports = new List<QuarterlyReport>();
+        // Phase 5 (P1-2): the market's issuer roster with its migrated credit. Empty
+        // for pre-Phase-5 saves; the engine re-seeds the standard roster on load.
+        public List<MarketIssuer> Issuers = new List<MarketIssuer>();
     }
 
     // Audit Schema v5 serializer contract (spec section 6): the go-forward format
-    // (v7) is length-prefixed and split into per-section checksummed blocks;
-    // deserialize validates every checksum and the invariants (section 7) before
-    // anything is returned, so a corrupt or nonsense save fails cleanly and the
-    // caller keeps its prior state. Legacy saves (v1-6, the flat pre-Schema-v5
-    // format) are migrated on read. No exception ever escapes TryDeserialize.
+    // is length-prefixed and split into per-section checksummed blocks; deserialize
+    // validates every checksum and the invariants (section 7) before anything is
+    // returned, so a corrupt or nonsense save fails cleanly and the caller keeps
+    // its prior state. Legacy saves (v1-6, the flat pre-Schema-v5 format) are
+    // migrated on read. v7 and v8 share the sectioned reader: v8 adds per-bond
+    // issuer identity, the issuer roster, and the PRNG stream (Phase 5), and a v7
+    // save loads by defaulting those. No exception ever escapes TryDeserialize.
     public static class StateSerializer
     {
-        public const byte FORMAT_VERSION = 7;
+        public const byte FORMAT_VERSION = 8;
         private const float EPS = 0.01f;
 
         // ---- FNV-1a 32-bit section checksum ----
@@ -90,7 +99,7 @@ namespace MyFirstMod
             return new BinaryReader(new MemoryStream(payload, false));
         }
 
-        // ================= SERIALIZE (v7) =================
+        // ================= SERIALIZE (v8) =================
 
         public static byte[] Serialize(BondMarketState s)
         {
@@ -111,6 +120,11 @@ namespace MyFirstMod
                 // Phase 4: appended at the end of the scalars section. Older readers
                 // simply stop before these; newer readers pick them up if present.
                 sw.Write(s.ShortRate); sw.Write(s.CyclePhase);
+                // Phase 5 (G-1): PRNG stream, length-prefixed and appended after the
+                // Phase 4 fields. Length 0 means "no persisted stream".
+                uint[] rng = s.RngState != null ? s.RngState : new uint[0];
+                sw.Write(rng.Length);
+                for (int i = 0; i < rng.Length; i++) sw.Write(rng[i]);
                 WriteSection(w, sec);
             }
 
@@ -123,6 +137,7 @@ namespace MyFirstMod
             WriteSwapSection(w, s.Swaps);
             WriteTransactionSection(w, s.Transactions);
             WriteReportSection(w, s.Reports);
+            WriteIssuerSection(w, s.Issuers);   // v8
 
             w.Flush();
             return ms.ToArray();
@@ -157,9 +172,15 @@ namespace MyFirstMod
             sw.Write(b.CouponsReceived); sw.Write(b.PlacedFraction); sw.Write(b.OutstandingPrincipal);
             sw.Write(b.Arrears); sw.Write((int)b.State); sw.Write(b.PeriodsInArrears);
             sw.Write(b.DefaultedAtPeriod); sw.Write(b.IssuePeriod);
+            // v8: issuer identity carried by market/portfolio bonds (Phase 5, P1-2).
+            sw.Write(b.IssuerName != null ? b.IssuerName : "");
+            sw.Write((int)b.IssuerRating);
         }
 
-        private static Bond ReadBondV7(BinaryReader r)
+        // Sectioned-format bond reader shared by v7 and v8. The 15 core fields are
+        // identical; v8 trails the issuer identity, which v7 saves default (empty
+        // name, A rating - i.e. "the city stands behind it").
+        private static Bond ReadBond(BinaryReader r, byte version)
         {
             string id = r.ReadString(); string name = r.ReadString();
             float face = r.ReadSingle(); float coupon = r.ReadSingle();
@@ -173,6 +194,12 @@ namespace MyFirstMod
             b.RemainingPeriods = remainP; b.PurchasePrice = purchase; b.CouponsReceived = couponsRcvd;
             b.PlacedFraction = placed; b.OutstandingPrincipal = outstanding; b.Arrears = arrears;
             b.State = (BondState)state; b.PeriodsInArrears = pia; b.DefaultedAtPeriod = defAt; b.IssuePeriod = issueP;
+
+            if (version >= 8)
+            {
+                b.IssuerName = r.ReadString();
+                b.IssuerRating = (CreditRating)r.ReadInt32();
+            }
             return b;
         }
 
@@ -268,6 +295,44 @@ namespace MyFirstMod
             return rp;
         }
 
+        private static void WriteIssuerSection(BinaryWriter w, List<MarketIssuer> issuers)
+        {
+            using (MemoryStream sec = new MemoryStream())
+            {
+                BinaryWriter sw = new BinaryWriter(sec);
+                int n = issuers != null ? issuers.Count : 0;
+                sw.Write(n);
+                for (int i = 0; i < n; i++)
+                {
+                    MarketIssuer m = issuers[i];
+                    sw.Write(m.Name != null ? m.Name : "");
+                    sw.Write((int)m.Archetype);
+                    sw.Write((int)m.HomeRating);
+                    sw.Write((int)m.Rating);
+                    sw.Write(m.Defaulted);
+                }
+                WriteSection(w, sec);
+            }
+        }
+
+        private static List<MarketIssuer> ReadIssuerSection(BinaryReader r)
+        {
+            BinaryReader sr = ReadSection(r);
+            int n = sr.ReadInt32();
+            List<MarketIssuer> list = new List<MarketIssuer>();
+            for (int i = 0; i < n; i++)
+            {
+                MarketIssuer m = new MarketIssuer();
+                m.Name = sr.ReadString();
+                m.Archetype = (IssuerArchetype)sr.ReadInt32();
+                m.HomeRating = (CreditRating)sr.ReadInt32();
+                m.Rating = (CreditRating)sr.ReadInt32();
+                m.Defaulted = sr.ReadBoolean();
+                list.Add(m);
+            }
+            return list;
+        }
+
         // ================= DESERIALIZE (staged, atomic) =================
 
         // Returns true and a validated state on success; false and null on any
@@ -283,9 +348,9 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
 
                 BondMarketState staging;
-                if (version == FORMAT_VERSION)
-                    staging = ReadV7(r);
-                else if (version >= 1 && version < FORMAT_VERSION)
+                if (version == 7 || version == 8)
+                    staging = ReadSectioned(r, version);
+                else if (version >= 1 && version <= 6)
                     staging = ReadLegacyFlat(r, version);
                 else
                     return false;
@@ -302,7 +367,10 @@ namespace MyFirstMod
             }
         }
 
-        private static BondMarketState ReadV7(BinaryReader r)
+        // Shared reader for the sectioned format (v7 and v8). Every trailing field
+        // added in v8 is read only when present (a longer scalars section, or a
+        // higher version), so a v7 save loads through the same path and defaults them.
+        private static BondMarketState ReadSectioned(BinaryReader r, byte version)
         {
             BondMarketState s = new BondMarketState();
 
@@ -320,13 +388,24 @@ namespace MyFirstMod
                 s.ShortRate = sc.ReadSingle();
                 s.CyclePhase = sc.ReadSingle();
             }
+            // Phase 5 (G-1): the PRNG stream, length-prefixed, trails the Phase 4
+            // fields. Read only when the section still carries at least the length
+            // word (pre-Phase-5 saves stop before it and leave RngState empty).
+            if (sc.BaseStream.Position + 4 <= sc.BaseStream.Length)
+            {
+                int rngLen = sc.ReadInt32();
+                if (rngLen < 0 || rngLen > 64) throw new InvalidDataException("rng state length");
+                uint[] rng = new uint[rngLen];
+                for (int i = 0; i < rngLen; i++) rng[i] = sc.ReadUInt32();
+                s.RngState = rng;
+            }
 
             s.CashFlowHistory = ReadFloatArraySection(r);
             s.PressureHistory = ReadFloatArraySection(r);
-            s.Portfolio = ReadBondSection(r);
-            s.Issued = ReadBondSection(r);
-            s.Redeemed = ReadBondSection(r);
-            s.Market = ReadBondSection(r);
+            s.Portfolio = ReadBondSection(r, version);
+            s.Issued = ReadBondSection(r, version);
+            s.Redeemed = ReadBondSection(r, version);
+            s.Market = ReadBondSection(r, version);
 
             BinaryReader sw = ReadSection(r);
             int swapCount = sw.ReadInt32();
@@ -339,6 +418,11 @@ namespace MyFirstMod
             BinaryReader rr = ReadSection(r);
             int repCount = rr.ReadInt32();
             for (int i = 0; i < repCount; i++) s.Reports.Add(ReadReportV7(rr));
+
+            // v8: issuer roster section trails the reports. v7 saves have no such
+            // section and leave Issuers empty (the engine reseeds the roster).
+            if (version >= 8)
+                s.Issuers = ReadIssuerSection(r);
 
             return s;
         }
@@ -353,12 +437,12 @@ namespace MyFirstMod
             return arr;
         }
 
-        private static List<Bond> ReadBondSection(BinaryReader r)
+        private static List<Bond> ReadBondSection(BinaryReader r, byte version)
         {
             BinaryReader sr = ReadSection(r);
             int n = sr.ReadInt32();
             List<Bond> list = new List<Bond>();
-            for (int i = 0; i < n; i++) list.Add(ReadBondV7(sr));
+            for (int i = 0; i < n; i++) list.Add(ReadBond(sr, version));
             return list;
         }
 

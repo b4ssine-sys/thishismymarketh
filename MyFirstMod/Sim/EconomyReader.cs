@@ -107,5 +107,41 @@ namespace MyFirstMod
                 return false;
             }
         }
+
+        // Phase 5 seam (held for Phase 6 revenue bonds, gate G-2): cumulative income
+        // and expense for a SINGLE service, so a revenue bond can be rated on its
+        // pledged utility's net revenue. Same runtime-bound overload; returns false
+        // if the ledger API is unavailable, so the caller must not silently treat a
+        // failed read as zero revenue (which would false-default revenue paper).
+        public static bool TryReadService(ItemClass.Service service, out long income, out long expense)
+        {
+            income = 0;
+            expense = 0;
+            try
+            {
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em == null) return false;
+                if (!_resolved) Resolve(em);
+                if (_method == null) return false;
+
+                int incIdx = _shape == 1 ? 3 : 1;
+                int expIdx = _shape == 1 ? 4 : 2;
+
+                object[] args = _shape == 1
+                    ? new object[] { service, ItemClass.SubService.None, ItemClass.Level.None, 0L, 0L }
+                    : new object[] { service, 0L, 0L };
+
+                _method.Invoke(em, args);
+                income = (long)args[incIdx];
+                expense = (long)args[expIdx];
+                return true;
+            }
+            catch
+            {
+                income = 0;
+                expense = 0;
+                return false;
+            }
+        }
     }
 }

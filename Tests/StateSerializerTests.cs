@@ -3,8 +3,9 @@ using Xunit;
 
 namespace MyFirstMod.Tests
 {
-    // Audit Schema v5 spec, section 9 (serializer items): v7 round-trip, corrupt
-    // checksum rejection, and v4 -> migrated-state. All pure, no game DLLs.
+    // Audit Schema v5 spec, section 9 (serializer items): v8 round-trip (issuer
+    // identity + roster + PRNG stream), v7 forward-compat, corrupt checksum
+    // rejection, and v4 -> migrated-state. All pure, no game DLLs.
     public class StateSerializerTests
     {
         private static Bond IssuedBond(string id, float face, float coupon, int periods)
@@ -37,7 +38,18 @@ namespace MyFirstMod.Tests
 
             s.Issued.Add(IssuedBond("IB1", 100000f, 0.05f, 60));
             s.Portfolio.Add(new Bond("B1", "Port", 25000f, 0.04f, 12));
-            s.Market.Add(new Bond("M1", "Mkt", 50000f, 0.06f, 8));
+            var mkt = new Bond("M1", "Mkt", 50000f, 0.06f, 8);
+            mkt.IssuerName = "Port Authority";        // v8: issuer identity on market paper
+            mkt.IssuerRating = CreditRating.BBB;
+            s.Market.Add(mkt);
+
+            // v8: issuer roster + persisted PRNG stream (Phase 5).
+            s.Issuers.Add(IssuerModel.MakeIssuer("Regional Water District", IssuerArchetype.WaterDistrict));
+            var trans = IssuerModel.MakeIssuer("State Transit Auth", IssuerArchetype.TransitAuthority);
+            trans.Rating = CreditRating.BB;           // migrated away from home
+            trans.Defaulted = false;
+            s.Issuers.Add(trans);
+            s.RngState = new uint[] { 111u, 222u, 333u, 444u };
 
             var sw = new InterestRateSwap("SW1", 200000f, 0.045f, 24, true);
             sw.RemainingPeriods = 20; sw.CumulativePL = 15.5f; sw.LastSettlement = 2.1f;
@@ -90,6 +102,139 @@ namespace MyFirstMod.Tests
             Assert.Equal("hi", s2.Transactions[0].Detail);
             Assert.Single(s2.Reports);
             Assert.Equal(CreditRating.BBB, s2.Reports[0].Rating);
+
+            // v8: issuer identity on the market bond round-trips.
+            Assert.Equal("Port Authority", s2.Market[0].IssuerName);
+            Assert.Equal(CreditRating.BBB, s2.Market[0].IssuerRating);
+
+            // v8: issuer roster round-trips with migrated rating and archetype.
+            Assert.Equal(2, s2.Issuers.Count);
+            Assert.Equal("Regional Water District", s2.Issuers[0].Name);
+            Assert.Equal(IssuerArchetype.WaterDistrict, s2.Issuers[0].Archetype);
+            Assert.Equal("State Transit Auth", s2.Issuers[1].Name);
+            Assert.Equal(IssuerArchetype.TransitAuthority, s2.Issuers[1].Archetype);
+            Assert.Equal(CreditRating.BB, s2.Issuers[1].Rating);
+            Assert.Equal(CreditRating.BBB, s2.Issuers[1].HomeRating);
+
+            // v8: PRNG stream round-trips.
+            Assert.Equal(4, s2.RngState.Length);
+            Assert.Equal(111u, s2.RngState[0]);
+            Assert.Equal(444u, s2.RngState[3]);
+        }
+
+        // A v7 stream (sectioned, but with no issuer identity, roster, or PRNG
+        // section) must load through the shared reader: bonds default to empty
+        // issuer + A rating, and Issuers / RngState come back empty.
+        [Fact]
+        public void V7Fixture_LoadsForward_WithDefaultedIssuerFields()
+        {
+            byte[] v7 = BuildV7Fixture();
+
+            Assert.True(StateSerializer.TryDeserialize(v7, out BondMarketState s));
+            Assert.NotNull(s);
+            Assert.Equal(0.037f, s.ShortRate, 4);      // Phase 4 rate state still read
+            Assert.Equal(1.23f, s.CyclePhase, 4);
+
+            Assert.Single(s.Market);
+            Assert.Equal("", s.Market[0].IssuerName);  // defaulted, not garbage
+            Assert.Equal(CreditRating.A, s.Market[0].IssuerRating);
+
+            Assert.Empty(s.Issuers);                   // no roster in a v7 save
+            Assert.Empty(s.RngState);                  // no persisted PRNG stream
+        }
+
+        // Builds a minimal but well-formed v7 sectioned stream (one market bond),
+        // using the same section framing the serializer emits, so the forward-compat
+        // path is exercised against a real v7 layout rather than a re-serialized v8.
+        private static byte[] BuildV7Fixture()
+        {
+            var ms = new MemoryStream();
+            var w = new BinaryWriter(ms);
+            w.Write((byte)7); // version
+
+            // scalars section: the 17 core fields + Phase 4 ShortRate/CyclePhase,
+            // and NO trailing PRNG length word (that is the v8-era addition).
+            using (var sec = new MemoryStream())
+            {
+                var sw = new BinaryWriter(sec);
+                sw.Write(11); sw.Write(3); sw.Write(9);          // NextBondId, NextSwapId, TickCounter
+                sw.Write(42); sw.Write(5); sw.Write(2);          // PeriodCounter, DefaultPenalty, TotalDefaults
+                sw.Write(0f); sw.Write(0f); sw.Write(0);         // RealizedPL, SwapPL, WindowIndex
+                sw.Write(true); sw.Write(0); sw.Write(0);        // Initialized, TransactionSeq, PressureHistoryIndex
+                sw.Write(0); sw.Write(6); sw.Write(1);           // PeriodsSinceReport, QuarterNumber, QuarterDefaults
+                sw.Write(0f); sw.Write(-1);                      // TotalCitizenProceeds, LastDefaultPeriod
+                sw.Write(0.037f); sw.Write(1.23f);              // Phase 4 ShortRate, CyclePhase
+                WriteFixtureSection(w, sec);
+            }
+
+            WriteFixtureFloatArray(w, new float[60]); // CashFlowHistory
+            WriteFixtureFloatArray(w, new float[12]); // PressureHistory
+            WriteFixtureBondList(w, 0);               // Portfolio
+            WriteFixtureBondList(w, 0);               // Issued
+            WriteFixtureBondList(w, 0);               // Redeemed
+            WriteFixtureBondList(w, 1);               // Market (one v7 bond, 15 fields)
+
+            WriteFixtureCountOnly(w); // Swaps
+            WriteFixtureCountOnly(w); // Transactions
+            WriteFixtureCountOnly(w); // Reports
+            // NO issuer section: that is the v8 addition.
+
+            w.Flush();
+            return ms.ToArray();
+        }
+
+        private static uint Fnv1a(byte[] data)
+        {
+            uint h = 2166136261u;
+            for (int i = 0; i < data.Length; i++) { h ^= data[i]; h *= 16777619u; }
+            return h;
+        }
+
+        private static void WriteFixtureSection(BinaryWriter w, MemoryStream sec)
+        {
+            byte[] payload = sec.ToArray();
+            w.Write(payload.Length);
+            w.Write(Fnv1a(payload));
+            w.Write(payload);
+        }
+
+        private static void WriteFixtureFloatArray(BinaryWriter w, float[] arr)
+        {
+            using (var sec = new MemoryStream())
+            {
+                var sw = new BinaryWriter(sec);
+                sw.Write(arr.Length);
+                for (int i = 0; i < arr.Length; i++) sw.Write(arr[i]);
+                WriteFixtureSection(w, sec);
+            }
+        }
+
+        private static void WriteFixtureBondList(BinaryWriter w, int count)
+        {
+            using (var sec = new MemoryStream())
+            {
+                var sw = new BinaryWriter(sec);
+                sw.Write(count);
+                for (int i = 0; i < count; i++)
+                {
+                    sw.Write("M1"); sw.Write("Mkt"); sw.Write(50000f); sw.Write(0.06f);
+                    sw.Write(8); sw.Write(8); sw.Write(0f); sw.Write(0f);
+                    sw.Write(1f); sw.Write(50000f); sw.Write(0f); sw.Write((int)BondState.Active);
+                    sw.Write(0); sw.Write(-1); sw.Write(0);
+                    // v7: no issuer fields trailing the 15 core fields.
+                }
+                WriteFixtureSection(w, sec);
+            }
+        }
+
+        private static void WriteFixtureCountOnly(BinaryWriter w)
+        {
+            using (var sec = new MemoryStream())
+            {
+                var sw = new BinaryWriter(sec);
+                sw.Write(0);
+                WriteFixtureSection(w, sec);
+            }
         }
 
         [Fact]

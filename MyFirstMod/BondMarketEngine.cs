@@ -68,7 +68,14 @@ namespace MyFirstMod
         private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
         private readonly System.Text.StringBuilder _detailBuilder = new System.Text.StringBuilder(64); // P2-3: reused
         private readonly object _lock = new object();
-        private readonly System.Random _rng = new System.Random();
+        // Phase 5 (G-1): deterministic, serializable PRNG so stochastic outcomes
+        // (issuer migration/default) survive reload and can't be save-scummed.
+        private DeterministicRandom _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+
+        // Phase 5 (P1-2): market issuers, each with its own migrating credit.
+        private readonly List<MarketIssuer> _issuers = new List<MarketIssuer>();
+        private float _hazardMultiplier = IssuerModel.HAZARD_STANDARD; // difficulty (settings control in Phase 6)
+        private int _annualCounter; // periods since the last annual issuer migration
 
         private int _tickCounter;
         private int _nextBondId;
@@ -561,7 +568,7 @@ namespace MyFirstMod
 
             _portfolioValue = 0f;
             for (int i = 0; i < _portfolioBonds.Count; i++)
-                _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], _requiredYield);
+                _portfolioValue += BondPricing.PresentValue(_portfolioBonds[i], IssuerYieldFor(_portfolioBonds[i]));
 
             // Phase 2: calibrated rating grid + liquidity notch; hard D floor for
             // active arrears is handled inside RatingEngine.
@@ -905,6 +912,7 @@ namespace MyFirstMod
             ServiceIssuedBondsInternal();
             SettleSwapsInternal();
             SimulateCitizenTradingInternal();
+            MigrateIssuersAnnualInternal(); // Phase 5 (P1-2)
 
             // Schema v5: recovery is gated by the DebtBook. The default penalty
             // (and its yield spike) only fades once nothing is defaulted, arrears
@@ -1042,9 +1050,13 @@ namespace MyFirstMod
                 float proceeds = _debtBook.PlacePrimary(_citizenBuyVolume);
                 if (proceeds > 0f)
                 {
-                    AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE));
-                    _citizenProceedsThisPeriod += proceeds;
-                    _totalCitizenProceeds += proceeds;
+                    // C-1: the city pays a 75bp underwriting fee on placed par,
+                    // deducted from proceeds at closing.
+                    float net = proceeds - Friction.UnderwritingFee(proceeds);
+                    if (net < 0f) net = 0f;
+                    AddCashToCity((long)(net * INTERNAL_UNIT_SCALE));
+                    _citizenProceedsThisPeriod += net;
+                    _totalCitizenProceeds += net;
                 }
             }
 
@@ -1191,6 +1203,7 @@ namespace MyFirstMod
 
         private void GenerateInitialBondsInternal()
         {
+            if (_issuers.Count == 0) InitIssuersInternal();
             _marketBonds.Clear();
             _marketBonds.Add(MakeBond("City Infrastructure Note", 10000f, 0.042f, 2));
             _marketBonds.Add(MakeBond("Transit Revenue Bond", 25000f, 0.047f, 4));
@@ -1198,29 +1211,180 @@ namespace MyFirstMod
             _marketBonds.Add(MakeBond("Water & Sewer Bond", 75000f, 0.053f, 8));
             _marketBonds.Add(MakeBond("General Obligation Bond", 100000f, 0.055f, 10));
             _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.058f, 12));
+            for (int i = 0; i < _marketBonds.Count; i++)
+            {
+                AssignIssuer(_marketBonds[i]);
+                _marketBonds[i].CouponRate = IssuerYieldFor(_marketBonds[i]); // price near par at issuer credit
+            }
         }
 
         private void RegenerateBondsInternal()
         {
+            if (_issuers.Count == 0) InitIssuersInternal();
             while (_marketBonds.Count < MIN_MARKET_BONDS)
             {
-                string issuer = MARKET_ISSUERS[_rng.Next(MARKET_ISSUERS.Length)];
+                MarketIssuer m = _issuers[_rng.Next(_issuers.Count)];
                 float face = MARKET_FACES[_rng.Next(MARKET_FACES.Length)];
                 int term = MARKET_PERIODS[_rng.Next(MARKET_PERIODS.Length)];
 
-                float spread = (float)(_rng.NextDouble() * 0.012 - 0.003);
-                float coupon = _requiredYield + spread;
-                if (coupon < 0.025f) coupon = 0.025f;
-                if (coupon > 0.10f) coupon = 0.10f;
-
-                _marketBonds.Add(MakeBond(issuer, face, coupon, term));
+                Bond b = MakeBond(m.Name, face, 0.05f, term);
+                b.IssuerName = m.Name;
+                b.IssuerRating = m.Rating;
+                b.CouponRate = IssuerYieldFor(b); // P1-2: coupon reflects the ISSUER's credit
+                _marketBonds.Add(b);
             }
+        }
+
+        // Phase 5 (P1-2): the six market issuers, each with its own migrating credit.
+        private void InitIssuersInternal()
+        {
+            _issuers.Clear();
+            _issuers.Add(IssuerModel.MakeIssuer("Regional Water District", IssuerArchetype.WaterDistrict));
+            _issuers.Add(IssuerModel.MakeIssuer("Clean Power Grid", IssuerArchetype.PowerGrid));
+            _issuers.Add(IssuerModel.MakeIssuer("State Transit Auth", IssuerArchetype.TransitAuthority));
+            _issuers.Add(IssuerModel.MakeIssuer("Port Authority", IssuerArchetype.PortAuthority));
+            _issuers.Add(IssuerModel.MakeIssuer("County Health System", IssuerArchetype.HealthSystem));
+            _issuers.Add(IssuerModel.MakeIssuer("District School Board", IssuerArchetype.SchoolBoard));
+        }
+
+        private MarketIssuer FindIssuer(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            for (int i = 0; i < _issuers.Count; i++)
+                if (_issuers[i].Name == name) return _issuers[i];
+            return null;
+        }
+
+        private void AssignIssuer(Bond b)
+        {
+            if (_issuers.Count == 0) InitIssuersInternal();
+            MarketIssuer m = _issuers[_rng.Next(_issuers.Count)];
+            b.IssuerName = m.Name;
+            b.IssuerRating = m.Rating;
+        }
+
+        // P1-2: holdings price off the benchmark curve + the ISSUER's spread, never
+        // the city's own credit-adjusted required yield.
+        private float IssuerYieldFor(Bond b)
+        {
+            float spread = IssuerModel.IssuerSpread(b.IssuerRating);
+            float years = (float)b.RemainingPeriods / BondPricing.PeriodsPerYear;
+            float baseRate = _yieldCurve.Lambda > 0.0001f ? _yieldCurve.SpotRate(years) : _marketFloatingRate;
+            float y = baseRate + spread;
+            if (y < 0.005f) y = 0.005f;
+            if (y > 0.60f) y = 0.60f;
+            return y;
+        }
+
+        private float BondDurationYears(Bond b)
+        {
+            return (float)b.RemainingPeriods / BondPricing.PeriodsPerYear;
+        }
+
+        // P1-8: single-lot execution prices carry the bid-ask half-spread (impact is
+        // reserved for the bulk paths). Buys pay the ask; sells receive the bid.
+        private float BuyExecPrice(Bond b)
+        {
+            float mid = BondPricing.PresentValue(b, IssuerYieldFor(b));
+            return mid * (1f + Friction.HalfSpread(b.IssuerRating, BondDurationYears(b)));
+        }
+
+        private float SellExecPrice(Bond b)
+        {
+            float mid = BondPricing.PresentValue(b, IssuerYieldFor(b));
+            float px = mid * (1f - Friction.HalfSpread(b.IssuerRating, BondDurationYears(b)));
+            return px < 0f ? 0f : px;
+        }
+
+        // P1-8/E-1: a bulk lot pays half-spread AND square-root price impact against
+        // the issue's own depth, so a huge order is materially lossy. The Phase 6
+        // ladder builder replaces the fixed 1B/10M buttons with a depth-aware ladder.
+        private float BulkBuyExecPrice(Bond b)
+        {
+            float mid = BondPricing.PresentValue(b, IssuerYieldFor(b));
+            float depth = Friction.DepthPerPeriod(b.FaceValue);
+            return Friction.ExecutionPrice(mid, true, b.IssuerRating, BondDurationYears(b), mid, depth);
         }
 
         private Bond MakeBond(string name, float face, float coupon, int periods)
         {
             _nextBondId++;
             return new Bond("B" + _nextBondId.ToString(), name, face, coupon, periods);
+        }
+
+        // P1-2 (A-2/A-3): once per in-game year, migrate every issuer's rating and
+        // resolve any defaults. On default the holder receives the sector recovery
+        // fraction of par (A-3) as a realised loss, the issuer's market and portfolio
+        // paper is cleared, and the issuer is restructured back to its home rating so
+        // the market keeps six live names.
+        private void MigrateIssuersAnnualInternal()
+        {
+            _annualCounter++;
+            if (_annualCounter < BondPricing.PeriodsPerYear) return;
+            _annualCounter = 0;
+            if (_issuers.Count == 0) return;
+
+            for (int i = 0; i < _issuers.Count; i++)
+            {
+                MarketIssuer m = _issuers[i];
+                bool defaulted;
+                m.Rating = IssuerModel.MigrateAnnual(m.Rating, m.HomeRating, _hazardMultiplier, _rng, out defaulted);
+
+                if (defaulted)
+                {
+                    ResolveIssuerDefaultInternal(m);
+                    // Restructured entity re-enters at its home rating.
+                    m.Rating = m.HomeRating;
+                    m.Defaulted = false;
+                }
+            }
+
+            // Propagate current issuer ratings onto outstanding market/portfolio paper.
+            RefreshHoldingRatingsInternal();
+        }
+
+        private void ResolveIssuerDefaultInternal(MarketIssuer m)
+        {
+            float recovery = IssuerModel.RecoveryRateFor(m.Archetype);
+
+            // Portfolio holdings of this issuer: pay recovery, realise the loss, drop.
+            for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
+            {
+                Bond b = _portfolioBonds[i];
+                if (b.IssuerName != m.Name) continue;
+                float payout = b.FaceValue * recovery;
+                AddCashToCity((long)(payout * INTERNAL_UNIT_SCALE));
+                _realizedPL += (payout + b.CouponsReceived) - b.PurchasePrice;
+                _portfolioBonds.RemoveAt(i);
+            }
+
+            // Its market paper is pulled.
+            for (int i = _marketBonds.Count - 1; i >= 0; i--)
+                if (_marketBonds[i].IssuerName == m.Name)
+                    _marketBonds.RemoveAt(i);
+
+            // Log the credit event.
+            _transactionSeq++;
+            CimTransaction tx = new CimTransaction();
+            tx.Sequence = _transactionSeq;
+            tx.Detail = string.Format("DEFAULT: {0} - recovery {1:F0}% of par", m.Name, recovery * 100f);
+            _transactionLog.Add(tx);
+            if (_transactionLog.Count > MAX_TRANSACTION_LOG)
+                _transactionLog.RemoveAt(0);
+        }
+
+        private void RefreshHoldingRatingsInternal()
+        {
+            for (int i = 0; i < _marketBonds.Count; i++)
+            {
+                MarketIssuer m = FindIssuer(_marketBonds[i].IssuerName);
+                if (m != null) _marketBonds[i].IssuerRating = m.Rating;
+            }
+            for (int i = 0; i < _portfolioBonds.Count; i++)
+            {
+                MarketIssuer m = FindIssuer(_portfolioBonds[i].IssuerName);
+                if (m != null) _portfolioBonds[i].IssuerRating = m.Rating;
+            }
         }
 
         // P0-6: re-seed the cash cursor from the game at the start of a UI action,
@@ -1338,6 +1502,10 @@ namespace MyFirstMod
             _monthsOfReserves = 0f;
             _creditModelNoticePending = false;
             EconomyReader.Reset();
+            _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+            _issuers.Clear();
+            InitIssuersInternal();
+            _annualCounter = 0;
             _tickCounter = 0;
             _periodCounter = 0;
             _periodMetricsInitialized = false;
@@ -1412,10 +1580,10 @@ namespace MyFirstMod
             outPrices.Clear();
             lock (_lock)
             {
-                float yield = _requiredYield;
                 for (int i = 0; i < _marketBonds.Count; i++)
                 {
-                    float price = BondPricing.PresentValue(_marketBonds[i], yield);
+                    // P1-2: price off the issuer's credit, not the city's.
+                    float price = BondPricing.PresentValue(_marketBonds[i], IssuerYieldFor(_marketBonds[i]));
                     outBonds.Add(BondView.From(_marketBonds[i], price));
                     outPrices.Add(price);
                 }
@@ -1428,10 +1596,9 @@ namespace MyFirstMod
             outPrices.Clear();
             lock (_lock)
             {
-                float yield = _requiredYield;
                 for (int i = 0; i < _portfolioBonds.Count; i++)
                 {
-                    float price = BondPricing.PresentValue(_portfolioBonds[i], yield);
+                    float price = BondPricing.PresentValue(_portfolioBonds[i], IssuerYieldFor(_portfolioBonds[i]));
                     outBonds.Add(BondView.From(_portfolioBonds[i], price));
                     outPrices.Add(price);
                 }
@@ -1451,7 +1618,7 @@ namespace MyFirstMod
                     return false;
 
                 Bond bond = _marketBonds[marketIndex];
-                float price = BondPricing.PresentValue(bond, _requiredYield);
+                float price = BuyExecPrice(bond); // P1-8: pay the ask (mid + half-spread)
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                 if (!TrySpendCash(priceInternal))
@@ -1477,7 +1644,7 @@ namespace MyFirstMod
 
                 SeedTickCashFromGame();
                 Bond bond = _portfolioBonds[portfolioIndex];
-                float price = BondPricing.PresentValue(bond, _requiredYield);
+                float price = SellExecPrice(bond); // P1-8: receive the bid (mid - half-spread)
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                 AddCashToCity(priceInternal);
@@ -1495,7 +1662,7 @@ namespace MyFirstMod
                 for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
                 {
                     Bond bond = _portfolioBonds[i];
-                    float price = BondPricing.PresentValue(bond, _requiredYield);
+                    float price = SellExecPrice(bond);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
                     AddCashToCity(priceInternal);
                     _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
@@ -1627,11 +1794,12 @@ namespace MyFirstMod
             {
                 SeedTickCashFromGame();
                 float face = 1000000000f;
-                float coupon = _requiredYield;
                 int periods = 60;
 
-                Bond b = MakeBond("Institutional Sovereign Note", face, coupon, periods);
-                float price = BondPricing.PresentValue(b, _requiredYield);
+                Bond b = MakeBond("Institutional Sovereign Note", face, 0.05f, periods);
+                AssignIssuer(b);
+                b.CouponRate = IssuerYieldFor(b);
+                float price = BulkBuyExecPrice(b); // P1-8: half-spread + depth impact
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                 if (!TrySpendCash(priceInternal))
@@ -1652,14 +1820,15 @@ namespace MyFirstMod
                 SeedTickCashFromGame();
                 long remaining = em.LastCashAmount;
 
-                float coupon = _requiredYield;
                 int periods = 60;
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("Corporate Tranche Note", 1000000f, coupon, periods);
-                    float price = BondPricing.PresentValue(b, _requiredYield);
+                    Bond b = MakeBond("Corporate Tranche Note", 1000000f, 0.05f, periods);
+                    AssignIssuer(b);
+                    b.CouponRate = IssuerYieldFor(b);
+                    float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                     if (remaining < priceInternal)
@@ -1685,14 +1854,15 @@ namespace MyFirstMod
                 SeedTickCashFromGame();
                 long remaining = em.LastCashAmount;
 
-                float coupon = _requiredYield;
                 int periods = 60;
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("10M Treasury Bond", 10000000f, coupon, periods);
-                    float price = BondPricing.PresentValue(b, _requiredYield);
+                    Bond b = MakeBond("10M Treasury Bond", 10000000f, 0.05f, periods);
+                    AssignIssuer(b);
+                    b.CouponRate = IssuerYieldFor(b);
+                    float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                     if (remaining < priceInternal)
@@ -2079,6 +2249,8 @@ namespace MyFirstMod
             s.Swaps = new List<InterestRateSwap>(_activeSwaps);
             s.Transactions = new List<CimTransaction>(_transactionLog);
             s.Reports = new List<QuarterlyReport>(_reportHistory);
+            s.Issuers = new List<MarketIssuer>(_issuers);      // Phase 5 (P1-2)
+            s.RngState = _rng.GetState();                       // Phase 5 (G-1)
             return s;
         }
 
@@ -2111,6 +2283,16 @@ namespace MyFirstMod
             for (int i = 0; i < s.Issued.Count; i++) _debtBook.Add(s.Issued[i]);
             for (int i = 0; i < s.Redeemed.Count; i++) _debtBook.Redeemed.Add(s.Redeemed[i]);
             _debtBook.LastDefaultPeriod = s.LastDefaultPeriod;
+
+            // Phase 5 (P1-2): restore the issuer roster, or reseed the standard set
+            // for a pre-Phase-5 save that carries none.
+            _issuers.Clear();
+            if (s.Issuers != null && s.Issuers.Count > 0) _issuers.AddRange(s.Issuers);
+            else InitIssuersInternal();
+
+            // Phase 5 (G-1): resume the persisted PRNG stream so post-load draws
+            // continue deterministically; a save without one keeps the fresh seed.
+            if (s.RngState != null && s.RngState.Length >= 4) _rng.SetState(s.RngState);
 
             _cashSamples = WINDOW_SIZE; // the window array is restored; treat it as populated
             _prevMoneySet = false;      // re-baseline cash tracking on the first tick after load
