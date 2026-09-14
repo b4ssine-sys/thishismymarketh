@@ -55,6 +55,8 @@ namespace MyFirstMod
         private bool _creditModelNoticePending; // one-time Phase 2 migration banner flag
         private bool _gameDataAvailable;        // P2-4: whether the game exposed usable demographics this pass
         private bool _periodMetricsInitialized; // P2-2: has the per-period metrics block run at least once
+        private bool _g2DiagLogged;             // gate G-2: one-shot ledger-binding diagnostic emitted?
+        private int _metricRuns;                // count of metrics recomputes since load (for the G-2 one-shot)
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
@@ -537,7 +539,8 @@ namespace MyFirstMod
             // ledger when available; otherwise fall back to the balance-delta proxy
             // (net>0 -> income, net<0 -> expense) smoothed over the window.
             float tickIncome, tickExpense;
-            if (SampleTickOperatingFlow(out tickIncome, out tickExpense))
+            bool flowFromLedger = SampleTickOperatingFlow(out tickIncome, out tickExpense);
+            if (flowFromLedger)
             {
                 float a = 1f / WINDOW_SIZE; // ~60-tick EMA to match the window horizon
                 _avgIncomePerTick = _avgIncomePerTick <= 0f ? tickIncome : _avgIncomePerTick + a * (tickIncome - _avgIncomePerTick);
@@ -570,6 +573,27 @@ namespace MyFirstMod
             // active arrears is handled inside RatingEngine.
             bool hasArrears = _debtBook.AnyDefaulted || _debtBook.TotalArrears > 0.01f;
             _rating = RatingEngine.EvaluateRating(cm, hasArrears);
+
+            // Gate G-2: one-shot diagnostic to the Debug Output. Fires on the second
+            // metrics pass (once the ledger baseline is set, so a real cumulative diff
+            // is available), reporting whether the game ledger bound and the raw +
+            // annualized numbers it produced - so "rating looks wrong" becomes a
+            // definite read on whether EconomyReader is the cause rather than warm-up.
+            // One line, once per load; VerboseLogging is not required for this check.
+            _metricRuns++;
+            if (!_g2DiagLogged && _metricRuns >= 2)
+            {
+                _g2DiagLogged = true;
+                Debug.Log(string.Format(
+                    "[MyFirstMod] G-2 ledger check | bound={0} shape={1} | flow source={2} | raw tick inc/exp={3:F1}/{4:F1} | annualized rev/exp/NOI={5:F0}/{6:F0}/{7:F0} | DSCR={8:F2} burden={9:F3} reserves={10:F1}mo | rating={11}",
+                    EconomyReader.MethodResolved,
+                    EconomyReader.BindingShape,
+                    flowFromLedger ? "GAME LEDGER" : "balance-delta fallback",
+                    tickIncome, tickExpense,
+                    _grossIncome, _totalExpenses, _noi,
+                    _dscr, _debtBurden, _monthsOfReserves,
+                    BondPricing.RatingLabel(_rating)));
+            }
 
             // Phase 4 (P1-4/P1-5): the exogenous short rate evolves once per period
             // via a mean-reverting process whose long-run mean drifts on a business
@@ -1505,6 +1529,7 @@ namespace MyFirstMod
             _tickCounter = 0;
             _periodCounter = 0;
             _periodMetricsInitialized = false;
+            _g2DiagLogged = false; _metricRuns = 0; // re-emit the G-2 check on a new game
             _nextBondId = 0;
             _initialized = false;
             _defaultPenalty = 0;
@@ -2295,6 +2320,7 @@ namespace MyFirstMod
             _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
             _avgExpensePerTick = 0f;
             _periodMetricsInitialized = false; // recompute metrics on the first tick after load
+            _g2DiagLogged = false; _metricRuns = 0; // re-emit the G-2 check after a load
         }
 
         private static void CopyInto(float[] dest, float[] src)

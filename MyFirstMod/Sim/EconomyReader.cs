@@ -31,6 +31,18 @@ namespace MyFirstMod
             _shape = 0;
         }
 
+        // Diagnostics (gate G-2): whether the ledger overload was found, and which
+        // shape bound. Meaningful only after the first read attempt resolves it.
+        public static bool MethodResolved { get { return _method != null; } }
+        public static string BindingShape
+        {
+            get
+            {
+                if (_method == null) return "unbound";
+                return _shape == 1 ? "(Service,SubService,Level,out,out)" : "(Service,out,out)";
+            }
+        }
+
         private static void CacheServices()
         {
             _servicesCached = true;
