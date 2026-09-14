@@ -108,7 +108,6 @@ namespace MyFirstMod
         private float _employmentRate;
         private float _populationGrowth;
         private float _cashReserves;
-        private int _demographicSampleCounter;
         private MarketState _currentMarketState;
         private MarketState _previousMarketState;
 
@@ -174,11 +173,8 @@ namespace MyFirstMod
         private static readonly float[] ISSUE_FACES = new float[] { 25000f, 75000f, 200000f, 400000f, 750000f };
         private static readonly int[] ISSUE_PERIODS = new int[] { 24, 36, 60, 84, 120 };
 
-        private static readonly string[] MARKET_ISSUERS = new string[]
-        {
-            "State Transit Auth", "Regional Water District", "County Health System",
-            "Port Authority", "Clean Power Grid", "District School Board"
-        };
+        // Issuer identities live in InitIssuersInternal() (Phase 5); the market
+        // draws a face and term for each generated bond from these menus.
         private static readonly float[] MARKET_FACES = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
         private static readonly int[] MARKET_PERIODS = new int[] { 4, 6, 8, 10, 12, 16 };
 
@@ -1550,7 +1546,6 @@ namespace MyFirstMod
             _employmentRate = 0.7f;
             _populationGrowth = 0f;
             _cashReserves = 0f;
-            _demographicSampleCounter = 0;
             _currentMarketState = new MarketState();
             _previousMarketState = new MarketState();
             _citizenBuyVolume = 0f;
