@@ -55,8 +55,8 @@ namespace MyFirstMod
         private bool _creditModelNoticePending; // one-time Phase 2 migration banner flag
         private bool _gameDataAvailable;        // P2-4: whether the game exposed usable demographics this pass
         private bool _periodMetricsInitialized; // P2-2: has the per-period metrics block run at least once
-        private bool _g2DiagLogged;             // gate G-2: one-shot ledger-binding diagnostic emitted?
-        private int _metricRuns;                // count of metrics recomputes since load (for the G-2 one-shot)
+        private int _g2DiagSamples;             // gate G-2: how many of the three diagnostic samples have fired
+        private int _metricRuns;                // count of metrics recomputes since load (for the G-2 diagnostic)
 
         private readonly List<Bond> _marketBonds = new List<Bond>();
         private readonly List<Bond> _portfolioBonds = new List<Bond>();
@@ -581,11 +581,12 @@ namespace MyFirstMod
             // definite read on whether EconomyReader is the cause rather than warm-up.
             // One line, once per load; VerboseLogging is not required for this check.
             _metricRuns++;
-            if (!_g2DiagLogged && _metricRuns >= 2)
+            if (_g2DiagSamples < 3 && (_metricRuns == 2 || _metricRuns == 10 || _metricRuns == 60))
             {
-                _g2DiagLogged = true;
+                _g2DiagSamples++;
                 Debug.Log(string.Format(
-                    "[MyFirstMod] G-2 ledger check | bound={0} shape={1} | flow source={2} | raw tick inc/exp={3:F1}/{4:F1} | annualized rev/exp/NOI={5:F0}/{6:F0}/{7:F0} | DSCR={8:F2} burden={9:F3} reserves={10:F1}mo | rating={11}",
+                    "[MyFirstMod] G-2 sample {0}/3 (run {1}) | bound={2} shape={3} | flow source={4} | raw tick inc/exp={5:F1}/{6:F1} | annualized rev/exp/NOI={7:F0}/{8:F0}/{9:F0} | DSCR={10:F2} burden={11:F3} reserves={12:F1}mo | rating={13}",
+                    _g2DiagSamples, _metricRuns,
                     EconomyReader.MethodResolved,
                     EconomyReader.BindingShape,
                     flowFromLedger ? "GAME LEDGER" : "balance-delta fallback",
@@ -1529,7 +1530,7 @@ namespace MyFirstMod
             _tickCounter = 0;
             _periodCounter = 0;
             _periodMetricsInitialized = false;
-            _g2DiagLogged = false; _metricRuns = 0; // re-emit the G-2 check on a new game
+            _g2DiagSamples = 0; _metricRuns = 0; // re-emit the G-2 diagnostic on a new game
             _nextBondId = 0;
             _initialized = false;
             _defaultPenalty = 0;
@@ -2320,7 +2321,7 @@ namespace MyFirstMod
             _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
             _avgExpensePerTick = 0f;
             _periodMetricsInitialized = false; // recompute metrics on the first tick after load
-            _g2DiagLogged = false; _metricRuns = 0; // re-emit the G-2 check after a load
+            _g2DiagSamples = 0; _metricRuns = 0; // re-emit the G-2 diagnostic after a load
         }
 
         private static void CopyInto(float[] dest, float[] src)
