@@ -139,6 +139,38 @@ namespace MyFirstMod.Tests
             Assert.True(ok.FilledFraction > 0f);
         }
 
+        [Fact]
+        public void Auction_TightDeal200bp_RaisesLessThanPar()
+        {
+            float fairYield = 0.05f;
+            float tightYield = fairYield - 0.02f; // 200bp tight
+            float normalYield = fairYield + 0.005f; // 5bp concession (at-market)
+            float demand = 0.8f;
+
+            var tight = PrimaryAuction.Evaluate(tightYield, fairYield, demand);
+            var normal = PrimaryAuction.Evaluate(normalYield, fairYield, demand);
+
+            Assert.True(normal.Filled, "At-market deal should fill");
+            Assert.True(normal.FilledFraction > tight.FilledFraction,
+                "200bp-tight deal must raise measurably less than an at-market deal");
+
+            if (tight.Filled)
+                Assert.True(tight.FilledFraction < 0.5f,
+                    "A tight deal that fills should fill well below par");
+        }
+
+        [Fact]
+        public void Auction_PartialFill_BetweenMinCoverAndOne()
+        {
+            float fair = 0.05f;
+            float demand = 0.85f;
+            var result = PrimaryAuction.Evaluate(fair, fair, demand);
+
+            Assert.True(result.Filled);
+            Assert.True(result.FilledFraction >= PrimaryAuction.MinCover);
+            Assert.True(result.FilledFraction < 1f);
+        }
+
         // ---- P1-8: Friction ----
 
         [Fact]
