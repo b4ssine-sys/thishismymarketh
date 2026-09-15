@@ -37,6 +37,11 @@ namespace MyFirstMod
         // this empty and the engine seeds fresh on load.
         public uint[] RngState = new uint[0];
 
+        // WO-10: player-adjustable settings, persisted so they survive save/load.
+        public float HazardMultiplier = IssuerModel.HAZARD_STANDARD;
+        public float RateVolatilityScale = 1f;
+        public bool CitizenTradingEnabled = true;
+
         // windows
         public float[] CashFlowHistory = new float[0];
         public float[] PressureHistory = new float[0];
@@ -125,6 +130,9 @@ namespace MyFirstMod
                 uint[] rng = s.RngState != null ? s.RngState : new uint[0];
                 sw.Write(rng.Length);
                 for (int i = 0; i < rng.Length; i++) sw.Write(rng[i]);
+                sw.Write(s.HazardMultiplier);
+                sw.Write(s.RateVolatilityScale);
+                sw.Write(s.CitizenTradingEnabled);
                 WriteSection(w, sec);
             }
 
@@ -398,6 +406,12 @@ namespace MyFirstMod
                 uint[] rng = new uint[rngLen];
                 for (int i = 0; i < rngLen; i++) rng[i] = sc.ReadUInt32();
                 s.RngState = rng;
+            }
+            if (sc.BaseStream.Position + 9 <= sc.BaseStream.Length)
+            {
+                s.HazardMultiplier = sc.ReadSingle();
+                s.RateVolatilityScale = sc.ReadSingle();
+                s.CitizenTradingEnabled = sc.ReadBoolean();
             }
 
             s.CashFlowHistory = ReadFloatArraySection(r);
