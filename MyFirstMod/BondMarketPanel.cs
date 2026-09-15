@@ -1507,10 +1507,10 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            int result = engine.PayDebtPercent(0.25f);
-            if (result > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + result.ToString() + " bonds (25% target)");
-            else if (result == -1)
+            PayDebtResult r = engine.PayDebtPercent(0.25f);
+            if (r.Retired > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + r.Retired.ToString() + " bonds (25% target)");
+            else if (r.PartialPaydown)
                 Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (25% target)");
             RefreshData();
         }
@@ -1520,10 +1520,10 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
-            int result = engine.PayDebtPercent(0.50f);
-            if (result > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + result.ToString() + " bonds (50% target)");
-            else if (result == -1)
+            PayDebtResult r = engine.PayDebtPercent(0.50f);
+            if (r.Retired > 0)
+                Debug.Log("[MyFirstMod] Early repayment: retired " + r.Retired.ToString() + " bonds (50% target)");
+            else if (r.PartialPaydown)
                 Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (50% target)");
             RefreshData();
         }

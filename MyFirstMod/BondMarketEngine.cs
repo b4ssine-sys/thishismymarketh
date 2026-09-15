@@ -80,6 +80,8 @@ namespace MyFirstMod
         private int _annualCounter; // periods since the last annual issuer migration
 
         private int _tickCounter;
+        private int _ticksThisPeriod;
+        private int _lastGameMonth = -1;
         private int _nextBondId;
         private bool _initialized;
         private bool _resetInProgress; // P0-1: re-entrancy guard for ResetStateInternal
@@ -400,26 +402,18 @@ namespace MyFirstMod
 
             lock (_lock)
             {
-                if (NeedsReset)
+                if (PendingSaveData != null)
                 {
                     NeedsReset = false;
-                    PendingSaveData = null;
-                    ResetStateInternal();
-                }
-                else if (PendingSaveData != null)
-                {
-                    // P0-1: null PendingSaveData BEFORE restoring, and reset to a
-                    // clean state if the restore fails. RestoreState no longer calls
-                    // back into ResetStateInternal, so a corrupt save can never loop
-                    // reset -> restore -> throw -> reset into a stack overflow.
                     byte[] data = PendingSaveData;
                     PendingSaveData = null;
                     if (!RestoreState(data))
-                    {
-                        // Clean slate; the !_initialized block below seeds the
-                        // initial market, exactly as a fresh game does.
                         ResetStateInternal();
-                    }
+                }
+                else if (NeedsReset)
+                {
+                    NeedsReset = false;
+                    ResetStateInternal();
                 }
 
                 // P0-6: seed the cash cursor from the authoritative balance the
@@ -427,13 +421,27 @@ namespace MyFirstMod
                 // this cursor, not the stale LastCashAmount.
                 _tickCash = internalMoneyAmount;
 
-                // Per tick: only the cheap cash-flow sample must run every tick so no
-                // balance change is missed.
                 UpdateCashFlowHistory(internalMoneyAmount);
 
                 _tickCounter++;
-                bool periodBoundary = _tickCounter >= TICKS_PER_PERIOD;
-                if (periodBoundary) _tickCounter = 0;
+                _ticksThisPeriod++;
+                bool periodBoundary = false;
+                try
+                {
+                    int month = Singleton<SimulationManager>.instance.m_currentGameTime.Month;
+                    if (_lastGameMonth < 0) _lastGameMonth = month;
+                    if (month != _lastGameMonth)
+                    {
+                        periodBoundary = true;
+                        _lastGameMonth = month;
+                        _ticksThisPeriod = 0;
+                    }
+                }
+                catch
+                {
+                    periodBoundary = _tickCounter >= TICKS_PER_PERIOD;
+                    if (periodBoundary) { _tickCounter = 0; _ticksThisPeriod = 0; }
+                }
 
                 // P2-2: the heavy metrics block (portfolio revaluation, credit model,
                 // rate pipeline, demand chain, demographic sampling) runs ONCE per
@@ -700,7 +708,7 @@ namespace MyFirstMod
             }
             _prevRequiredYield = _requiredYield;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
-                _population, _cashReserves, _demandScore);
+                _population, _landValue, _education, _employmentRate, _demandScore);
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -1075,7 +1083,7 @@ namespace MyFirstMod
                     // deducted from proceeds at closing.
                     float net = proceeds - Friction.UnderwritingFee(proceeds);
                     if (net < 0f) net = 0f;
-                    AddCashToCity((long)(net * INTERNAL_UNIT_SCALE));
+                    AddCashToCity((long)(net * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
                     _citizenProceedsThisPeriod += net;
                     _totalCitizenProceeds += net;
                 }
@@ -1422,7 +1430,8 @@ namespace MyFirstMod
         // cursor says is available, and return the amount the game ACTUALLY moved.
         // Updates the cursor and the pending mod delta. This is the single spend
         // primitive; TrySpendCash is an all-or-nothing wrapper over it.
-        private long SpendCashUpTo(long desired)
+        private long SpendCashUpTo(long desired,
+            EconomyManager.Resource resource = EconomyManager.Resource.LoanPayment)
         {
             if (desired <= 0) return 0L;
             EconomyManager em = Singleton<EconomyManager>.instance;
@@ -1437,11 +1446,11 @@ namespace MyFirstMod
             while (remaining > 0L)
             {
                 int chunk = (int)Math.Min(remaining, (long)int.MaxValue);
-                int got = em.FetchResource(EconomyManager.Resource.LoanPayment, chunk,
+                int got = em.FetchResource(resource, chunk,
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 moved += got;
                 remaining -= chunk;
-                if (got < chunk) break; // game capped the move; stop
+                if (got < chunk) break;
             }
 
             _tickCash -= moved;
@@ -1462,7 +1471,8 @@ namespace MyFirstMod
 
         // Returns the amount the game actually added (P0-7). Callers that don't
         // care may ignore it.
-        private long AddCashToCity(long internalAmount)
+        private long AddCashToCity(long internalAmount,
+            EconomyManager.Resource resource = EconomyManager.Resource.PublicIncome)
         {
             if (internalAmount <= 0L) return 0L;
             EconomyManager em = Singleton<EconomyManager>.instance;
@@ -1473,11 +1483,11 @@ namespace MyFirstMod
             while (remaining > 0L)
             {
                 int chunk = (int)Math.Min(remaining, (long)int.MaxValue);
-                int got = em.AddResource(EconomyManager.Resource.PublicIncome, chunk,
+                int got = em.AddResource(resource, chunk,
                     ItemClass.Service.None, ItemClass.SubService.None, ItemClass.Level.Level1);
                 added += got;
                 remaining -= chunk;
-                if (got < chunk) break; // game capped the move; stop
+                if (got < chunk) break;
             }
 
             _tickCash += added;
@@ -1528,9 +1538,11 @@ namespace MyFirstMod
             InitIssuersInternal();
             _annualCounter = 0;
             _tickCounter = 0;
+            _ticksThisPeriod = 0;
+            _lastGameMonth = -1;
             _periodCounter = 0;
             _periodMetricsInitialized = false;
-            _g2DiagSamples = 0; _metricRuns = 0; // re-emit the G-2 diagnostic on a new game
+            _g2DiagSamples = 0; _metricRuns = 0;
             _nextBondId = 0;
             _initialized = false;
             _defaultPenalty = 0;
@@ -1778,19 +1790,16 @@ namespace MyFirstMod
             }
         }
 
-        public int PayDebtPercent(float percent)
+        public PayDebtResult PayDebtPercent(float percent)
         {
             lock (_lock)
             {
+                var result = new PayDebtResult();
                 if (_debtBook.Count == 0)
-                    return 0;
+                    return result;
 
                 SeedTickCashFromGame();
 
-                // Budget is a fraction of total owed (outstanding principal + arrears,
-                // so a defaulted bond can't be retired for free), capped at the cash
-                // actually available. The DebtBook applies arrears-first and never
-                // touches PlacedFraction (I7); we then move exactly what it spent.
                 float available = (float)_tickCash / INTERNAL_UNIT_SCALE;
                 float budget = _debtBook.TotalDebtOwed * percent;
                 if (budget > available) budget = available;
@@ -1803,9 +1812,10 @@ namespace MyFirstMod
                 if (spent > 0f)
                     SpendCashUpTo((long)(spent * INTERNAL_UNIT_SCALE));
 
-                if (partial && retired == 0)
-                    return -1; // sentinel: a partial paydown happened (UI convention)
-                return retired;
+                result.Retired = retired;
+                result.PartialPaydown = partial && retired == 0;
+                result.AmountSpent = spent;
+                return result;
             }
         }
 
@@ -1983,11 +1993,16 @@ namespace MyFirstMod
             }
         }
 
-        public bool SellSwapTranche(int index, float fraction)
+        public bool SellSwapTranche(string swapId, float fraction)
         {
             lock (_lock)
             {
-                if (index < 0 || index >= _activeSwaps.Count)
+                int index = -1;
+                for (int i = 0; i < _activeSwaps.Count; i++)
+                {
+                    if (_activeSwaps[i].Id == swapId) { index = i; break; }
+                }
+                if (index < 0)
                     return false;
                 if (fraction <= 0f || fraction > 1f)
                     return false;
@@ -2008,8 +2023,6 @@ namespace MyFirstMod
                 if (!SettleSwapCash(settleMTM))
                     return false;
 
-                // P1-6: only the notional scales down. CumulativePL is REALISED
-                // history and must stay immutable.
                 swap.NotionalAmount *= (1f - fraction);
                 return true;
             }
@@ -2320,8 +2333,10 @@ namespace MyFirstMod
             _ledgerBaselineSet = false; // re-baseline the ledger diff after load
             _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
             _avgExpensePerTick = 0f;
-            _periodMetricsInitialized = false; // recompute metrics on the first tick after load
-            _g2DiagSamples = 0; _metricRuns = 0; // re-emit the G-2 diagnostic after a load
+            _ticksThisPeriod = 0;
+            _lastGameMonth = -1;
+            _periodMetricsInitialized = false;
+            _g2DiagSamples = 0; _metricRuns = 0;
         }
 
         private static void CopyInto(float[] dest, float[] src)

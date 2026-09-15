@@ -122,11 +122,29 @@ namespace MyFirstMod.Tests
         [Fact]
         public void CalculateAbsorptionCapacity_IsPositiveAndScalesWithPopulation()
         {
-            float small = CimDemandEngine.CalculateAbsorptionCapacity(1_000, 100_000f, 0.5f);
-            float large = CimDemandEngine.CalculateAbsorptionCapacity(100_000, 100_000f, 0.5f);
+            float small = CimDemandEngine.CalculateAbsorptionCapacity(1_000, 0.5f, 0.5f, 0.8f, 0.5f);
+            float large = CimDemandEngine.CalculateAbsorptionCapacity(100_000, 0.5f, 0.5f, 0.8f, 0.5f);
 
             Assert.True(small > 0f);
             Assert.True(large > small, "Larger population should raise absorption capacity");
+        }
+
+        [Fact]
+        public void CalculateAbsorptionCapacity_WealthFactorsRaiseCapacity()
+        {
+            float poor = CimDemandEngine.CalculateAbsorptionCapacity(50_000, 0.1f, 0.1f, 0.3f, 0.5f);
+            float rich = CimDemandEngine.CalculateAbsorptionCapacity(50_000, 0.9f, 0.8f, 0.95f, 0.5f);
+
+            Assert.True(rich > poor, "Higher land value, education and employment should raise capacity");
+        }
+
+        [Fact]
+        public void CalculateAbsorptionCapacity_NoTreasuryDependence()
+        {
+            float a = CimDemandEngine.CalculateAbsorptionCapacity(50_000, 0.5f, 0.5f, 0.8f, 0.5f);
+            float b = CimDemandEngine.CalculateAbsorptionCapacity(50_000, 0.5f, 0.5f, 0.8f, 0.5f);
+
+            Assert.Equal(a, b);
         }
 
         [Theory]

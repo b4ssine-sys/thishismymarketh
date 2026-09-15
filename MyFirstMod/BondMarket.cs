@@ -8,6 +8,13 @@ namespace MyFirstMod
     // payment; it transitions. Redeemed is terminal and retained for history.
     public enum BondState { Active, Delinquent, Defaulted, Redeemed }
 
+    public struct PayDebtResult
+    {
+        public int Retired;
+        public bool PartialPaydown;
+        public float AmountSpent;
+    }
+
     public class Bond
     {
         public string Id;
