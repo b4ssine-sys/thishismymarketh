@@ -147,12 +147,16 @@ namespace MyFirstMod
         }
 
         public static float CalculateAbsorptionCapacity(
-            int population, float cashReserves, float demandScore)
+            int population, float landValue, float education,
+            float employmentRate, float demandScore)
         {
             float popCapacity = population * WEALTH_PER_CAPITA;
-            float cashFactor = Clamp(1f + (float)Math.Log10(Math.Max(cashReserves, 1000f)) / 5f, 0.5f, 3f);
+            float wealthFactor = 0.4f
+                + Clamp(landValue, 0f, 1f) * 0.25f
+                + Clamp(education, 0f, 1f) * 0.20f
+                + Clamp(employmentRate, 0f, 1f) * 0.15f;
             float demandMultiplier = 0.1f + demandScore * 0.9f;
-            return popCapacity * cashFactor * demandMultiplier;
+            return popCapacity * wealthFactor * demandMultiplier;
         }
 
         public static string DemandLabel(float demandScore)
