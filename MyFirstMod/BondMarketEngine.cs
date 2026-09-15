@@ -76,8 +76,10 @@ namespace MyFirstMod
 
         // Phase 5 (P1-2): market issuers, each with its own migrating credit.
         private readonly List<MarketIssuer> _issuers = new List<MarketIssuer>();
-        private float _hazardMultiplier = IssuerModel.HAZARD_STANDARD; // difficulty (settings control in Phase 6)
-        private int _annualCounter; // periods since the last annual issuer migration
+        private float _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
+        private float _rateVolatilityScale = 1f;
+        private bool _citizenTradingEnabled = true;
+        private int _annualCounter;
 
         private int _tickCounter;
         private int _ticksThisPeriod;
@@ -254,6 +256,10 @@ namespace MyFirstMod
         public int TransactionLogCount { get { return _transactionLog.Count; } }
         public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
         public int CurrentQuarter { get { return _quarterNumber; } }
+
+        public float HazardMultiplier { get { return _hazardMultiplier; } set { _hazardMultiplier = value; } }
+        public float RateVolatilityScale { get { return _rateVolatilityScale; } set { _rateVolatilityScale = value; } }
+        public bool CitizenTradingEnabled { get { return _citizenTradingEnabled; } set { _citizenTradingEnabled = value; } }
 
         public void GetReportSnapshot(List<QuarterlyReport> dest)
         {
@@ -612,7 +618,7 @@ namespace MyFirstMod
             float theta = RateProcess.CycleTheta(RATE_BASE_THETA, RATE_CYCLE_AMPLITUDE, _cyclePhase);
             float z = RateProcess.NextGaussian(_rng);
             float dtYears = 1f / BondPricing.PeriodsPerYear;
-            _shortRate = RateProcess.Step(_shortRate, RATE_KAPPA, theta, RATE_SIGMA, dtYears, z);
+            _shortRate = RateProcess.Step(_shortRate, RATE_KAPPA, theta, RATE_SIGMA * _rateVolatilityScale, dtYears, z);
 
             float longLevel = _shortRate + RATE_TERM_PREMIUM + _revenueVolatility * 0.01f;
             _yieldCurve = YieldCurve.FromShortRate(_shortRate, longLevel, RATE_CURVATURE, RATE_LAMBDA);
@@ -940,8 +946,22 @@ namespace MyFirstMod
 
             ServiceIssuedBondsInternal();
             SettleSwapsInternal();
-            SimulateCitizenTradingInternal();
-            MigrateIssuersAnnualInternal(); // Phase 5 (P1-2)
+            if (_citizenTradingEnabled)
+            {
+                SimulateCitizenTradingInternal();
+            }
+            else
+            {
+                _citizenBuyVolume = 0f;
+                _citizenSellVolume = 0f;
+                _marketPressure = 0f;
+                _pressureHistory[_pressureHistoryIndex] = 0f;
+                _pressureHistoryIndex = (_pressureHistoryIndex + 1) % _pressureHistory.Length;
+                float pSum = 0f;
+                for (int i = 0; i < _pressureHistory.Length; i++) pSum += _pressureHistory[i];
+                _smoothedPressure = pSum / _pressureHistory.Length;
+            }
+            MigrateIssuersAnnualInternal();
 
             // Schema v5: recovery is gated by the DebtBook. The default penalty
             // (and its yield spike) only fades once nothing is defaulted, arrears
@@ -1567,6 +1587,9 @@ namespace MyFirstMod
             _nextSwapId = 0;
             _revenueVolatility = 0f;
             _swapPL = 0f;
+            _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
+            _rateVolatilityScale = 1f;
+            _citizenTradingEnabled = true;
             _demandScore = 0f;
             _defaultProbability = 0f;
             _cityVitals = 0f;
@@ -2285,6 +2308,9 @@ namespace MyFirstMod
             s.Reports = new List<QuarterlyReport>(_reportHistory);
             s.Issuers = new List<MarketIssuer>(_issuers);      // Phase 5 (P1-2)
             s.RngState = _rng.GetState();                       // Phase 5 (G-1)
+            s.HazardMultiplier = _hazardMultiplier;
+            s.RateVolatilityScale = _rateVolatilityScale;
+            s.CitizenTradingEnabled = _citizenTradingEnabled;
             return s;
         }
 
@@ -2327,6 +2353,10 @@ namespace MyFirstMod
             // Phase 5 (G-1): resume the persisted PRNG stream so post-load draws
             // continue deterministically; a save without one keeps the fresh seed.
             if (s.RngState != null && s.RngState.Length >= 4) _rng.SetState(s.RngState);
+
+            _hazardMultiplier = s.HazardMultiplier;
+            _rateVolatilityScale = s.RateVolatilityScale;
+            _citizenTradingEnabled = s.CitizenTradingEnabled;
 
             _cashSamples = WINDOW_SIZE; // the window array is restored; treat it as populated
             _prevMoneySet = false;      // re-baseline cash tracking on the first tick after load

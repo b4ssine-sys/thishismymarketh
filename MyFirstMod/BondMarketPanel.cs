@@ -40,8 +40,8 @@ namespace MyFirstMod
         // LAYOUT MAP (800x520) - master reference for all UI element positions
         //  y=0-40     Title bar (drag handle + close)
         //  y=42-100   Summary (2-line financial overview)
-        //  y=102-132  Tab row: Market|Portfolio|Debt|Hedging|Positions|Activity|Report
-        //             Tabs: 7 x 76w, gap 4, x=12..572
+        //  y=102-132  Tab row: Market|Portfolio|Debt|Hedging|Positions|Activity|Report|Settings
+        //             Tabs: 8 x 76w, gap 4, x=12..648
         //  y=138-378  List panel (6 rows x 36h + 24 pad)
         //  y=388-418  Action buttons (per-tab, right-aligned, hidden when inactive)
         //    Tab 0 Market:    [Buy 1B @x472 w90] [10x10M @x570 w105] [10x1M @x683 w105]
@@ -96,7 +96,7 @@ namespace MyFirstMod
         // P0-8: per-visible-row action metadata, captured at render time so a
         // click dispatches on the stable instrument Id rather than re-deriving a
         // list index that may have shifted since the last refresh.
-        private enum RowAction { None, Buy, Sell, Repay, Issue, Terminate, SelectReport }
+        private enum RowAction { None, Buy, Sell, Repay, Issue, Terminate, SelectReport, SettingCycle }
         private readonly RowAction[] _rowAction = new RowAction[MAX_ROWS];
         private readonly string[] _rowId = new string[MAX_ROWS];  // bond/swap id for Buy/Sell/Repay/Terminate
         private readonly int[] _rowArg = new int[MAX_ROWS];        // template index (Issue) / report index (SelectReport)
@@ -118,6 +118,7 @@ namespace MyFirstMod
         private UIButton _reportHistoryBtn;
         private UIButton _issue25Btn;
         private UIButton _issue50Btn;
+        private UIButton _settingsTabBtn;
 
         public override void Start()
         {
@@ -264,6 +265,17 @@ namespace MyFirstMod
             _reportTabBtn.pressedBgSprite = "ButtonMenuPressed";
             _reportTabBtn.focusedBgSprite = "ButtonMenuFocused";
             _reportTabBtn.eventClick += OnReportTab;
+
+            _settingsTabBtn = AddUIComponent<UIButton>();
+            _settingsTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
+            _settingsTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 7f, tabY);
+            _settingsTabBtn.text = "Settings";
+            _settingsTabBtn.textScale = 0.8f;
+            _settingsTabBtn.normalBgSprite = "ButtonMenu";
+            _settingsTabBtn.hoveredBgSprite = "ButtonMenuHovered";
+            _settingsTabBtn.pressedBgSprite = "ButtonMenuPressed";
+            _settingsTabBtn.focusedBgSprite = "ButtonMenuFocused";
+            _settingsTabBtn.eventClick += OnSettingsTab;
 
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
@@ -530,6 +542,10 @@ namespace MyFirstMod
         public override void Update()
         {
             base.Update();
+
+            if (Input.GetKeyDown(KeyCode.B) && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))
+                Toggle();
+
             if (!isVisible) return;
 
             _refreshTimer += Time.deltaTime;
@@ -553,7 +569,18 @@ namespace MyFirstMod
             float yieldPct = engine.RequiredYield * 100f;
             float dscrVal = engine.DSCR;
 
-            if (_activeTab == 6)
+            if (_activeTab == 7)
+            {
+                _summaryLabel.text = string.Format(
+                    "Settings  |  Rating: {0}  |  Yield: {1:F1}%\n" +
+                    "Hazard: {2}  |  Rate Vol: {3}  |  Citizen Trading: {4}",
+                    ratingStr, yieldPct,
+                    engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f ? "Historical"
+                        : engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f ? "Volatile" : "Standard",
+                    engine.RateVolatilityScale <= 0.6f ? "Calm" : engine.RateVolatilityScale >= 1.8f ? "Turbulent" : "Normal",
+                    engine.CitizenTradingEnabled ? "ON" : "OFF");
+            }
+            else if (_activeTab == 6)
             {
                 int rCount = engine.ReportCount;
                 int qNum = engine.CurrentQuarter;
@@ -657,6 +684,8 @@ namespace MyFirstMod
                 RefreshPositions(engine);
             else if (_activeTab == 5)
                 RefreshActivity(engine);
+            else if (_activeTab == 7)
+                RefreshSettings(engine);
             else
                 RefreshReport(engine);
         }
@@ -682,21 +711,26 @@ namespace MyFirstMod
             engine.GetMarketSnapshot(_cachedBonds, _cachedPrices);
             int ticksInPeriod = engine.TicksInCurrentPeriod;
 
-            int count = _cachedBonds.Count;
-            if (count > MAX_ROWS) count = MAX_ROWS;
+            int total = _cachedBonds.Count;
+            int maxOffset = Math.Max(0, total - MAX_ROWS);
+            if (_scrollOffset > maxOffset)
+                _scrollOffset = maxOffset;
 
             for (int i = 0; i < MAX_ROWS; i++)
             {
-                if (i < count)
+                int bondIdx = _scrollOffset + i;
+                if (bondIdx < total)
                 {
-                    BondView b = _cachedBonds[i];
-                    float price = _cachedPrices[i];
+                    BondView b = _cachedBonds[bondIdx];
+                    float price = _cachedPrices[bondIdx];
                     int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
+                    string rTag = BondPricing.RatingLabel(b.IssuerRating);
+                    float spreadBp = Friction.HalfSpread(b.IssuerRating, (float)b.RemainingPeriods / BondPricing.PeriodsPerYear) * 10000f;
 
                     _infoLabels[i].text = string.Format(
-                        "{0}   Face: {1:N0}   {2:F1}%   {3}d left",
-                        b.Name, b.FaceValue, b.CouponRate * 100f, daysLeft);
-                    _priceLabels[i].text = string.Format("{0:N0}", price);
+                        "{0} [{1}]  Face: {2:N0}  {3:F1}%  {4}d",
+                        b.Name, rTag, b.FaceValue, b.CouponRate * 100f, daysLeft);
+                    _priceLabels[i].text = string.Format("{0:N0} ~{1:F0}bp", price, spreadBp);
                     _actionButtons[i].text = "Buy";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
@@ -710,6 +744,10 @@ namespace MyFirstMod
                     _actionButtons[i].isVisible = false;
                 }
             }
+
+            if (total > MAX_ROWS)
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total);
 
             _footerLabel.text = string.Format("Bonds available: {0}  |  Portfolio: {1} bonds",
                 engine.MarketCount, engine.PortfolioCount);
@@ -765,10 +803,12 @@ namespace MyFirstMod
                     int daysLeft = b.RemainingPeriods * BondMarketEngine.TICKS_PER_PERIOD - ticksInPeriod;
 
                     string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
+                    string rTag = BondPricing.RatingLabel(b.IssuerRating);
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:F1}%   Paid: {2:N0}   P/L: {3}   {4}d",
-                        b.Name, b.CouponRate * 100f, b.PurchasePrice, plStr, daysLeft);
-                    _priceLabels[i].text = string.Format("{0:N0}", price);
+                        "{0} [{1}]  {2:F1}%  Paid: {3:N0}  P/L: {4}  {5}d",
+                        b.Name, rTag, b.CouponRate * 100f, b.PurchasePrice, plStr, daysLeft);
+                    float sellSpreadBp = Friction.HalfSpread(b.IssuerRating, (float)b.RemainingPeriods / BondPricing.PeriodsPerYear) * 10000f;
+                    _priceLabels[i].text = string.Format("{0:N0} ~{1:F0}bp", price, sellSpreadBp);
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
@@ -837,14 +877,24 @@ namespace MyFirstMod
                     int monthsLeft = ib.RemainingPeriods;
                     float perPeriodCoupon = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
-                    string subStatus = ib.InDefault || ib.Arrears > 0.01f ? "DEFAULT"
-                        : ib.PlacedFraction >= 0.99f ? "FULL"
-                        : ib.PlacedFraction <= 0.01f ? "PENDING"
-                        : ib.PlacedFraction < 0.20f ? "LOW" : string.Format("{0:F0}%", ib.PlacedFraction * 100f);
+                    string stateTag;
+                    switch (ib.State)
+                    {
+                        case BondState.Delinquent: stateTag = "DELINQUENT"; break;
+                        case BondState.Defaulted:  stateTag = "DEFAULTED"; break;
+                        case BondState.Redeemed:    stateTag = "REDEEMED"; break;
+                        default:
+                            stateTag = ib.PlacedFraction >= 0.99f ? "ACTIVE"
+                                : ib.PlacedFraction <= 0.01f ? "PENDING"
+                                : ib.PlacedFraction < 0.20f ? "LOW"
+                                : string.Format("{0:F0}%", ib.PlacedFraction * 100f);
+                            break;
+                    }
+                    string arrearsTag = ib.Arrears > 0.01f ? string.Format(" arr:{0:N0}", ib.Arrears) : "";
                     float owedNow = ib.OutstandingPrincipal + ib.Arrears;
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:N0} [{2}]   {3:F1}%   {4}mo   Cost: {5:N0}",
-                        ib.Name, owedNow, subStatus,
+                        "{0}  {1:N0} [{2}{3}]  {4:F1}%  {5}mo  Cost: {6:N0}",
+                        ib.Name, owedNow, stateTag, arrearsTag,
                         ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
                     _actionButtons[i].text = "Repay";
@@ -1030,9 +1080,10 @@ namespace MyFirstMod
                     float bondPL = (price + b.CouponsReceived) - b.PurchasePrice;
                     string plStr = bondPL >= 0 ? "+" + bondPL.ToString("N0") : bondPL.ToString("N0");
 
+                    string rTag = BondPricing.RatingLabel(b.IssuerRating);
                     _infoLabels[i].text = string.Format(
-                        "[BUY] {0}  {1:F1}%  Face: {2:N0}  P/L: {3}  {4}mo",
-                        b.Name, b.CouponRate * 100f, b.FaceValue, plStr, b.RemainingPeriods);
+                        "[BUY] {0} [{1}]  {2:F1}%  Face: {3:N0}  P/L: {4}  {5}mo",
+                        b.Name, rTag, b.CouponRate * 100f, b.FaceValue, plStr, b.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
                     _actionButtons[i].text = "Sell";
                     _actionButtons[i].isVisible = true;
@@ -1046,8 +1097,18 @@ namespace MyFirstMod
                     BondView ib = _cachedIssuedBonds[iIdx];
                     float perPeriod = (ib.SubscribedFace * ib.CouponRate) / BondPricing.PeriodsPerYear;
 
-                    string oweTag = ib.InDefault || ib.Arrears > 0.01f
-                        ? string.Format("[DEFAULT arrears {0:N0}]", ib.Arrears) : "[OWE]";
+                    string oweTag;
+                    switch (ib.State)
+                    {
+                        case BondState.Delinquent:
+                            oweTag = string.Format("[DELINQUENT arr:{0:N0}]", ib.Arrears); break;
+                        case BondState.Defaulted:
+                            oweTag = string.Format("[DEFAULTED arr:{0:N0}]", ib.Arrears); break;
+                        case BondState.Redeemed:
+                            oweTag = "[REDEEMED]"; break;
+                        default:
+                            oweTag = "[OWE]"; break;
+                    }
                     _infoLabels[i].text = string.Format(
                         "{0} {1}  {2:F1}%  Owed: {3:N0} ({4:F0}%)  Paid: {5:N0}  {6}mo",
                         oweTag, ib.Name, ib.CouponRate * 100f, ib.OutstandingPrincipal + ib.Arrears,
@@ -1329,7 +1390,7 @@ namespace MyFirstMod
 
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
-            if (_activeTab == 0) return;
+            if (_activeTab == 7) return;
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null) return;
 
@@ -1347,7 +1408,9 @@ namespace MyFirstMod
             }
 
             int totalItems;
-            if (_activeTab == 1)
+            if (_activeTab == 0)
+                totalItems = engine.MarketCount;
+            else if (_activeTab == 1)
                 totalItems = engine.PortfolioCount;
             else if (_activeTab == 2)
                 totalItems = engine.IssuedCount + engine.IssueTemplateCount;
@@ -1434,6 +1497,33 @@ namespace MyFirstMod
                         RefreshData();
                     }
                     break;
+
+                case RowAction.SettingCycle:
+                    int setting = _rowArg[index];
+                    if (setting == 0)
+                    {
+                        if (engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f)
+                            engine.HazardMultiplier = IssuerModel.HAZARD_STANDARD;
+                        else if (engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f)
+                            engine.HazardMultiplier = IssuerModel.HAZARD_HISTORICAL;
+                        else
+                            engine.HazardMultiplier = IssuerModel.HAZARD_VOLATILE;
+                    }
+                    else if (setting == 1)
+                    {
+                        if (engine.RateVolatilityScale <= 0.6f)
+                            engine.RateVolatilityScale = 1f;
+                        else if (engine.RateVolatilityScale >= 1.8f)
+                            engine.RateVolatilityScale = 0.5f;
+                        else
+                            engine.RateVolatilityScale = 2f;
+                    }
+                    else if (setting == 2)
+                    {
+                        engine.CitizenTradingEnabled = !engine.CitizenTradingEnabled;
+                    }
+                    RefreshData();
+                    break;
             }
         }
 
@@ -1442,7 +1532,9 @@ namespace MyFirstMod
         private void ClampScrollToContent(BondMarketEngine engine)
         {
             int totalItems;
-            if (_activeTab == 1)
+            if (_activeTab == 0)
+                totalItems = engine.MarketCount;
+            else if (_activeTab == 1)
                 totalItems = engine.PortfolioCount;
             else if (_activeTab == 2)
                 totalItems = engine.IssuedCount + engine.IssueTemplateCount;
@@ -1636,6 +1728,77 @@ namespace MyFirstMod
             RefreshData();
         }
 
+        private void OnSettingsTab(UIComponent component, UIMouseEventParameter eventParam)
+        {
+            _activeTab = 7;
+            _scrollOffset = 0;
+            UpdateTabHighlights();
+            RefreshData();
+        }
+
+        private void RefreshSettings(BondMarketEngine engine)
+        {
+            _sellAllBtn.isVisible = false;
+            _buy1MBtn.isVisible = false;
+            _buy10MBtn.isVisible = false;
+            _buy1BBtn.isVisible = false;
+            _pay25Btn.isVisible = false;
+            _pay50Btn.isVisible = false;
+            _autoHedgeBtn.isVisible = false;
+            _sell25SwapsBtn.isVisible = false;
+            _sell50SwapsBtn.isVisible = false;
+            _exitAllSwapsBtn.isVisible = false;
+            _reportLatestBtn.isVisible = false;
+            _reportHistoryBtn.isVisible = false;
+            _issue25Btn.isVisible = false;
+            _issue50Btn.isVisible = false;
+            _scrollHintLabel.text = "";
+
+            string hazardLabel = engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f ? "Historical (x1)"
+                : engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f ? "Volatile (x60)" : "Standard (x25)";
+            string rateVolLabel = engine.RateVolatilityScale <= 0.6f ? "Calm (x0.5)"
+                : engine.RateVolatilityScale >= 1.8f ? "Turbulent (x2.0)" : "Normal (x1.0)";
+            string tradingLabel = engine.CitizenTradingEnabled ? "Enabled" : "Disabled";
+
+            _infoLabels[0].text = "Default Hazard Multiplier - controls issuer default frequency";
+            _priceLabels[0].text = hazardLabel;
+            _actionButtons[0].text = "Cycle";
+            _actionButtons[0].isVisible = true;
+            _actionButtons[0].isEnabled = true;
+            _rowAction[0] = RowAction.SettingCycle;
+            _rowArg[0] = 0;
+
+            _infoLabels[1].text = "Rate Volatility - controls interest rate movement intensity";
+            _priceLabels[1].text = rateVolLabel;
+            _actionButtons[1].text = "Cycle";
+            _actionButtons[1].isVisible = true;
+            _actionButtons[1].isEnabled = true;
+            _rowAction[1] = RowAction.SettingCycle;
+            _rowArg[1] = 1;
+
+            _infoLabels[2].text = "Citizen Bond Trading - enables/disables citizen market activity";
+            _priceLabels[2].text = tradingLabel;
+            _actionButtons[2].text = "Toggle";
+            _actionButtons[2].isVisible = true;
+            _actionButtons[2].isEnabled = true;
+            _rowAction[2] = RowAction.SettingCycle;
+            _rowArg[2] = 2;
+
+            _infoLabels[3].text = "";
+            _priceLabels[3].text = "";
+            _actionButtons[3].isVisible = false;
+
+            _infoLabels[4].text = "Keyboard shortcut: Shift+B to toggle panel visibility";
+            _priceLabels[4].text = "";
+            _actionButtons[4].isVisible = false;
+
+            _infoLabels[5].text = "";
+            _priceLabels[5].text = "";
+            _actionButtons[5].isVisible = false;
+
+            _footerLabel.text = "Settings are saved with your city and persist across sessions.";
+        }
+
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)
         {
             BondMarketEngine engine = BondMarketEngine.Instance;
@@ -1690,6 +1853,7 @@ namespace MyFirstMod
             _positionsTabBtn.normalBgSprite = _activeTab == 4 ? "ButtonMenuFocused" : "ButtonMenu";
             _activityTabBtn.normalBgSprite = _activeTab == 5 ? "ButtonMenuFocused" : "ButtonMenu";
             _reportTabBtn.normalBgSprite = _activeTab == 6 ? "ButtonMenuFocused" : "ButtonMenu";
+            _settingsTabBtn.normalBgSprite = _activeTab == 7 ? "ButtonMenuFocused" : "ButtonMenu";
         }
 
         public override void OnDestroy()
