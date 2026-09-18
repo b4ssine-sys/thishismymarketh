@@ -171,6 +171,7 @@ namespace MyFirstMod
         public bool PayFixed;
         public float CumulativePL;
         public float LastSettlement;
+        public float UnpaidSettlement;
 
         public static SwapView From(InterestRateSwap s)
         {
@@ -183,7 +184,8 @@ namespace MyFirstMod
                 RemainingPeriods = s.RemainingPeriods,
                 PayFixed = s.PayFixed,
                 CumulativePL = s.CumulativePL,
-                LastSettlement = s.LastSettlement
+                LastSettlement = s.LastSettlement,
+                UnpaidSettlement = s.UnpaidSettlement
             };
         }
     }
@@ -198,6 +200,7 @@ namespace MyFirstMod
         public bool PayFixed;
         public float CumulativePL;
         public float LastSettlement;
+        public float UnpaidSettlement;
 
         public InterestRateSwap(string id, float notional, float fixedRate, int totalPeriods, bool payFixed)
         {

@@ -237,5 +237,56 @@ namespace MyFirstMod.Tests
             Assert.Equal(0, book.Count);
             Assert.True(book.ValidateInvariants());
         }
+
+        [Fact]
+        public void WO19_PushbackShortfall_DistributesProportionally()
+        {
+            var book = new DebtBook();
+            var b1 = NewIssued("IB1", 100000f, 0.05f, 60);
+            book.Add(b1);
+            book.PlacePrimary(100000f);
+            var b2 = NewIssued("IB2", 200000f, 0.05f, 60);
+            book.Add(b2);
+            book.PlacePrimary(200000f);
+
+            float shortfall = 3000f;
+            book.PushbackShortfall(shortfall);
+
+            Assert.InRange(b1.Arrears, 999f, 1001f);
+            Assert.InRange(b2.Arrears, 1999f, 2001f);
+        }
+
+        [Fact]
+        public void WO19_PushbackShortfall_ZeroOrNegative_IsNoOp()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 100000f, 0.05f, 60);
+            book.Add(b);
+            book.PlacePrimary(100000f);
+
+            book.PushbackShortfall(0f);
+            Assert.Equal(0f, b.Arrears);
+            book.PushbackShortfall(-500f);
+            Assert.Equal(0f, b.Arrears);
+        }
+
+        [Fact]
+        public void WO19_ServiceThenShortfall_DebtNeverShrinks()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 100000f, 0.05f, 60);
+            book.Add(b);
+            book.PlacePrimary(100000f);
+
+            float totalBefore = b.OutstandingPrincipal + b.Arrears;
+            float cashPaid = book.ServicePeriod(1, 50000f, Grace, Spread, Lockout, PPY,
+                out _, out _);
+
+            float shortfall = cashPaid * 0.5f;
+            book.PushbackShortfall(shortfall);
+
+            float totalAfter = b.OutstandingPrincipal + b.Arrears;
+            Assert.True(totalAfter >= totalBefore - cashPaid + shortfall - 1f);
+        }
     }
 }

@@ -70,7 +70,7 @@ namespace MyFirstMod
     // save loads by defaulting those. No exception ever escapes TryDeserialize.
     public static class StateSerializer
     {
-        public const byte FORMAT_VERSION = 10;
+        public const byte FORMAT_VERSION = 11;
         private const float EPS = 0.01f;
 
         // ---- FNV-1a 32-bit section checksum ----
@@ -230,19 +230,20 @@ namespace MyFirstMod
                     InterestRateSwap s = swaps[i];
                     sw.Write(s.Id); sw.Write(s.NotionalAmount); sw.Write(s.FixedRate);
                     sw.Write(s.TotalPeriods); sw.Write(s.RemainingPeriods); sw.Write(s.PayFixed);
-                    sw.Write(s.CumulativePL); sw.Write(s.LastSettlement);
+                    sw.Write(s.CumulativePL); sw.Write(s.LastSettlement); sw.Write(s.UnpaidSettlement);
                 }
                 WriteSection(w, sec);
             }
         }
 
-        private static InterestRateSwap ReadSwap(BinaryReader r)
+        private static InterestRateSwap ReadSwap(BinaryReader r, byte version)
         {
             string id = r.ReadString(); float notional = r.ReadSingle(); float fixedRate = r.ReadSingle();
             int totalP = r.ReadInt32(); int remainP = r.ReadInt32(); bool payFixed = r.ReadBoolean();
             float cumPL = r.ReadSingle(); float lastS = r.ReadSingle();
             InterestRateSwap s = new InterestRateSwap(id, notional, fixedRate, totalP, payFixed);
             s.RemainingPeriods = remainP; s.CumulativePL = cumPL; s.LastSettlement = lastS;
+            if (version >= 11) s.UnpaidSettlement = r.ReadSingle();
             return s;
         }
 
@@ -364,7 +365,7 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
 
                 BondMarketState staging;
-                if (version >= 7 && version <= 10)
+                if (version >= 7 && version <= 11)
                     staging = ReadSectioned(r, version);
                 else if (version >= 1 && version <= 6)
                     staging = ReadLegacyFlat(r, version);
@@ -433,7 +434,7 @@ namespace MyFirstMod
 
             BinaryReader sw = ReadSection(r);
             int swapCount = sw.ReadInt32();
-            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(sw));
+            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(sw, version));
 
             BinaryReader tr = ReadSection(r);
             int txCount = tr.ReadInt32();
@@ -493,7 +494,7 @@ namespace MyFirstMod
             s.Market = ReadLegacyBondList(r, version);
 
             int swapCount = r.ReadInt32();
-            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(r));
+            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(r, version));
 
             int txCount = r.ReadInt32();
             for (int i = 0; i < txCount; i++) s.Transactions.Add(ReadTransaction(r));

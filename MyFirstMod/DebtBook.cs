@@ -251,6 +251,21 @@ namespace MyFirstMod
             return totalPaid;
         }
 
+        public void PushbackShortfall(float shortfall)
+        {
+            if (shortfall <= 0f || _bonds.Count == 0) return;
+            float totalPrincipal = 0f;
+            for (int i = 0; i < _bonds.Count; i++)
+                totalPrincipal += _bonds[i].OutstandingPrincipal;
+            if (totalPrincipal <= 0f)
+            {
+                _bonds[0].Arrears += shortfall;
+                return;
+            }
+            for (int i = 0; i < _bonds.Count; i++)
+                _bonds[i].Arrears += shortfall * (_bonds[i].OutstandingPrincipal / totalPrincipal);
+        }
+
         private void UpdateState(Bond b, int currentPeriod, int gracePeriods, int lockoutPeriods, bool hardDefault)
         {
             bool hasArrears = b.Arrears > EPS;

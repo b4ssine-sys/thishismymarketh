@@ -1029,10 +1029,12 @@ namespace MyFirstMod
                         : s.CumulativePL.ToString("N0");
                     int monthsLeft = s.RemainingPeriods;
 
+                    string oweTag = s.UnpaidSettlement > 0f
+                        ? string.Format("  [{0} {1:N0}]", Loc.Get("state.owe"), s.UnpaidSettlement) : "";
                     _infoLabels[i].text = string.Format(
-                        "{0}  {1}  Notional: {2:N0}  Fixed: {3:F1}%  {4}mo  P/L: {5}",
+                        "{0}  {1}  Notional: {2:N0}  Fixed: {3:F1}%  {4}mo  P/L: {5}{6}",
                         s.Id, direction, s.NotionalAmount,
-                        s.FixedRate * 100f, monthsLeft, plStr);
+                        s.FixedRate * 100f, monthsLeft, plStr, oweTag);
                     _priceLabels[i].text = string.Format("{0:N0}/per", s.LastSettlement);
                     _actionButtons[i].text = Loc.Get("label.exit");
                     _actionButtons[i].isVisible = true;
@@ -1155,9 +1157,11 @@ namespace MyFirstMod
                         ? "+" + s.CumulativePL.ToString("N0")
                         : s.CumulativePL.ToString("N0");
 
+                    string oweTag2 = s.UnpaidSettlement > 0f
+                        ? string.Format("  [{0} {1:N0}]", Loc.Get("state.owe"), s.UnpaidSettlement) : "";
                     _infoLabels[i].text = string.Format(
-                        "[SWAP] {0}  {1}  Notional: {2:N0}  {3:F1}%  P/L: {4}  {5}mo",
-                        s.Id, dir, s.NotionalAmount, s.FixedRate * 100f, plStr, s.RemainingPeriods);
+                        "[SWAP] {0}  {1}  Notional: {2:N0}  {3:F1}%  P/L: {4}  {5}mo{6}",
+                        s.Id, dir, s.NotionalAmount, s.FixedRate * 100f, plStr, s.RemainingPeriods, oweTag2);
                     _priceLabels[i].text = string.Format("{0:N0}/per", s.LastSettlement);
                     _actionButtons[i].text = Loc.Get("label.exit");
                     _actionButtons[i].isVisible = true;

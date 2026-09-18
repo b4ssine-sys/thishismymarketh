@@ -334,6 +334,30 @@ namespace MyFirstMod.Tests
             return ms.ToArray();
         }
 
+        [Fact]
+        public void V11_SwapUnpaidSettlement_RoundTrips()
+        {
+            var s = SampleState();
+            s.Swaps[0].UnpaidSettlement = 4567.89f;
+            byte[] bytes = StateSerializer.Serialize(s);
+
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.NotNull(s2);
+            Assert.Single(s2.Swaps);
+            Assert.Equal(4567.89f, s2.Swaps[0].UnpaidSettlement, 2);
+        }
+
+        [Fact]
+        public void V11_RevenueBondsEnabled_RoundTrips()
+        {
+            var s = SampleState();
+            s.RevenueBondsEnabled = true;
+            byte[] bytes = StateSerializer.Serialize(s);
+
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.True(s2.RevenueBondsEnabled);
+        }
+
         private static void WriteV4BondList(BinaryWriter w, int count, float soldFraction, float face, float coupon, int periods)
         {
             w.Write(count);

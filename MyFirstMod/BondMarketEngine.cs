@@ -1026,11 +1026,6 @@ namespace MyFirstMod
 
         private void ServiceIssuedBondsInternal()
         {
-            // Schema v5: servicing is owned by the DebtBook. It pays arrears,
-            // coupon, then principal per bond from a single cash budget (what the
-            // live cursor affords), rolls shortfalls into arrears, and transitions
-            // the lifecycle. We move exactly the cash it reports consuming, and
-            // fold the counts into the narrative penalty.
             float budget = (float)_tickCash / INTERNAL_UNIT_SCALE;
             int missed, newDefaults;
             float cashPaid = _debtBook.ServicePeriod(
@@ -1039,9 +1034,13 @@ namespace MyFirstMod
                 out missed, out newDefaults);
 
             if (cashPaid > 0f)
-                SpendCashUpTo((long)(cashPaid * INTERNAL_UNIT_SCALE));
+            {
+                long wanted = (long)(cashPaid * INTERNAL_UNIT_SCALE);
+                long actual = SpendCashUpTo(wanted);
+                if (actual < wanted)
+                    _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
+            }
 
-            // Narrative counters (no longer the source of truth for rating/issuance).
             if (newDefaults > 0)
             {
                 _defaultPenalty = Math.Min(
@@ -1077,10 +1076,7 @@ namespace MyFirstMod
                 {
                     long cashInternal = (long)(-netPayment * INTERNAL_UNIT_SCALE);
                     if (cashInternal > 0 && !TrySpendCash(cashInternal))
-                    {
-                        _activeSwaps.RemoveAt(i);
-                        continue;
-                    }
+                        swap.UnpaidSettlement += -netPayment;
                 }
 
                 swap.LastSettlement = netPayment;
@@ -1437,6 +1433,14 @@ namespace MyFirstMod
             return Friction.ExecutionPrice(mid, true, b.IssuerRating, BondDurationYears(b), mid, depth);
         }
 
+        private float TotalMarketDepth()
+        {
+            float totalFace = 0f;
+            for (int i = 0; i < _marketBonds.Count; i++)
+                totalFace += _marketBonds[i].FaceValue;
+            return totalFace * 100f;
+        }
+
         private Bond MakeBond(string name, float face, float coupon, int periods)
         {
             _nextBondId++;
@@ -1563,12 +1567,11 @@ namespace MyFirstMod
         private bool TrySpendCash(long internalAmount)
         {
             if (internalAmount <= 0L) return true;
-            // P0-6: affordability is checked against the live cursor, not the
-            // stale LastCashAmount, so repeated spends in one tick can't all
-            // approve against the same pre-tick balance.
             if (_tickCash < internalAmount) return false;
-            SpendCashUpTo(internalAmount);
-            return true;
+            long actual = SpendCashUpTo(internalAmount);
+            if (actual == internalAmount) return true;
+            if (actual > 0L) AddCashToCity(actual);
+            return false;
         }
 
         // Returns the amount the game actually added (P0-7). Callers that don't
@@ -1950,7 +1953,13 @@ namespace MyFirstMod
                     _periodCounter, budget, DEFAULT_LOCKOUT_PERIODS, out retired, out partial);
 
                 if (spent > 0f)
-                    SpendCashUpTo((long)(spent * INTERNAL_UNIT_SCALE));
+                {
+                    long wanted = (long)(spent * INTERNAL_UNIT_SCALE);
+                    long actual = SpendCashUpTo(wanted);
+                    if (actual < wanted)
+                        _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
+                    spent = (float)actual / INTERNAL_UNIT_SCALE;
+                }
 
                 result.Retired = retired;
                 result.PartialPaydown = partial && retired == 0;
@@ -1965,12 +1974,12 @@ namespace MyFirstMod
             {
                 SeedTickCashFromGame();
                 float face = 1000000000f;
+                if (face > TotalMarketDepth()) return false;
                 int periods = 60;
 
                 Bond b = MakeBond("Institutional Sovereign Note", face, 0.05f, periods);
                 AssignIssuer(b);
-                b.CouponRate = IssuerYieldFor(b);
-                float price = BulkBuyExecPrice(b); // P1-8: half-spread + depth impact
+                float price = BulkBuyExecPrice(b);
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                 if (!TrySpendCash(priceInternal))
@@ -1986,28 +1995,23 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return 0;
                 SeedTickCashFromGame();
-                long remaining = em.LastCashAmount;
-
-                int periods = 60;
+                float depthRemaining = TotalMarketDepth();
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("Corporate Tranche Note", 1000000f, 0.05f, periods);
+                    float face = 1000000f;
+                    if (face > depthRemaining) break;
+
+                    Bond b = MakeBond("Corporate Tranche Note", face, 0.05f, 60);
                     AssignIssuer(b);
-                    b.CouponRate = IssuerYieldFor(b);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
-                    if (remaining < priceInternal)
-                        break;
+                    if (!TrySpendCash(priceInternal)) break;
 
-                    remaining -= priceInternal;
-                    if (!TrySpendCash(priceInternal))
-                        break;
+                    depthRemaining -= face;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
@@ -2020,28 +2024,23 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return 0;
                 SeedTickCashFromGame();
-                long remaining = em.LastCashAmount;
-
-                int periods = 60;
+                float depthRemaining = TotalMarketDepth();
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("10M Treasury Bond", 10000000f, 0.05f, periods);
+                    float face = 10000000f;
+                    if (face > depthRemaining) break;
+
+                    Bond b = MakeBond("10M Treasury Bond", face, 0.05f, 60);
                     AssignIssuer(b);
-                    b.CouponRate = IssuerYieldFor(b);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
-                    if (remaining < priceInternal)
-                        break;
+                    if (!TrySpendCash(priceInternal)) break;
 
-                    remaining -= priceInternal;
-                    if (!TrySpendCash(priceInternal))
-                        break;
+                    depthRemaining -= face;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
@@ -2056,6 +2055,8 @@ namespace MyFirstMod
             {
                 if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
                     return false;
+                for (int j = 0; j < _activeSwaps.Count; j++)
+                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
                 if (notional <= 0f || periods <= 0)
                     return false;
 
@@ -2208,6 +2209,8 @@ namespace MyFirstMod
             {
                 if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
                     return false;
+                for (int j = 0; j < _activeSwaps.Count; j++)
+                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
                 if (_issuedBonds.Count == 0)
                     return false;
 
