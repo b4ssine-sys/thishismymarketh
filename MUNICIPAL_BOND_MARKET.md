@@ -1,6 +1,6 @@
 # Municipal Bond Market Mod for Cities: Skylines
 
-A comprehensive financial derivatives system for Cities: Skylines 1 that introduces municipal bond trading, debt issuance, credit ratings, and interest rate swap hedging into the city simulation.
+A municipal bond market simulation for Cities: Skylines 1 that introduces debt issuance, credit ratings, yield curves, interest rate swaps, primary auctions, and citizen-driven trading into the city economy.
 
 ---
 
@@ -10,56 +10,86 @@ A comprehensive financial derivatives system for Cities: Skylines 1 that introdu
 2. [Architecture Overview](#architecture-overview)
 3. [Core Systems](#core-systems)
    - [Cash Flow Tracking](#cash-flow-tracking)
-   - [Credit Rating Engine](#credit-rating-engine)
+   - [Credit Model](#credit-model)
+   - [Interest Rate Model](#interest-rate-model)
    - [Bond Market](#bond-market)
+   - [Primary Auction](#primary-auction)
    - [Bond Portfolio](#bond-portfolio)
-   - [Debt Issuance](#debt-issuance)
+   - [Debt Issuance and Lifecycle](#debt-issuance-and-lifecycle)
+   - [Market Friction](#market-friction)
+   - [Citizen Demand Engine](#citizen-demand-engine)
    - [Interest Rate Swaps](#interest-rate-swaps)
-   - [Volatility Tracking](#volatility-tracking)
-   - [Auto-Hedge System](#auto-hedge-system)
+   - [Issuer Credit Model](#issuer-credit-model)
 4. [Bond Pricing Model](#bond-pricing-model)
-5. [Threading Model](#threading-model)
-6. [Technical Constraints](#technical-constraints)
-7. [UI Architecture](#ui-architecture)
-8. [File Structure](#file-structure)
-9. [Constants Reference](#constants-reference)
-10. [Iterative Development Process](#iterative-development-process)
+5. [Serialization](#serialization)
+6. [Threading Model](#threading-model)
+7. [Technical Constraints](#technical-constraints)
+8. [UI Architecture](#ui-architecture)
+9. [File Structure](#file-structure)
+10. [Constants Reference](#constants-reference)
+11. [CI and Testing](#ci-and-testing)
 
 ---
 
 ## Design Philosophy
 
-The mod adapts real-world fixed-income financial instruments into a game context, balancing realism with playability:
+**Real mechanics, game scale.** Municipal bonds, credit ratings, yield curves, and interest rate swaps follow their real-world counterparts in structure. But time scales, dollar amounts, and complexity are compressed to fit a game where players manage a city, not a trading desk.
 
-**Real mechanics, game scale.** Municipal bonds, credit ratings, yield curves, and interest rate swaps follow their real-world counterparts in structure. A bond pays periodic coupons and returns face value at maturity. Credit ratings derive from debt burden and debt service coverage ratio (DSCR). Interest rate swaps exchange fixed for floating payments on a notional amount. But the time scales, dollar amounts, and complexity are compressed to fit a game where players manage a city, not a trading desk.
+**The city IS the issuer.** The player's city occupies both sides of the bond market. Players buy bonds from external issuers (investing surplus cash) and issue their own municipal bonds (raising capital at the cost of future coupon obligations). Issue too much debt and your credit rating drops, making all borrowing more expensive.
 
-**The city IS the issuer.** Unlike a typical bond market game, the player's city occupies both sides of the bond market. Players can buy bonds from external issuers (investing surplus cash for returns) AND issue their own municipal bonds (raising capital at the cost of future coupon obligations). This dual role creates a natural tension: issue too much debt and your credit rating drops, making all borrowing more expensive.
+**Consequences, not punishment.** Default on a bond and you get a yield spike that decays over time, not a game-over. Missed payments transition through a delinquent grace period before hard default. The system encourages learning through feedback loops rather than hard failure states.
 
-**Consequences, not punishment.** Default on a bond and you get a yield spike penalty that decays over time, not a game-over. Over-leverage yourself and your credit rating drops from AAA toward D, widening spreads and making new issuance more expensive. The system encourages learning through feedback loops rather than hard failure states.
+**Everything connects to the real economy.** The mod hooks into the game's actual money flow via `EconomyExtensionBase.OnUpdateMoneyAmount`. Cash flow history, income, expenses, demographics, and the city's bank balance all feed into credit ratings, yield calculations, and citizen demand. The bond market responds to how well you run your city.
 
-**Everything connects to the real economy.** The mod hooks into the game's actual money flow via `EconomyExtensionBase.OnUpdateMoneyAmount`. Cash flow history, income, expenses, and the city's actual bank balance all feed into the credit rating and yield calculations. The bond market isn't a separate mini-game; it responds to how well you run your city.
+**Pure/testable separation.** Domain models, pricing math, credit logic, and the debt book carry no Unity or game dependencies. They compile and test under net8.0 xUnit on CI. Game-coupled files compile against a stub-reference harness so CI type-checks the entire mod without the game DLLs.
 
 ---
 
 ## Architecture Overview
 
-The mod is built on four files with clear separation of concerns:
+The mod is built across 21 source files organized by concern:
 
 ```
-BondMarket.cs        Domain models and pricing math (pure logic, no game dependencies)
-BondMarketEngine.cs  Simulation engine (EconomyExtensionBase, runs on simulation thread)
-BondMarketPanel.cs   UI panel and toggle button (UIPanel, runs on main thread)
-Loading.cs           Lifecycle management (LoadingExtensionBase)
+MyFirstMod/
+  BondMarket.cs           Domain models, enums, view DTOs (pure)
+  BondMarketEngine.cs     Simulation engine (EconomyExtensionBase)
+  BondMarketPanel.cs      UI panel, 8 tabs (UIPanel, main thread)
+  DebtBook.cs             Issued debt lifecycle, servicing, repayment (pure)
+  CimDemandEngine.cs      Citizen demand scoring and trading (pure)
+  StateSerializer.cs      Binary save/load with FNV-1a checksums (pure)
+  Localization.cs         String table scaffolding
+  Loading.cs              Lifecycle (LoadingExtensionBase)
+  SaveDataExtension.cs    Save data bridge (SerializableDataExtensionBase)
+  Mod.cs                  IUserMod entry point
+  ResidentialBuildingLog.cs  Building event observer
+
+  Credit/
+    CreditModel.cs        Annualized credit metrics (pure)
+    RatingEngine.cs       Rating grid with liquidity notch (pure)
+    IssuerModel.cs        Market issuer archetypes and migration (pure)
+
+  Market/
+    RateProcess.cs        Mean-reverting short rate (pure)
+    DeterministicRandom.cs  Serializable xorshift128 PRNG (pure)
+    PrimaryAuction.cs     Uniform-price auction (pure)
+    Friction.cs           Bid-ask spread and price impact (pure)
+
+  Pricing/
+    YieldCurve.cs         Nelson-Siegel term structure (pure)
+    SwapPricing.cs        Swap valuation off the curve (pure)
+
+  Sim/
+    EconomyReader.cs      Reflection binding to game ledger
 ```
 
-The engine runs on the simulation thread via the `OnUpdateMoneyAmount` callback. The UI runs on Unity's main thread. A `lock(_lock)` object synchronizes all shared state between them. The engine exposes snapshot methods that copy data under the lock, so the UI never holds a reference into mutable simulation state.
+The engine runs on the simulation thread via `OnUpdateMoneyAmount`. The UI runs on Unity's main thread. A `lock(_lock)` synchronizes all shared state. The engine exposes snapshot methods that copy data into immutable `BondView`/`SwapView` DTOs under the lock, so the UI never holds references into mutable simulation state.
 
 **Lifecycle flow:**
-1. `Loading.OnLevelLoaded` sets `BondMarketEngine.NeedsReset = true` and creates the UI components
+1. `Loading.OnLevelLoaded` sets `BondMarketEngine.NeedsReset = true` and creates the UI
 2. On the next simulation tick, the engine detects `NeedsReset`, clears all state, and begins tracking cash flow
 3. After the first tick, the engine generates the initial market bond offerings
-4. Every `TICKS_PER_PERIOD` (15) ticks, the engine ages all bonds, services issued debt, settles swaps, and decays default penalties
-5. `Loading.OnLevelUnloading` destroys the UI components
+4. Each period (one game month), the engine ages bonds, services debt, settles swaps, runs citizen trading, migrates issuer credit, and generates quarterly reports
+5. `Loading.OnLevelUnloading` destroys the UI
 
 ---
 
@@ -67,206 +97,265 @@ The engine runs on the simulation thread via the `OnUpdateMoneyAmount` callback.
 
 ### Cash Flow Tracking
 
-The engine maintains a rolling window of 60 cash flow samples. Each simulation tick, it records the delta between the current and previous internal money amount:
+The engine maintains a rolling window of 60 cash flow samples. Each tick records the balance delta, with the mod's own cash movements subtracted out so only organic city revenue and expense enters the window:
 
 ```
-_cashFlowHistory[_windowIndex] = (float)(currentMoney - _prevMoney)
-_windowIndex = (_windowIndex + 1) % WINDOW_SIZE
+organic = (currentMoney - prevMoney) - modCashDeltaPending
 ```
 
-This circular buffer feeds all downstream metrics: gross income (sum of positive deltas), total expenses (sum of negative deltas), net operating income, and revenue volatility. The window represents roughly 4 bond periods of history, giving the metrics enough smoothing to be stable while still responding to changes in city finances.
+An outlier filter rejects deltas beyond 6 standard deviations of the rolling mean (one-off game grants, desyncs). The window feeds downstream metrics: per-tick operating income/expense (preferring the game ledger via `EconomyReader` when available, falling back to balance-delta proxy), and revenue volatility.
 
-The internal unit scale factor of 100 converts between the game's internal money representation and display currency (display 10,000 = 1,000,000 internal units).
+An authoritative cash cursor (`_tickCash`) is seeded from the game's balance each tick, then adjusted by every mod cash operation. This prevents multiple operations in one tick from all reading the same stale `LastCashAmount`.
 
-### Credit Rating Engine
+### Credit Model
 
-Credit ratings follow a dual-metric system inspired by real municipal credit analysis:
+Credit assessment uses a two-stage pipeline, both pure and unit-tested:
 
-| Rating | Max Debt Burden | Min DSCR |
-|--------|----------------|----------|
-| AAA    | < 5%           | > 3.0    |
-| AA     | < 10%          | > 2.0    |
-| A      | < 15%          | > 1.5    |
-| BBB    | < 25%          | > 1.2    |
-| BB     | < 35%          | > 0.9    |
-| B      | (any)          | > 0.8    |
-| CCC    | (any)          | > 0.5    |
-| D      | (any)          | <= 0.5   |
+**CreditModel** (`Credit/CreditModel.cs`) produces annualized metrics from per-tick operating flows and the `DebtBook`:
 
-**Debt Burden** = scheduled debt service / average income. Scheduled debt service is the sum of per-period coupon payments across all issued bonds. If no bonds are issued, 10% of average expenses is used as a proxy.
+| Metric | Definition |
+|--------|-----------|
+| Annual Debt Service | Sum of OutstandingPrincipal x CouponRate across active/delinquent bonds |
+| Debt Burden | Annual Debt Service / Annual Operating Revenue |
+| DSCR | Annual NOI / Annual Debt Service |
+| Months of Reserves | Cash Reserves / Monthly Operating Expense |
 
-**DSCR** (Debt Service Coverage Ratio) = net operating income / scheduled debt service. A DSCR above 1.0 means the city generates enough surplus to cover its debt payments. Below 1.0 means it's running a deficit relative to debt obligations.
+**RatingEngine** (`Credit/RatingEngine.cs`) maps these metrics to a rating via a calibrated grid:
 
-Two cash-reserve adjustments apply:
-- If the city holds over 500,000 in display currency and DSCR is below 3.0, DSCR gets a +1.0 boost (capped at 10.0)
-- If the city holds under 10,000 and DSCR is above 0.5, DSCR takes a -0.5 penalty (floored at 0.0)
+| Rating | Min DSCR | Max Debt Burden |
+|--------|----------|-----------------|
+| AAA    | >= 2.50  | <= 8%           |
+| AA     | >= 2.00  | <= 12%          |
+| A      | >= 1.50  | <= 18%          |
+| BBB    | >= 1.25  | <= 25%          |
+| BB     | >= 1.05  | <= 32%          |
+| B      | >= 0.90  | <= 40%          |
+| CCC    | (else)   | (else)          |
+| D      | Hard floor: active arrears or DSCR < 0.2 |
 
-These adjustments recognize that large cash reserves provide a buffer against temporary cash flow problems, while dangerously low balances signal real distress.
+A **liquidity notch** adjusts one grade: 6+ months of reserves upgrades; under 1 month downgrades. The base/notch path caps at CCC; D is reserved for the hard floor (active arrears or coverage collapse).
+
+### Interest Rate Model
+
+The exogenous interest rate environment is driven by a **mean-reverting short rate** (Vasicek / Ornstein-Uhlenbeck):
+
+```
+dr = kappa * (theta - r) * dt + sigma * sqrt(dt) * Z
+```
+
+- `kappa = 0.15` (mean-reversion speed per year)
+- `theta` drifts on a slow business cycle: `baseTheta + amplitude * sin(phase)`
+- `sigma = 0.006` (volatility per sqrt-year), scaled by the player's Rate Volatility setting
+- Floor at 0.1%, ceiling at 50%
+
+The short rate feeds a **Nelson-Siegel yield curve**:
+
+```
+y(t) = Level + Slope * (1 - e^-x)/x + Curvature * ((1 - e^-x)/x - e^-x)
+```
+
+where `x = t / Lambda`. The short end equals `Level + Slope` (the short rate); the long end approaches `Level` (short rate + term premium). This gives a spot rate for any maturity, so duration has a real price consequence and the curve can invert, steepen, or flatten with the rate cycle.
+
+Nothing the city does moves the exogenous rate. The city's **borrowing rate** layers its own fiscal adjustment (`debtBurden * 2%`) and over-hedge penalty on top.
 
 ### Bond Market
 
-The market offers bonds from 6 fictional municipal issuers (State Transit Auth, Regional Water District, County Health System, Port Authority, Clean Power Grid, District School Board). When the market drops below 6 active bonds, new ones are generated with:
+The market offers bonds from six fictional municipal issuers (Regional Water District, Clean Power Grid, State Transit Auth, Port Authority, County Health System, District School Board). Each issuer has its own migrating credit rating, so market bonds price off the **issuer's** spread, not the city's.
 
-- Face values: 10K, 25K, 50K, 75K, 100K, or 250K (randomly selected)
-- Terms: 4 to 16 periods (randomly selected)
-- Coupon rates: required yield +/- a random spread of up to 2%, clamped to 2%-25%
+When the market drops below 6 active bonds, new ones are generated with randomly selected face values (10K-250K) and terms (4-16 periods), priced near par at the issuer's current yield.
 
-The initial market offers a fixed set of 6 starter bonds ranging from a 10K City Infrastructure Note (3%, 2 periods) to a 200K Capital Improvement Bond (6.5%, 12 periods), providing a gentle introduction before randomized bonds appear.
+Initial market offerings provide a fixed set of six starter bonds for a gentle introduction before randomized bonds appear.
 
-Market bonds age each period. When a market bond's remaining periods hit zero, it's silently removed (the issuer repaid it).
+### Primary Auction
 
-Additionally, three bulk purchase buttons allow rapid portfolio scaling:
-- **Buy 10x 1M 5yr**: purchases up to ten 1,000,000 face value bonds with 60-period terms
-- **Buy 10x 10M 5yr**: purchases up to ten 10,000,000 face value bonds
-- **Buy 1B 5yr**: purchases a single 1,000,000,000 face value Institutional Sovereign Note
+When the city issues a bond, placement runs through a **uniform-price auction**:
 
-Bulk buy loops track remaining cash locally to avoid the stale `LastCashAmount` problem (see Technical Constraints).
+- **Bid-to-cover** = `clamp(exp(concession / 40) * demandScore, 0, 4.0)`
+  - Concession = (offered yield - fair yield) in basis points
+  - Fair yield = spot rate from the yield curve at the bond's tenor
+- **Minimum cover** = 0.75: below this the deal fails
+- Between 0.75 and 1.0: partial fill at the offered yield
+- Above 1.0: fully subscribed
+
+The UI shows estimated bid-to-cover before the player commits (pre-trade indication). A 75bp underwriting fee is deducted from net proceeds.
 
 ### Bond Portfolio
 
-Purchased bonds move from the market list to the portfolio list. Each period:
+Purchased bonds move from the market list to the portfolio. Each period:
 
-1. The bond's remaining periods decrement
-2. If remaining periods hit zero: face value is credited to the city, realized P/L is recorded, and the bond is removed
-3. Otherwise: the periodic coupon payment (face * couponRate / 12) is credited to the city and tracked in `CouponsReceived`
+1. Remaining periods decrement
+2. At maturity: face value credited, realized P/L recorded, bond removed
+3. Otherwise: periodic coupon credited
 
-The portfolio view shows each bond's name, coupon rate, purchase price, unrealized P/L (current PV + coupons received - purchase price), and days until maturity. A **Sell All** button liquidates the entire portfolio at current market prices.
+Buy/sell prices include bid-ask spread scaled by issuer rating and duration. Bulk purchases additionally pay square-root price impact against the issue's depth.
 
-Lifetime P/L tracks both realized gains (from bonds that matured or were sold) and unrealized gains (mark-to-market on current holdings).
+### Debt Issuance and Lifecycle
 
-### Debt Issuance
+The city can issue up to 5 bonds from templates:
 
-The city can issue up to 5 bonds simultaneously (MAX_ISSUED_BONDS). Five templates are available, scaled by face value and maturity:
+| Template            | Face Value | Term      |
+|---------------------|-----------|-----------|
+| Emergency Note      | 25,000    | 2 years   |
+| Municipal Note      | 75,000    | 3 years   |
+| Revenue Bond        | 200,000   | 5 years   |
+| Infrastructure Bond | 400,000   | 7 years   |
+| Capital Bond        | 750,000   | 10 years  |
 
-| Template            | Face Value | Term      | Periods |
-|---------------------|-----------|-----------|---------|
-| Emergency Note      | 25,000    | 2 years   | 24      |
-| Municipal Note      | 75,000    | 3 years   | 36      |
-| Revenue Bond        | 200,000   | 5 years   | 60      |
-| Infrastructure Bond | 400,000   | 7 years   | 84      |
-| Capital Bond        | 750,000   | 10 years  | 120     |
+Issuance is gated by: bond count cap, credit rating (not D), no active defaults or arrears, lockout window cleared, minimum demand score (0.10), and absorption capacity.
 
-When a bond is issued:
-- The face value is immediately credited to the city (proceeds)
-- The coupon rate locks at the current required yield
-- Each period, the city must pay a coupon of (face * rate / 12)
-- At maturity, the city must repay the full face value
+**Bond lifecycle** follows a four-state model managed by the `DebtBook`:
 
-If the city cannot afford a coupon payment or maturity repayment, a **default** is triggered:
-- Default penalty increases by 3
-- Total defaults counter increments
-- The bond is removed (written off)
-- The yield spike from penalties makes all future borrowing more expensive
+```
+Active --> Delinquent --> Defaulted
+  |            |
+  v            v
+  Redeemed   (arrears cleared --> Active)
+```
 
-Default penalties decay by 1 per period, so a single default adds a temporary yield spike that wears off over time.
+- **Active**: coupon paid on time
+- **Delinquent**: missed payment rolls into arrears (which compound at coupon + 300bp). Grace period of 2 periods before hard default
+- **Defaulted**: triggered by grace expiry or a missed maturity principal payment. Issuance suspended, lockout window of 12 periods
+- **Redeemed**: terminal state (term elapsed, all amounts cleared)
 
-The City Debt tab displays issued bonds first (showing name, face value, rate, months remaining, total coupons paid, per-period cost, and a **Repay** button), followed by issuance templates below. **Pay 25%** and **Pay 50%** buttons allow early retirement of bonds by face value budget, retiring the smallest bonds first that fit within the budget.
+The `DebtBook` owns servicing: it pays arrears first, then coupon, then principal from a single cash budget each period. `PlacedFraction` tracks primary take-up; `OutstandingPrincipal` tracks what's owed. These are strictly separated to prevent the infinite-money loop that occurred when one field carried both meanings.
+
+### Market Friction
+
+Secondary-market trading carries realistic costs (`Market/Friction.cs`):
+
+| Component | Formula | Purpose |
+|-----------|---------|---------|
+| Underwriting fee | 75bp of par | Deducted from issuance proceeds |
+| Bid-ask half-spread | `BaseHalfSpread(rating) * (1 + duration/10)` | Scales with credit risk and maturity |
+| Price impact | `50bp * sqrt(orderSize / depth)` | Large orders move the price |
+| Depth per period | 20% of outstanding face | Tradeable liquidity |
+
+### Citizen Demand Engine
+
+`CimDemandEngine` models citizen participation in the bond market using city demographics:
+
+**Demand Score** = weighted sum of Financial Health (35%), Citizen Confidence (30%), and Bond Appeal (35%), adjusted by a momentum multiplier. Feeds into yield adjustment and absorption capacity.
+
+**City demographics** are sampled from the game's district and citizen managers: population, happiness, health, education, employment rate, land value, crime rate. When game data is unavailable (early load), fiscal-state fallback demographics are synthesized.
+
+**Citizen trading** runs once per period: buy/sell volumes are computed from population, demand, and appeal. Buy volume absorbs unplaced primary inventory via the `DebtBook`; sell volume creates market pressure that adjusts yields. A transaction log records each period's activity.
+
+**Absorption capacity** caps total issuable face based on population, wealth factors, and demand score.
 
 ### Interest Rate Swaps
 
-Interest rate swaps allow the city to hedge against rate fluctuations on its issued debt. The system supports up to 5 active swaps (MAX_ACTIVE_SWAPS).
+Up to 5 interest rate swaps allow hedging against rate fluctuations on issued debt:
 
-**How swaps work:**
+- Swaps settle against the **exogenous market floating rate** (the short rate), not the city's borrowing rate
+- Pay-fixed: settlement = (floating - fixed) * notional / 12
+- Receive-fixed: settlement = (fixed - floating) * notional / 12
+- Negative settlements the city cannot afford force-terminate the swap
+- Over-hedging (hedge notional > debt face) incurs a borrowing rate penalty
 
-A swap exchanges fixed-rate payments for floating-rate payments on a notional amount. Each period, the settlement is calculated:
+Swap valuation uses textbook single-curve pricing off the Nelson-Siegel term structure (`Pricing/SwapPricing.cs`): annuity, par swap rate, and mark-to-market.
 
-- **If pay-fixed**: settlement = (floating rate - fixed rate) * notional / 12
-  - Positive when floating > fixed (you receive money)
-  - Negative when floating < fixed (you pay money)
-- **If receive-fixed**: settlement = (fixed rate - floating rate) * notional / 12
-  - Positive when fixed > floating (you receive money)
-  - Negative when fixed < floating (you pay money)
+### Issuer Credit Model
 
-The floating rate is the current benchmark rate, which moves with the city's financial health. The fixed rate locks at entry.
+Each of the six market issuers has a **sector archetype** with a home rating and recovery rate:
 
-**Settlement mechanics:**
-- Positive settlements: cash is added to the city
-- Negative settlements: cash is deducted from the city
-- If the city cannot afford a negative settlement, the swap is force-terminated (removed from active swaps, no P/L recorded for that period)
-- Expired swaps (remaining periods hit zero) are removed after their final settlement
+| Archetype | Home Rating | Recovery |
+|-----------|-------------|----------|
+| Water District | AA | 70% |
+| Power Grid | A | 70% |
+| School Board | AA | 65% |
+| Health System | A | 65% |
+| Transit Authority | BBB | 50% |
+| Port Authority | BBB | 45% |
 
-Swap P/L is tracked both per-swap (CumulativePL) and globally (_swapPL).
+**Annual migration** (A-2): each issuer's rating drifts one notch per year via a Markov process with mean-reversion toward home. Base migration probability 8% per direction, biased 10% toward home.
 
-### Volatility Tracking
+**Default hazard** (A-4): `BaseAnnualDefaultProb(rating) * hazardMultiplier`. The multiplier is player-configurable: Historical (x1), Standard (x25), Volatile (x60). On default, portfolio holders receive recovery x par; the issuer's market paper is pulled and the entity restructures back to its home rating.
 
-Revenue volatility is calculated at the end of each metrics recalculation using the cash flow history window:
-
-```
-mean = average of all cash flow samples
-stddev = sqrt(sum of squared deviations from mean / window size)
-volatility = stddev / average positive flow
-```
-
-Volatility is clamped to the range [0.0, 2.0]. A volatility above 0.5 (50%) is considered high risk for hedging purposes. The volatility metric feeds into the hedge recommendation system and is displayed in the Hedging tab summary.
-
-### Auto-Hedge System
-
-The **Auto-Hedge** button calculates the city's unhedged debt exposure and enters a single pay-fixed swap to cover it:
-
-1. Sum the face values of all issued bonds (total debt face)
-2. Sum the notional amounts of all active swaps (hedged notional)
-3. Unhedged exposure = total debt face - hedged notional
-4. If unhedged > 0, enter a new pay-fixed swap with:
-   - Notional = unhedged amount
-   - Fixed rate = current required yield
-   - Term = weighted-average remaining periods of issued bonds (minimum 6)
-
-The **hedge recommendation** system evaluates the current position:
-- "No debt to hedge" - no issued bonds
-- "Fully hedged" - hedge ratio >= 100%
-- "HIGH RISK: Hedge X (Y% exposed)" - volatility > 50% and hedge ratio < 50%
-- "Recommend: Hedge X unhedged" - positive unhedged exposure
-- "Position balanced" - everything else
+A **deterministic PRNG** (`DeterministicRandom`, xorshift128 deriving from `System.Random`) ensures stochastic outcomes survive save/load and cannot be save-scummed. Its 4-uint state is serialized.
 
 ---
 
 ## Bond Pricing Model
 
-Bond present value uses a standard discounted cash flow calculation:
+Present value uses the closed-form annuity formula (O(1)):
 
 ```
-PV = sum(coupon / (1+r)^t, t=1..n) + face / (1+r)^n
+d  = (1 + r)^-n
+PV = C * (1 - d) / r  +  F * d
 ```
 
-Where:
-- `r` = annual yield / 12 (periodic rate)
-- `coupon` = face * couponRate / 12 (periodic coupon)
-- `n` = remaining periods
+Where `r` = annual yield / 12, `C` = periodic coupon, `n` = remaining periods.
 
-The required yield for the city's bonds is:
+**Required yield** for city bonds:
 
 ```
-requiredYield = benchmarkRate + creditSpread + defaultSpike
+requiredYield = GetRequiredYield(cityBorrowingRate, rating)
+              + defaultSpike
+              + wealthAdjustment
+              + demandAdjustment
+              + pressureAdjustment
 ```
 
-**Benchmark rate** = 2% + (debtBurden * 8%), clamped to [1%, 15%]. This creates a feedback loop: more debt raises the benchmark, which raises borrowing costs.
+Credit spreads by rating:
 
-**Credit spread** varies by rating:
+| Rating | Spread (bp) |
+|--------|-------------|
+| AAA    | 20          |
+| AA     | 45          |
+| A      | 90          |
+| BBB    | 160         |
+| BB     | 275         |
+| B      | 450         |
+| CCC    | 800         |
+| D      | 1500        |
 
-| Rating | Spread |
-|--------|--------|
-| AAA    | 0.5%   |
-| AA     | 1.2%   |
-| A      | 2.2%   |
-| BBB    | 3.8%   |
-| BB     | 6.0%   |
-| B      | 9.0%   |
-| CCC    | 14.0%  |
-| D      | 30.0%  |
+The required yield is rate-limited to 50bp/period to prevent snapping, and capped at 50%.
 
-**Default spike** = defaultPenalty * 0.048%. The total required yield is capped at 50%.
+---
+
+## Serialization
+
+`StateSerializer` uses a **sectioned binary format** (v8) with per-section FNV-1a checksums:
+
+```
+[version byte]
+[scalars section: length | checksum | payload]
+[cashFlowHistory section]
+[pressureHistory section]
+[portfolio bonds section]
+[issued bonds section]
+[redeemed bonds section]
+[market bonds section]
+[swaps section]
+[transactions section]
+[reports section]
+[issuers section]        (v8)
+```
+
+Deserialization is atomic: the entire state is validated against invariants (I1-I9) in a staging object before being applied. Legacy saves (v1-6) are migrated through `ReadLegacyFlat`; v7 saves load through the same sectioned reader with v8 fields defaulted. No exception ever escapes `TryDeserialize`.
+
+**Invariants validated on load:**
+- I1: PlacedFraction in [0, 1]
+- I2: OutstandingPrincipal >= 0
+- I3: OutstandingPrincipal <= FaceValue
+- I4: OutstandingPrincipal <= FaceValue * PlacedFraction
+- I5: RemainingPeriods >= 0
+- I6: Redeemed bonds have zero outstanding
+- I7: PlacedFraction only modified by PlacePrimary (structural guarantee)
+- I8: Arrears >= 0
+- I9: PeriodsInArrears >= 0
 
 ---
 
 ## Threading Model
 
-Cities: Skylines runs simulation logic and UI on separate threads. This mod crosses that boundary:
+Cities: Skylines runs simulation logic and UI on separate threads:
 
-- **Simulation thread**: `OnUpdateMoneyAmount` is called by the game's economy simulation. All internal state mutations (aging bonds, servicing debt, settling swaps, recording cash flow) happen here, inside `lock(_lock)`.
-- **Main thread**: UI event handlers (button clicks, scroll events) call public methods on the engine. All public methods that touch shared collections acquire `lock(_lock)`.
-- **Snapshot pattern**: `GetMarketSnapshot`, `GetPortfolioSnapshot`, `GetIssuedBondsSnapshot`, and `GetActiveSwapsSnapshot` copy data into caller-provided lists under the lock. The UI works with its own copies, never holding references into the engine's live lists.
+- **Simulation thread**: `OnUpdateMoneyAmount` runs all state mutations (aging, servicing, settlement, citizen trading) inside `lock(_lock)`
+- **Main thread**: UI event handlers call public engine methods that acquire `lock(_lock)`
+- **Snapshot pattern**: `GetMarketSnapshot`, `GetPortfolioSnapshot`, `GetIssuedBondsSnapshot`, `GetActiveSwapsSnapshot` copy data into immutable `BondView`/`SwapView` DTOs. The UI works with its own copies, keyed by stable `Id`, never list indices
 
-Private methods called within the lock (suffixed with `Internal`) do not re-acquire the lock to avoid deadlock.
+Heavy per-period work (portfolio revaluation, credit model, rate pipeline, demand chain, demographic sampling) runs **once per period**, not every tick.
 
 ---
 
@@ -274,187 +363,119 @@ Private methods called within the lock (suffixed with `Internal`) do not re-acqu
 
 ### .NET Framework 3.5
 
-Cities: Skylines 1 runs on Unity Mono targeting .NET 3.5. This means:
+Cities: Skylines 1 runs on Unity Mono targeting .NET 3.5:
 
-- No string interpolation (`$"..."`) - use `string.Format`
-- No auto-property initializers - explicit backing fields and constructors
-- No expression-bodied members - use full property syntax with `get { return ...; }`
-- No null-conditional operators (`?.`) - explicit null checks
-- No LINQ - manual loops for all collection operations
-- No `nameof` operator
-- No `async`/`await`
+- No string interpolation, auto-property initializers, expression-bodied members
+- No null-conditional operators, LINQ, nameof, async/await
+- Use `string.Format`, explicit backing fields, full property syntax, manual loops
 
 ### Integer Overflow Protection
 
-The game's `EconomyManager.AddResource` and `FetchResource` methods accept `int` parameters. When dealing with large bond values (1M, 10M, 1B face values), the internal representation (multiplied by 100) can exceed `int.MaxValue` (2,147,483,647). Casting a `long` above this threshold to `int` wraps to a negative number, which would catastrophically crash the city's bank balance.
+The game's `AddResource`/`FetchResource` accept `int`. Large bond values (multiplied by the internal scale of 100) can exceed `int.MaxValue`. All money operations use `long` arithmetic and chunk into `int.MaxValue`-sized pieces.
 
-Solution: all money operations use `long` arithmetic and chunk into `int.MaxValue`-sized pieces:
+### Cash Cursor
 
-```csharp
-while (internalAmount > 0)
-{
-    int chunk = (int)Math.Min(internalAmount, (long)int.MaxValue);
-    em.AddResource(..., chunk, ...);
-    internalAmount -= chunk;
-}
-```
+`EconomyManager.LastCashAmount` is stale within a tick. The engine maintains an authoritative `_tickCash` cursor seeded from the game balance each tick, decremented/incremented by every mod cash operation. Multiple operations in one tick see accurate running balances.
 
-### Stale LastCashAmount
+### Mod Cash Isolation
 
-`EconomyManager.LastCashAmount` is stale within a single tick; it reflects the balance at the start of the tick, not after intermediate operations. Bulk buy loops that check `LastCashAmount` repeatedly within one lock acquisition will see the same value and overspend.
-
-Solution: bulk buy methods (`Buy10x1MBonds`, `Buy10x10MBonds`) read `LastCashAmount` once into a local `remaining` variable and decrement it after each purchase. The actual spend still goes through `TrySpendCash`, but the local tracking prevents attempting purchases the city can't afford.
-
-### EconomyExtensionBase Limitations
-
-The modding API only allows overriding `OnUpdateMoneyAmount(long)`. The methods `OnAddResource` and `OnFetchResource` are not virtual and cannot be overridden. All economy interactions must go through direct calls to `EconomyManager.AddResource` and `EconomyManager.FetchResource`.
+The rolling cash flow window must reflect only the city's organic revenue and expense. A `_modCashDeltaPending` accumulator tracks the net cash the mod itself moved since the last sample, subtracted from the raw balance delta so coupon payments, maturities, placement proceeds, and swap settlements never distort the credit model.
 
 ---
 
 ## UI Architecture
 
-The panel (`BondMarketPanel`) is an 800x520 `UIPanel` with four sections:
+The panel (`BondMarketPanel`) is an 800x520 `UIPanel` with eight tabs:
 
-1. **Title bar** (40px): draggable via `UIDragHandle`, close button
-2. **Summary** (56px): context-sensitive financial metrics, changes per active tab
-3. **Tab bar** (30px): Market, Portfolio, City Debt, Hedging tabs + context buttons
-4. **Bond list** (6 rows x 36px): scrollable via mouse wheel, three columns per row:
-   - Info label (460px): bond/swap details
-   - Price label (120px): right-aligned value
-   - Action button (80px): context-sensitive (Buy/Sell/Issue/Repay/Exit)
-5. **Footer** (30px): aggregate statistics
+1. **Market** - Browse and buy bonds from external issuers. Bulk buy buttons (10x 1M, 10x 10M, 1B). Shows issuer rating tags and spread in basis points.
+2. **Portfolio** - Holdings with unrealized P/L, days to maturity. Sell All button.
+3. **Debt** - Issued bonds (with lifecycle state, arrears, bid-to-cover estimate) above issuance templates. Pay 25%/50% early repayment. Shows "WEAK" or "BtC X.Xx" for auction demand.
+4. **Hedging** - Active swaps, settlement details, hedge ratio. Auto-Hedge and Exit All buttons.
+5. **Positions** - Consolidated view of all positions with lifecycle state tags.
+6. **Activity** - Citizen trading transaction log with buy/sell volumes and market pressure.
+7. **Report** - Quarterly credit reports with outlook narrative.
+8. **Settings** - Default hazard multiplier (Historical/Standard/Volatile), rate volatility scale (Calm/Normal/Turbulent), citizen trading toggle. Keyboard shortcut Shift+B.
 
-The panel auto-refreshes every 4 seconds when visible. Each tab has its own refresh method that populates the same 6 row slots with different data. Scroll state is per-tab and resets on tab switch.
+Layout:
+- **Title bar** (40px): draggable via `UIDragHandle`, close button
+- **Summary** (56px): context-sensitive financial metrics per tab
+- **Tab bar** (30px): 8 tabs + context action buttons
+- **Bond list** (6 rows x 36px): scrollable, three columns (info, price, action button)
+- **Footer** (30px): aggregate statistics
 
-**Context-sensitive buttons** in the tab bar:
-- Market tab: Buy 10x 1M 5yr, Buy 10x 10M 5yr, Buy 1B 5yr
-- Portfolio tab: Sell All
-- City Debt tab: Pay 25%, Pay 50%
-- Hedging tab: Auto-Hedge, Exit All
-
-A small toggle button (`BondToggleButton`, 36x36px) in the top-left corner of the screen opens/closes the panel.
+The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. A 36x36 toggle button at (60, 6) opens/closes the panel.
 
 ---
 
 ## File Structure
 
-### BondMarket.cs (126 lines)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `BondMarket.cs` | 324 | Domain models: Bond, BondView, SwapView, InterestRateSwap, CimTransaction, QuarterlyReport, BondPricing, enums |
+| `BondMarketEngine.cs` | 2420 | Simulation engine: EconomyExtensionBase, cash tracking, metrics, aging, servicing, trading, snapshots, save/load |
+| `BondMarketPanel.cs` | 1870 | UI: 8-tab panel, row rendering, event handlers, summary/footer, toggle button |
+| `DebtBook.cs` | 415 | Issued debt lifecycle, servicing waterfall, repayment, placement, invariant validation |
+| `CimDemandEngine.cs` | 211 | Citizen demand scoring, trading volumes, market pressure, absorption capacity |
+| `StateSerializer.cs` | 612 | Sectioned binary format v8, FNV-1a checksums, legacy migration (v1-6), atomic deserialization |
+| `Credit/CreditModel.cs` | 84 | Annualized credit metrics from per-tick flows and DebtBook |
+| `Credit/RatingEngine.cs` | 40 | Rating grid evaluation with liquidity notch |
+| `Credit/IssuerModel.cs` | 167 | Issuer archetypes, home ratings, recovery rates, Markov migration, default hazard |
+| `Market/RateProcess.cs` | 49 | Vasicek mean-reverting short rate with business cycle |
+| `Market/DeterministicRandom.cs` | 84 | Serializable xorshift128 PRNG deriving from System.Random |
+| `Market/PrimaryAuction.cs` | 67 | Uniform-price auction: bid-to-cover, evaluate, estimate |
+| `Market/Friction.cs` | 69 | Bid-ask spread, price impact, depth, underwriting fee |
+| `Pricing/YieldCurve.cs` | 53 | Nelson-Siegel term structure: spot rate, discount factor |
+| `Pricing/SwapPricing.cs` | 49 | Single-curve swap valuation: annuity, par rate, mark-to-market |
+| `Sim/EconomyReader.cs` | 159 | Reflection binding to EconomyManager.GetIncomeAndExpenses |
+| `ResidentialBuildingLog.cs` | 194 | BuildingExtensionBase observer |
+| `Localization.cs` | 55 | String table for UI labels and settings |
+| `Loading.cs` | 56 | LoadingExtensionBase: create/destroy UI on level load/unload |
+| `SaveDataExtension.cs` | 44 | SerializableDataExtensionBase bridge |
+| `Mod.cs` | 37 | IUserMod entry point, version 1.0.0 |
 
-Pure domain models with no game dependencies:
+**Total: 21 files, ~7,060 lines.**
 
-- `CreditRating` enum: AAA through D
-- `Bond` class: Id, Name, FaceValue, CouponRate, TotalPeriods, RemainingPeriods, PurchasePrice, CouponsReceived
-- `InterestRateSwap` class: Id, NotionalAmount, FixedRate, TotalPeriods, RemainingPeriods, PayFixed, CumulativePL, LastSettlement
-- `BondPricing` static class: PresentValue (DCF), GetRequiredYield (benchmark + spread), CalculateRating (debt burden + DSCR), RatingLabel
-
-### BondMarketEngine.cs (888 lines)
-
-The simulation engine, subclassing `EconomyExtensionBase`:
-
-- Singleton via static `Instance`, set on each tick
-- State: cash flow window, market/portfolio/issued bond lists, active swaps, financial metrics
-- Public API: buy/sell bonds, issue bonds, repay debt, enter/terminate swaps, auto-hedge, snapshot methods
-- Internal: cash flow tracking, metrics recalculation, bond aging, debt servicing, swap settlement
-
-### BondMarketPanel.cs (944 lines)
-
-The UI layer, subclassing `UIPanel`:
-
-- `BondToggleButton`: 36x36 icon at (60, 6), toggles panel visibility
-- `BondMarketPanel`: 800x520 centered panel with 4 tabs, 6-row scrollable list, summary, and footer
-- All game sprite references use built-in ColossalFramework sprites (ButtonMenu, MenuPanel2, InfoIconLevel, buttonclose)
-
-### Loading.cs (48 lines)
-
-Lifecycle management via `LoadingExtensionBase`:
-
-- `OnLevelLoaded`: sets reset flag, creates UI components
-- `OnLevelUnloading`: destroys UI components
-
-### MyFirstMod.csproj (50 lines)
-
-Build configuration targeting `net35` with references to ICities, ColossalManaged, Assembly-CSharp, and UnityEngine. Post-build deploy copies the DLL to the game's Mods folder.
+Pure files (no game dependencies): BondMarket.cs, DebtBook.cs, CimDemandEngine.cs, StateSerializer.cs, Credit/*, Market/*, Pricing/*. These compile and test under net8.0 xUnit.
 
 ---
 
 ## Constants Reference
 
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| WINDOW_SIZE | 60 | Cash flow history samples |
-| TICKS_PER_PERIOD | 15 | Simulation ticks per bond period |
-| MIN_MARKET_BONDS | 6 | Minimum market offerings before regeneration |
-| INTERNAL_UNIT_SCALE | 100 | Game money units per display currency unit |
-| MAX_ISSUED_BONDS | 5 | Maximum simultaneous issued city bonds |
-| DEFAULT_YIELD_SPIKE | 0.012 | Base yield penalty per default event |
-| DEFAULT_DECAY_PER_PERIOD | 1 | Penalty decay rate per period |
-| MAX_ACTIVE_SWAPS | 5 | Maximum simultaneous interest rate swaps |
-| PeriodsPerYear | 12 | Monthly bond periods |
-| REFRESH_INTERVAL | 4.0 | UI auto-refresh interval (seconds) |
-| MAX_ROWS | 6 | Visible rows in bond list |
+| Constant | Value | Location | Purpose |
+|----------|-------|----------|---------|
+| WINDOW_SIZE | 60 | Engine | Cash flow history samples |
+| TICKS_PER_PERIOD | 15 | Engine | Fallback ticks per bond period |
+| MIN_MARKET_BONDS | 6 | Engine | Market regeneration threshold |
+| INTERNAL_UNIT_SCALE | 100 | Engine | Game money units per display unit |
+| MAX_ISSUED_BONDS | 5 | Engine | Maximum city bonds outstanding |
+| MAX_ACTIVE_SWAPS | 5 | Engine | Maximum interest rate swaps |
+| GRACE_PERIODS | 2 | Engine | Delinquent periods before default |
+| ARREARS_SPREAD | 3% | Engine | Penalty rate on arrears |
+| DEFAULT_LOCKOUT_PERIODS | 12 | Engine | Issuance lock-out after default |
+| DEFAULT_PENALTY_PER_EVENT | 12 | Engine | Penalty points per default |
+| MAX_DEFAULT_PENALTY | 60 | Engine | Penalty cap |
+| PeriodsPerYear | 12 | BondPricing | Monthly bond periods |
+| RATE_KAPPA | 0.15 | Engine | Mean-reversion speed |
+| RATE_BASE_THETA | 4% | Engine | Long-run mean short rate |
+| RATE_SIGMA | 0.6% | Engine | Short-rate volatility |
+| RATE_LAMBDA | 2.0 | Engine | Nelson-Siegel decay (years) |
+| ConcessionScaleBp | 40 | PrimaryAuction | Auction sensitivity |
+| MinCover | 0.75 | PrimaryAuction | Minimum bid-to-cover |
+| CoverCap | 4.0 | PrimaryAuction | Maximum bid-to-cover |
+| UnderwritingFeeRate | 75bp | Friction | Issuance fee |
+| ImpactK | 50bp | Friction | Impact at full-depth order |
+| DepthFraction | 20% | Friction | Depth as fraction of outstanding |
+| HAZARD_STANDARD | 25x | IssuerModel | Default hazard multiplier (default setting) |
+| FORMAT_VERSION | 8 | StateSerializer | Current save format |
+| REFRESH_INTERVAL | 4.0 | Panel | UI auto-refresh (seconds) |
+| MAX_ROWS | 6 | Panel | Visible rows in bond list |
 
 ---
 
-## Iterative Development Process
+## CI and Testing
 
-The mod evolved over 27 commits from an initial options trading concept to a full municipal bond market with derivatives. Here is the chronological development history:
+The project has two CI jobs (`.github/workflows/ci.yml`):
 
-### Phase 1: Options Trading Prototype (Commits 1-10)
+**pure-logic-tests**: Builds and runs the xUnit test project (`Tests/`) against pure source files (BondMarket.cs, DebtBook.cs, CimDemandEngine.cs, StateSerializer.cs, Credit/*, Market/*, Pricing/*) on net8.0. These tests cover the debt lifecycle, credit model, auction mechanics, serialization round-trips, and invariant validation.
 
-The mod started as a stock options trading system for Cities: Skylines:
-
-1. **Initial scaffold** - Options trading mod with basic call/put positions, resolving a duplicate mod-entry conflict with another IUserMod in the project
-2. **README** - Basic project documentation
-3. **API fix** - Fixed `AddResource` overload mismatch (CS1502) caused by incorrect parameter types
-4. **UI polish** - Shrunk the toggle button to a 36x36 icon in the top-left corner
-5. **Portfolio tracking** - Added live portfolio value tracker with PriceFeed diagnostics
-6. **Feature expansion** - Resized and centered the panel, switched to city currency, added expiry selector and short-selling
-7. **Position locking** - Locked strike and expiry on open, added auto-measure layout
-8. **Bug fixes** - Fixed expiry day math, button highlight sync, and portfolio display issues
-9. **Economy integration** - Wired live price feed to the city economy, prevented selling into negative balance
-10. **API upgrade** - Switched to the official IEconomy API for the live stock price feed
-
-### Phase 2: Municipal Bond Market (Commits 11-16)
-
-A fundamental pivot from options trading to municipal bonds:
-
-11. **Complete rewrite** - Replaced the entire options market with a municipal bond market system. Introduced the `EconomyExtensionBase` hook, cash flow tracking, credit ratings, yield curves, and a three-tab UI (Market, Portfolio, City Debt)
-12. **API compliance** - Removed non-overridable `OnAddResource`/`OnFetchResource` methods that caused compile errors, working within the constraint that only `OnUpdateMoneyAmount` is virtual
-13. **Maturity tuning** - Shortened bonds to half a game year for faster gameplay feedback, added lifetime P/L tracking to the portfolio
-14. **Portfolio UX** - Added Sell All button and scrollable portfolio list to handle larger portfolios
-15. **City Debt tab** - Added the City Debt tab with issuance templates, persistent lifetime P/L display, and days-until-maturity countdown
-16. **Balance tuning** - Reduced default penalty by 90%, extended bonds to 1 year, increased issue prices by 50%, general UI cleanup
-
-### Phase 3: Scaling Up (Commits 17-22)
-
-Responding to player demand for larger-scale bond operations:
-
-17. **1M bonds** - Added Buy 1M 5yr bond button to the market tab
-18. **State management** - Added state reset on new game, buy 10x 1M bonds batch button, reduced default penalty further, increased issue capital limits
-19. **10M bonds** - Added 10x 10M 5yr treasury bond buy button
-20. **Critical bug fix** - Fixed negative balance bug where bulk buy loops read stale `LastCashAmount`, causing overspending. Solution: track remaining cash locally in the buy loop
-21. **1B bonds** - Added Buy 1B 5yr treasury bond button for massive-scale investing
-22. **Critical bug fix** - Fixed `int` overflow causing catastrophic bank balance crash when selling/maturing large bonds. Values exceeding `int.MaxValue` (2.1B) wrapped negative when cast to `int`. Solution: all money operations use `long` arithmetic with chunking
-
-### Phase 4: Hardening and Polish (Commits 23-25)
-
-23. **API restoration** - After a major engine rewrite, the panel referenced properties and methods that no longer existed. Restored the full API surface (PortfolioCount, MarketCount, IssuedCount, all snapshot methods, etc.)
-24. **Term correction** - Fixed treasury bond terms from 8/12 periods (months) to 60 periods (5 years) to match the "5yr" label
-25. **Code review fixes** - Fixed 1B bond term to 60 periods, added `TrySpendCash` return value checks on issued bond coupon/maturity payments, moved GC-allocating arrays (`ISSUE_NAMES`, `MARKET_ISSUERS`, etc.) to `static readonly` fields to avoid allocation on the hot path
-
-### Phase 5: Derivatives and Visibility (Commits 26-27)
-
-26. **Interest Rate Swaps** - Added the complete IRS system: `InterestRateSwap` domain model, swap settlement logic, volatility tracking, auto-hedge recommendation, Hedging Desk UI tab with individual swap management. Scaled debt maturity templates to face value (25K=2yr through 750K=10yr), added Pay 25%/50% early repayment buttons
-27. **Issued bond visibility** - Made issued bond stats visible in the City Debt tab. Issued bonds now show name, face value, rate, months remaining, coupons paid, and per-period cost, each with an individual Repay button. The tab displays issued bonds first, then issuance templates below, with proper scroll support across the mixed list
-
-### Key Lessons from the Iteration
-
-**Start with the hook, not the UI.** The options trading prototype proved that `EconomyExtensionBase.OnUpdateMoneyAmount` is the only reliable entry point. Everything else in the economy API is sealed. This constraint shaped the entire architecture.
-
-**Int overflow is silent and catastrophic.** The .NET 3.5 runtime doesn't throw on overflow; it wraps. A city with 2 billion in bond value would see its balance go negative in a single tick. This class of bug only manifests at scale and is invisible in normal testing.
-
-**Stale reads in tight loops.** `LastCashAmount` doesn't update mid-tick, so reading it repeatedly in a buy loop gives the same answer. The fix (local `remaining` tracker) is simple but the bug is subtle and only appears during bulk operations.
-
-**Thread safety is non-negotiable.** The simulation thread and UI thread run concurrently. Without the lock, race conditions on the bond lists cause index-out-of-range exceptions, duplicate entries, and data corruption. The snapshot pattern keeps the UI responsive without holding the lock during rendering.
-
-**Scale reveals design flaws.** The mod started with 10K-100K bonds. Adding 1M, 10M, and 1B bonds revealed the int overflow, stale-read, and API surface issues. Each scale jump was a stress test that found a new category of bug.
+**compile-check**: Links all 21 mod source files into `CI/CompileCheck.csproj` and builds against stub declarations in `Stubs/` (GameStubs.csproj). The stubs declare minimal API surface for ICities, ColossalFramework, ColossalFramework.UI, and UnityEngine — just enough for the compiler to resolve every member the mod touches. No .NET SDK runs in the dev environment; tests run exclusively on GitHub Actions.
