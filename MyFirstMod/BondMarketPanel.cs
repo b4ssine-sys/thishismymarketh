@@ -862,8 +862,11 @@ namespace MyFirstMod
 
             engine.GetIssuedBondsSnapshot(_cachedIssuedBonds);
             int issuedCount = _cachedIssuedBonds.Count;
-            int templateCount = engine.IssueTemplateCount;
-            int totalItems = issuedCount + templateCount;
+            int rawTemplateCount = engine.IssueTemplateCount;
+            int availableCount = 0;
+            for (int t = 0; t < rawTemplateCount; t++)
+                if (engine.IsTemplateAvailable(t)) availableCount++;
+            int totalItems = issuedCount + availableCount;
             bool canIssue = engine.CanIssueBonds;
             float yieldPct = engine.RequiredYield * 100f;
 
@@ -910,7 +913,15 @@ namespace MyFirstMod
                 }
                 else if (itemIdx < totalItems)
                 {
-                    int tIdx = itemIdx - issuedCount;
+                    int displayOff = itemIdx - issuedCount;
+                    int tIdx = -1;
+                    for (int t = 0, seen = 0; t < rawTemplateCount; t++)
+                    {
+                        if (!engine.IsTemplateAvailable(t)) continue;
+                        if (seen == displayOff) { tIdx = t; break; }
+                        seen++;
+                    }
+                    if (tIdx < 0) continue;
                     string tName = engine.GetTemplateName(tIdx);
                     float tFace = engine.GetTemplateFace(tIdx);
                     int tPeriods = engine.GetTemplatePeriods(tIdx);
@@ -1429,7 +1440,7 @@ namespace MyFirstMod
             else if (_activeTab == 1)
                 totalItems = engine.PortfolioCount;
             else if (_activeTab == 2)
-                totalItems = engine.IssuedCount + engine.IssueTemplateCount;
+                totalItems = engine.IssuedCount + engine.AvailableTemplateCount;
             else if (_activeTab == 3)
                 totalItems = engine.SwapCount;
             else if (_activeTab == 5)
@@ -1538,6 +1549,10 @@ namespace MyFirstMod
                     {
                         engine.CitizenTradingEnabled = !engine.CitizenTradingEnabled;
                     }
+                    else if (setting == 3)
+                    {
+                        engine.RevenueBondsEnabled = !engine.RevenueBondsEnabled;
+                    }
                     RefreshData();
                     break;
             }
@@ -1553,7 +1568,7 @@ namespace MyFirstMod
             else if (_activeTab == 1)
                 totalItems = engine.PortfolioCount;
             else if (_activeTab == 2)
-                totalItems = engine.IssuedCount + engine.IssueTemplateCount;
+                totalItems = engine.IssuedCount + engine.AvailableTemplateCount;
             else if (_activeTab == 3)
                 totalItems = engine.SwapCount;
             else
@@ -1780,6 +1795,8 @@ namespace MyFirstMod
                     ? Loc.Get("settings.ratevol.turbulent") : Loc.Get("settings.ratevol.normal");
             string tradingLabel = engine.CitizenTradingEnabled
                 ? Loc.Get("settings.trading.enabled") : Loc.Get("settings.trading.disabled");
+            string revBondLabel = engine.RevenueBondsEnabled
+                ? Loc.Get("settings.revenue.enabled") : Loc.Get("settings.revenue.disabled");
 
             _infoLabels[0].text = Loc.Get("settings.hazard") + " - " + Loc.Get("settings.hazard.desc");
             _priceLabels[0].text = hazardLabel;
@@ -1805,15 +1822,19 @@ namespace MyFirstMod
             _rowAction[2] = RowAction.SettingCycle;
             _rowArg[2] = 2;
 
-            _infoLabels[3].text = "";
-            _priceLabels[3].text = "";
-            _actionButtons[3].isVisible = false;
+            _infoLabels[3].text = Loc.Get("settings.revenue") + " - " + Loc.Get("settings.revenue.desc");
+            _priceLabels[3].text = revBondLabel;
+            _actionButtons[3].text = Loc.Get("label.toggle");
+            _actionButtons[3].isVisible = true;
+            _actionButtons[3].isEnabled = true;
+            _rowAction[3] = RowAction.SettingCycle;
+            _rowArg[3] = 3;
 
-            _infoLabels[4].text = Loc.Get("settings.shortcut");
+            _infoLabels[4].text = "";
             _priceLabels[4].text = "";
             _actionButtons[4].isVisible = false;
 
-            _infoLabels[5].text = "";
+            _infoLabels[5].text = Loc.Get("settings.shortcut");
             _priceLabels[5].text = "";
             _actionButtons[5].isVisible = false;
 

@@ -46,8 +46,11 @@ namespace MyFirstMod
         // Phase 2 (P1-1/P1-9): smoothed per-tick operating income/expense that feed
         // the annualized credit model. Sourced from the game ledger when available
         // (EconomyReader), otherwise from the balance-delta proxy window.
-        private float _avgIncomePerTick;
-        private float _avgExpensePerTick;
+        private float _avgIncomePerPeriod;
+        private float _avgExpensePerPeriod;
+        private int _totalTicks;
+        private int _lastFlowSampleTick;
+        private int _measuredTicksPerPeriod = TICKS_PER_PERIOD;
         private long _prevLedgerIncome;
         private long _prevLedgerExpense;
         private bool _ledgerBaselineSet;
@@ -79,6 +82,7 @@ namespace MyFirstMod
         private float _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
         private float _rateVolatilityScale = 1f;
         private bool _citizenTradingEnabled = true;
+        private bool _revenueBondsEnabled; // quarantined until Gate B; default off
         private int _annualCounter;
 
         private int _tickCounter;
@@ -274,6 +278,7 @@ namespace MyFirstMod
         public float HazardMultiplier { get { return _hazardMultiplier; } set { _hazardMultiplier = value; } }
         public float RateVolatilityScale { get { return _rateVolatilityScale; } set { _rateVolatilityScale = value; } }
         public bool CitizenTradingEnabled { get { return _citizenTradingEnabled; } set { _citizenTradingEnabled = value; } }
+        public bool RevenueBondsEnabled { get { return _revenueBondsEnabled; } set { _revenueBondsEnabled = value; } }
 
         public void GetReportSnapshot(List<QuarterlyReport> dest)
         {
@@ -416,6 +421,22 @@ namespace MyFirstMod
         public float GetTemplateFace(int index) { return ISSUE_FACES[index]; }
         public int GetTemplatePeriods(int index) { return ISSUE_PERIODS[index]; }
         public RevenueSource GetTemplateRevenue(int index) { return ISSUE_REVENUE[index]; }
+        public bool IsTemplateAvailable(int index)
+        {
+            if (index < 0 || index >= ISSUE_REVENUE.Length) return false;
+            if (ISSUE_REVENUE[index] != RevenueSource.None && !_revenueBondsEnabled) return false;
+            return true;
+        }
+        public int AvailableTemplateCount
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < ISSUE_REVENUE.Length; i++)
+                    if (IsTemplateAvailable(i)) n++;
+                return n;
+            }
+        }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
@@ -446,6 +467,7 @@ namespace MyFirstMod
 
                 _tickCounter++;
                 _ticksThisPeriod++;
+                _totalTicks++;
                 bool periodBoundary = false;
                 try
                 {
@@ -564,28 +586,34 @@ namespace MyFirstMod
 
             float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
 
-            // Phase 2 (P1-9): source per-tick operating income/expense from the game
-            // ledger when available; otherwise fall back to the balance-delta proxy
-            // (net>0 -> income, net<0 -> expense) smoothed over the window.
-            float tickIncome, tickExpense;
-            bool flowFromLedger = SampleTickOperatingFlow(out tickIncome, out tickExpense);
+            // WO-17: self-derive the sampling cadence so the annualization
+            // factor tracks actual tick spacing, not a hardcoded constant.
+            int elapsed = _totalTicks - _lastFlowSampleTick;
+            if (elapsed > 0) _measuredTicksPerPeriod = elapsed;
+            _lastFlowSampleTick = _totalTicks;
+
+            // Source per-period operating flow from the game ledger when available;
+            // otherwise fall back to the balance-delta proxy scaled by the measured
+            // cadence. The sampler runs once per period, so its raw delta IS per-period.
+            float periodIncome, periodExpense;
+            bool flowFromLedger = SamplePeriodOperatingFlow(out periodIncome, out periodExpense);
             if (flowFromLedger)
             {
-                float a = 1f / WINDOW_SIZE; // ~60-tick EMA to match the window horizon
-                _avgIncomePerTick = _avgIncomePerTick <= 0f ? tickIncome : _avgIncomePerTick + a * (tickIncome - _avgIncomePerTick);
-                _avgExpensePerTick = _avgExpensePerTick <= 0f ? tickExpense : _avgExpensePerTick + a * (tickExpense - _avgExpensePerTick);
+                float a = 0.25f; // ~4-period EMA horizon (per-period stepping)
+                _avgIncomePerPeriod = _avgIncomePerPeriod <= 0f ? periodIncome : _avgIncomePerPeriod + a * (periodIncome - _avgIncomePerPeriod);
+                _avgExpensePerPeriod = _avgExpensePerPeriod <= 0f ? periodExpense : _avgExpensePerPeriod + a * (periodExpense - _avgExpensePerPeriod);
             }
             else
             {
-                _avgIncomePerTick = (totalPositive / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
-                _avgExpensePerTick = (totalNegative / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
+                _avgIncomePerPeriod = (totalPositive / WINDOW_SIZE) * _measuredTicksPerPeriod / INTERNAL_UNIT_SCALE;
+                _avgExpensePerPeriod = (totalNegative / WINDOW_SIZE) * _measuredTicksPerPeriod / INTERNAL_UNIT_SCALE;
             }
 
-            // Phase 2 (P1-1): annualized credit metrics via the pure CreditModel -
-            // no more per-tick / per-period unit mix, no cash-threshold DSCR fudge.
+            // RC-1: annualized credit metrics via the pure CreditModel.
+            // Per-period averages × periodsPerYear — no tick factor.
             CreditMetrics cm = CreditModel.CalculateMetrics(
-                _avgIncomePerTick, _avgExpensePerTick, _debtBook, cashDisplay,
-                TICKS_PER_PERIOD, BondPricing.PeriodsPerYear);
+                _avgIncomePerPeriod, _avgExpensePerPeriod, _debtBook, cashDisplay,
+                BondPricing.PeriodsPerYear);
 
             _grossIncome = cm.AnnualOperatingRevenue;
             _totalExpenses = cm.AnnualOperatingExpense;
@@ -614,15 +642,16 @@ namespace MyFirstMod
             {
                 _g2DiagSamples++;
                 Debug.Log(string.Format(
-                    "[MyFirstMod] G-2 sample {0}/3 (run {1}) | bound={2} shape={3} | flow source={4} | raw tick inc/exp={5:F1}/{6:F1} | annualized rev/exp/NOI={7:F0}/{8:F0}/{9:F0} | DSCR={10:F2} burden={11:F3} reserves={12:F1}mo | rating={13}",
+                    "[MyFirstMod] G-2 sample {0}/3 (run {1}) | bound={2} shape={3} | flow source={4} | period inc/exp={5:F1}/{6:F1} (cadence={14}t) | annualized rev/exp/NOI={7:F0}/{8:F0}/{9:F0} | DSCR={10:F2} burden={11:F3} reserves={12:F1}mo | rating={13}",
                     _g2DiagSamples, _metricRuns,
                     EconomyReader.MethodResolved,
                     EconomyReader.BindingShape,
                     flowFromLedger ? "GAME LEDGER" : "balance-delta fallback",
-                    tickIncome, tickExpense,
+                    periodIncome, periodExpense,
                     _grossIncome, _totalExpenses, _noi,
                     _dscr, _debtBurden, _monthsOfReserves,
-                    BondPricing.RatingLabel(_rating)));
+                    BondPricing.RatingLabel(_rating),
+                    _measuredTicksPerPeriod));
             }
 
             // Phase 4 (P1-4/P1-5): the exogenous short rate evolves once per period
@@ -660,7 +689,8 @@ namespace MyFirstMod
             _requiredYield = baseYield + defaultSpike;
 
             float totalWealth = cashDisplay + _portfolioValue;
-            float wealthBase = _avgIncomePerTick * WINDOW_SIZE;
+            float periodsInWindow = (float)WINDOW_SIZE / _measuredTicksPerPeriod;
+            float wealthBase = _avgIncomePerPeriod * periodsInWindow;
             if (wealthBase < 50000f) wealthBase = 50000f;
             float wealthRatio = totalWealth / wealthBase;
             if (wealthRatio < 0f) wealthRatio = 0f;
@@ -869,11 +899,11 @@ namespace MyFirstMod
         // the game exposes no usable data (e.g. very early in a load).
         private void ApplyFallbackDemographicsInternal()
         {
-            float avgIncome = _avgIncomePerTick;
-            float avgExpense = _avgExpensePerTick;
+            float avgIncome = _avgIncomePerPeriod;
+            float avgExpense = _avgExpensePerPeriod;
             float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
 
-            if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
+            if (_population < 100) _population = Math.Max(100, (int)(avgIncome / _measuredTicksPerPeriod * 10f));
             _happiness = dscrH;
             if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
             if (_education <= 0f) _education = 0.5f;
@@ -888,15 +918,14 @@ namespace MyFirstMod
             return _debtBook.PeriodCouponTotal(BondPricing.PeriodsPerYear);
         }
 
-        // Phase 2 (P1-9): per-tick operating income/expense from the game ledger.
-        // The ledger accumulators are cumulative, so we difference against the
-        // previous sample. Returns false on the first sample (no baseline), on an
-        // accumulator reset, or when the ledger API is unavailable - the caller
-        // then falls back to the balance-delta proxy.
-        private bool SampleTickOperatingFlow(out float tickIncome, out float tickExpense)
+        // WO-17: per-period operating flow from the game ledger. Called once per
+        // period, so the raw delta between cumulative samples IS one period's
+        // worth of flow. Returns false on the first sample (no baseline), on an
+        // accumulator reset, or when the ledger API is unavailable.
+        private bool SamplePeriodOperatingFlow(out float periodIncome, out float periodExpense)
         {
-            tickIncome = 0f;
-            tickExpense = 0f;
+            periodIncome = 0f;
+            periodExpense = 0f;
 
             long incCum, expCum;
             if (!EconomyReader.TryReadCumulative(out incCum, out expCum))
@@ -917,8 +946,8 @@ namespace MyFirstMod
 
             if (di < 0 || de < 0) return false; // accumulator rolled over / reset
 
-            tickIncome = (float)di / INTERNAL_UNIT_SCALE;
-            tickExpense = (float)de / INTERNAL_UNIT_SCALE;
+            periodIncome = (float)di / INTERNAL_UNIT_SCALE;
+            periodExpense = (float)de / INTERNAL_UNIT_SCALE;
             return true;
         }
 
@@ -1598,11 +1627,14 @@ namespace MyFirstMod
             _cashSamples = 0;
             _tickCash = 0;
             _modCashDeltaPending = 0;
-            _avgIncomePerTick = 0f;
-            _avgExpensePerTick = 0f;
+            _avgIncomePerPeriod = 0f;
+            _avgExpensePerPeriod = 0f;
             _prevLedgerIncome = 0;
             _prevLedgerExpense = 0;
             _ledgerBaselineSet = false;
+            _totalTicks = 0;
+            _lastFlowSampleTick = 0;
+            _measuredTicksPerPeriod = TICKS_PER_PERIOD;
             _monthsOfReserves = 0f;
             _creditModelNoticePending = false;
             EconomyReader.Reset();
@@ -1643,6 +1675,7 @@ namespace MyFirstMod
             _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
             _rateVolatilityScale = 1f;
             _citizenTradingEnabled = true;
+            _revenueBondsEnabled = false;
             _demandScore = 0f;
             _defaultProbability = 0f;
             _cityVitals = 0f;
@@ -1801,6 +1834,9 @@ namespace MyFirstMod
                 float face = ISSUE_FACES[optionIndex];
                 int periods = ISSUE_PERIODS[optionIndex];
                 RevenueSource revSrc = ISSUE_REVENUE[optionIndex];
+
+                if (revSrc != RevenueSource.None && !_revenueBondsEnabled)
+                    return false;
 
                 float currentFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
@@ -2392,6 +2428,7 @@ namespace MyFirstMod
             s.HazardMultiplier = _hazardMultiplier;
             s.RateVolatilityScale = _rateVolatilityScale;
             s.CitizenTradingEnabled = _citizenTradingEnabled;
+            s.RevenueBondsEnabled = _revenueBondsEnabled;
             return s;
         }
 
@@ -2438,12 +2475,16 @@ namespace MyFirstMod
             _hazardMultiplier = s.HazardMultiplier;
             _rateVolatilityScale = s.RateVolatilityScale;
             _citizenTradingEnabled = s.CitizenTradingEnabled;
+            _revenueBondsEnabled = s.RevenueBondsEnabled;
 
             _cashSamples = WINDOW_SIZE; // the window array is restored; treat it as populated
             _prevMoneySet = false;      // re-baseline cash tracking on the first tick after load
             _ledgerBaselineSet = false; // re-baseline the ledger diff after load
-            _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
-            _avgExpensePerTick = 0f;
+            _avgIncomePerPeriod = 0f;     // EMAs warm back up from the restored window
+            _avgExpensePerPeriod = 0f;
+            _totalTicks = 0;
+            _lastFlowSampleTick = 0;
+            _measuredTicksPerPeriod = TICKS_PER_PERIOD;
             _ticksThisPeriod = 0;
             _lastGameMonth = -1;
             _periodMetricsInitialized = false;

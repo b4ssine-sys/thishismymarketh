@@ -41,6 +41,7 @@ namespace MyFirstMod
         public float HazardMultiplier = IssuerModel.HAZARD_STANDARD;
         public float RateVolatilityScale = 1f;
         public bool CitizenTradingEnabled = true;
+        public bool RevenueBondsEnabled;
 
         // windows
         public float[] CashFlowHistory = new float[0];
@@ -69,7 +70,7 @@ namespace MyFirstMod
     // save loads by defaulting those. No exception ever escapes TryDeserialize.
     public static class StateSerializer
     {
-        public const byte FORMAT_VERSION = 9;
+        public const byte FORMAT_VERSION = 10;
         private const float EPS = 0.01f;
 
         // ---- FNV-1a 32-bit section checksum ----
@@ -133,6 +134,7 @@ namespace MyFirstMod
                 sw.Write(s.HazardMultiplier);
                 sw.Write(s.RateVolatilityScale);
                 sw.Write(s.CitizenTradingEnabled);
+                sw.Write(s.RevenueBondsEnabled);
                 WriteSection(w, sec);
             }
 
@@ -362,7 +364,7 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
 
                 BondMarketState staging;
-                if (version >= 7 && version <= 9)
+                if (version >= 7 && version <= 10)
                     staging = ReadSectioned(r, version);
                 else if (version >= 1 && version <= 6)
                     staging = ReadLegacyFlat(r, version);
@@ -418,6 +420,8 @@ namespace MyFirstMod
                 s.HazardMultiplier = sc.ReadSingle();
                 s.RateVolatilityScale = sc.ReadSingle();
                 s.CitizenTradingEnabled = sc.ReadBoolean();
+                if (version >= 10)
+                    s.RevenueBondsEnabled = sc.ReadBoolean();
             }
 
             s.CashFlowHistory = ReadFloatArraySection(r);
