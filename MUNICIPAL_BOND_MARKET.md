@@ -191,15 +191,19 @@ Buy/sell prices include bid-ask spread scaled by issuer rating and duration. Bul
 
 ### Debt Issuance and Lifecycle
 
-The city can issue up to 5 bonds from templates:
+The city can issue up to 5 bonds from 7 templates (general-obligation and revenue-backed):
 
-| Template            | Face Value | Term      |
-|---------------------|-----------|-----------|
-| Emergency Note      | 25,000    | 2 years   |
-| Municipal Note      | 75,000    | 3 years   |
-| Revenue Bond        | 200,000   | 5 years   |
-| Infrastructure Bond | 400,000   | 7 years   |
-| Capital Bond        | 750,000   | 10 years  |
+| Template               | Face Value | Term    | Revenue Source     |
+|------------------------|-----------|---------|-------------------|
+| Emergency Note         | 25,000    | 2 years | General Obligation |
+| Municipal Note         | 75,000    | 3 years | General Obligation |
+| Water Revenue Bond     | 150,000   | 4 years | Water              |
+| Electric Revenue Bond  | 200,000   | 5 years | Electricity        |
+| Transit Revenue Bond   | 300,000   | 6 years | Public Transport   |
+| Infrastructure Bond    | 400,000   | 7 years | General Obligation |
+| Capital Bond           | 750,000   | 10 years| General Obligation |
+
+Revenue bonds (Phase 6, WO-11) are backed by a specific city service's income stream. When the backing service has positive net revenue, the bond's offered yield is reduced by 50bp; when the service is losing money, yield increases by 100bp. Revenue source is tracked via the `RevenueSource` enum (`None`, `Water`, `Electricity`, `PublicTransport`) and persisted on each bond.
 
 Issuance is gated by: bond count cap, credit rating (not D), no active defaults or arrears, lockout window cleared, minimum demand score (0.10), and absorption capacity.
 
@@ -315,7 +319,7 @@ The required yield is rate-limited to 50bp/period to prevent snapping, and cappe
 
 ## Serialization
 
-`StateSerializer` uses a **sectioned binary format** (v8) with per-section FNV-1a checksums:
+`StateSerializer` uses a **sectioned binary format** (v9) with per-section FNV-1a checksums:
 
 ```
 [version byte]
@@ -329,10 +333,10 @@ The required yield is rate-limited to 50bp/period to prevent snapping, and cappe
 [swaps section]
 [transactions section]
 [reports section]
-[issuers section]        (v8)
+[issuers section]        (v8+)
 ```
 
-Deserialization is atomic: the entire state is validated against invariants (I1-I9) in a staging object before being applied. Legacy saves (v1-6) are migrated through `ReadLegacyFlat`; v7 saves load through the same sectioned reader with v8 fields defaulted. No exception ever escapes `TryDeserialize`.
+Deserialization is atomic: the entire state is validated against invariants (I1-I9) in a staging object before being applied. Legacy saves (v1-6) are migrated through `ReadLegacyFlat`; v7 saves load through the same sectioned reader with newer fields defaulted. v9 adds the `RevenueSource` field per bond; v8 bonds default to `RevenueSource.None` (general obligation). No exception ever escapes `TryDeserialize`.
 
 **Invariants validated on load:**
 - I1: PlacedFraction in [0, 1]
@@ -416,7 +420,7 @@ The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. 
 | `BondMarketPanel.cs` | 1870 | UI: 8-tab panel, row rendering, event handlers, summary/footer, toggle button |
 | `DebtBook.cs` | 415 | Issued debt lifecycle, servicing waterfall, repayment, placement, invariant validation |
 | `CimDemandEngine.cs` | 211 | Citizen demand scoring, trading volumes, market pressure, absorption capacity |
-| `StateSerializer.cs` | 612 | Sectioned binary format v8, FNV-1a checksums, legacy migration (v1-6), atomic deserialization |
+| `StateSerializer.cs` | 612 | Sectioned binary format v9, FNV-1a checksums, legacy migration (v1-8), atomic deserialization |
 | `Credit/CreditModel.cs` | 84 | Annualized credit metrics from per-tick flows and DebtBook |
 | `Credit/RatingEngine.cs` | 40 | Rating grid evaluation with liquidity notch |
 | `Credit/IssuerModel.cs` | 167 | Issuer archetypes, home ratings, recovery rates, Markov migration, default hazard |
@@ -466,7 +470,7 @@ Pure files (no game dependencies): BondMarket.cs, DebtBook.cs, CimDemandEngine.c
 | ImpactK | 50bp | Friction | Impact at full-depth order |
 | DepthFraction | 20% | Friction | Depth as fraction of outstanding |
 | HAZARD_STANDARD | 25x | IssuerModel | Default hazard multiplier (default setting) |
-| FORMAT_VERSION | 8 | StateSerializer | Current save format |
+| FORMAT_VERSION | 9 | StateSerializer | Current save format |
 | REFRESH_INTERVAL | 4.0 | Panel | UI auto-refresh (seconds) |
 | MAX_ROWS | 6 | Panel | Visible rows in bond list |
 
