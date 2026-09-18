@@ -174,10 +174,24 @@ namespace MyFirstMod
 
         private static readonly string[] ISSUE_NAMES = new string[]
         {
-            "Emergency Note", "Municipal Note", "Revenue Bond", "Infrastructure Bond", "Capital Bond"
+            "Emergency Note", "Municipal Note", "Water Revenue Bond",
+            "Electric Revenue Bond", "Transit Revenue Bond",
+            "Infrastructure Bond", "Capital Bond"
         };
-        private static readonly float[] ISSUE_FACES = new float[] { 25000f, 75000f, 200000f, 400000f, 750000f };
-        private static readonly int[] ISSUE_PERIODS = new int[] { 24, 36, 60, 84, 120 };
+        private static readonly float[] ISSUE_FACES = new float[]
+        {
+            25000f, 75000f, 150000f, 200000f, 300000f, 400000f, 750000f
+        };
+        private static readonly int[] ISSUE_PERIODS = new int[]
+        {
+            24, 36, 48, 60, 72, 84, 120
+        };
+        private static readonly RevenueSource[] ISSUE_REVENUE = new RevenueSource[]
+        {
+            RevenueSource.None, RevenueSource.None, RevenueSource.Water,
+            RevenueSource.Electricity, RevenueSource.PublicTransport,
+            RevenueSource.None, RevenueSource.None
+        };
 
         // Issuer identities live in InitIssuersInternal() (Phase 5); the market
         // draws a face and term for each generated bond from these menus.
@@ -401,6 +415,7 @@ namespace MyFirstMod
         public string GetTemplateName(int index) { return ISSUE_NAMES[index]; }
         public float GetTemplateFace(int index) { return ISSUE_FACES[index]; }
         public int GetTemplatePeriods(int index) { return ISSUE_PERIODS[index]; }
+        public RevenueSource GetTemplateRevenue(int index) { return ISSUE_REVENUE[index]; }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
@@ -1345,6 +1360,29 @@ namespace MyFirstMod
             return (float)b.RemainingPeriods / BondPricing.PeriodsPerYear;
         }
 
+        private static ItemClass.Service RevenueToService(RevenueSource src)
+        {
+            switch (src)
+            {
+                case RevenueSource.Water:          return ItemClass.Service.Water;
+                case RevenueSource.Electricity:    return ItemClass.Service.Electricity;
+                case RevenueSource.PublicTransport: return ItemClass.Service.PublicTransport;
+                default: return ItemClass.Service.None;
+            }
+        }
+
+        private float RevenueYieldAdjustment(RevenueSource src)
+        {
+            if (src == RevenueSource.None) return 0f;
+            long svcIncome, svcExpense;
+            if (!EconomyReader.TryReadService(RevenueToService(src), out svcIncome, out svcExpense))
+                return 0f;
+            float net = (float)(svcIncome - svcExpense);
+            if (net > 0f) return -0.005f;
+            if (net < 0f) return  0.01f;
+            return 0f;
+        }
+
         // P1-8: single-lot execution prices carry the bid-ask half-spread (impact is
         // reserved for the bulk paths). Buys pay the ask; sells receive the bid.
         private float BuyExecPrice(Bond b)
@@ -1762,6 +1800,7 @@ namespace MyFirstMod
                 string name = ISSUE_NAMES[optionIndex];
                 float face = ISSUE_FACES[optionIndex];
                 int periods = ISSUE_PERIODS[optionIndex];
+                RevenueSource revSrc = ISSUE_REVENUE[optionIndex];
 
                 float currentFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
@@ -1769,7 +1808,7 @@ namespace MyFirstMod
                 if (currentFace + face > _absorptionCapacity)
                     return false;
 
-                float offeredYield = _requiredYield;
+                float offeredYield = _requiredYield + RevenueYieldAdjustment(revSrc);
                 float fairYield = AuctionFairYield(periods);
                 AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
                 if (!ar.Filled)
@@ -1782,6 +1821,7 @@ namespace MyFirstMod
                 ib.PlacedFraction = ar.FilledFraction;
                 ib.OutstandingPrincipal = face * ar.FilledFraction;
                 ib.IssuePeriod = _periodCounter;
+                ib.Revenue = revSrc;
                 _debtBook.Add(ib);
 
                 if (ib.OutstandingPrincipal > 0f)

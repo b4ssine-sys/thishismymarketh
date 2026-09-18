@@ -159,7 +159,7 @@ namespace MyFirstMod
             drag.target = this;
 
             _titleLabel = titleBar.AddUIComponent<UILabel>();
-            _titleLabel.text = "Municipal Bond Market";
+            _titleLabel.text = Loc.Get("panel.title");
             _titleLabel.textScale = 1.1f;
             _titleLabel.relativePosition = new Vector3(12f, 10f);
 
@@ -180,7 +180,7 @@ namespace MyFirstMod
             _summaryLabel.relativePosition = new Vector3(12f, 42f);
             _summaryLabel.textScale = 0.8f;
             _summaryLabel.wordWrap = true;
-            _summaryLabel.text = "Loading financial data...";
+            _summaryLabel.text = Loc.Get("status.loading");
         }
 
         private void CreateTabs()
@@ -192,7 +192,7 @@ namespace MyFirstMod
             _marketTabBtn = AddUIComponent<UIButton>();
             _marketTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _marketTabBtn.relativePosition = new Vector3(12f, tabY);
-            _marketTabBtn.text = "Market";
+            _marketTabBtn.text = Loc.Get("tab.market");
             _marketTabBtn.textScale = 0.8f;
             _marketTabBtn.normalBgSprite = "ButtonMenu";
             _marketTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -203,7 +203,7 @@ namespace MyFirstMod
             _portfolioTabBtn = AddUIComponent<UIButton>();
             _portfolioTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _portfolioTabBtn.relativePosition = new Vector3(12f + tabW + gap, tabY);
-            _portfolioTabBtn.text = "Portfolio";
+            _portfolioTabBtn.text = Loc.Get("tab.portfolio");
             _portfolioTabBtn.textScale = 0.8f;
             _portfolioTabBtn.normalBgSprite = "ButtonMenu";
             _portfolioTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -214,7 +214,7 @@ namespace MyFirstMod
             _cityDebtTabBtn = AddUIComponent<UIButton>();
             _cityDebtTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _cityDebtTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 2f, tabY);
-            _cityDebtTabBtn.text = "Debt";
+            _cityDebtTabBtn.text = Loc.Get("tab.debt");
             _cityDebtTabBtn.textScale = 0.8f;
             _cityDebtTabBtn.normalBgSprite = "ButtonMenu";
             _cityDebtTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -225,7 +225,7 @@ namespace MyFirstMod
             _hedgingTabBtn = AddUIComponent<UIButton>();
             _hedgingTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _hedgingTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 3f, tabY);
-            _hedgingTabBtn.text = "Hedging";
+            _hedgingTabBtn.text = Loc.Get("tab.hedging");
             _hedgingTabBtn.textScale = 0.8f;
             _hedgingTabBtn.normalBgSprite = "ButtonMenu";
             _hedgingTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -236,7 +236,7 @@ namespace MyFirstMod
             _positionsTabBtn = AddUIComponent<UIButton>();
             _positionsTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _positionsTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 4f, tabY);
-            _positionsTabBtn.text = "Positions";
+            _positionsTabBtn.text = Loc.Get("tab.positions");
             _positionsTabBtn.textScale = 0.8f;
             _positionsTabBtn.normalBgSprite = "ButtonMenu";
             _positionsTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -247,7 +247,7 @@ namespace MyFirstMod
             _activityTabBtn = AddUIComponent<UIButton>();
             _activityTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _activityTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 5f, tabY);
-            _activityTabBtn.text = "Activity";
+            _activityTabBtn.text = Loc.Get("tab.activity");
             _activityTabBtn.textScale = 0.8f;
             _activityTabBtn.normalBgSprite = "ButtonMenu";
             _activityTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -258,7 +258,7 @@ namespace MyFirstMod
             _reportTabBtn = AddUIComponent<UIButton>();
             _reportTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _reportTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 6f, tabY);
-            _reportTabBtn.text = "Report";
+            _reportTabBtn.text = Loc.Get("tab.report");
             _reportTabBtn.textScale = 0.8f;
             _reportTabBtn.normalBgSprite = "ButtonMenu";
             _reportTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -269,7 +269,7 @@ namespace MyFirstMod
             _settingsTabBtn = AddUIComponent<UIButton>();
             _settingsTabBtn.size = new Vector2(tabW, TAB_HEIGHT);
             _settingsTabBtn.relativePosition = new Vector3(12f + (tabW + gap) * 7f, tabY);
-            _settingsTabBtn.text = "Settings";
+            _settingsTabBtn.text = Loc.Get("tab.settings");
             _settingsTabBtn.textScale = 0.8f;
             _settingsTabBtn.normalBgSprite = "ButtonMenu";
             _settingsTabBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -280,7 +280,7 @@ namespace MyFirstMod
             _sellAllBtn = AddUIComponent<UIButton>();
             _sellAllBtn.size = new Vector2(90f, TAB_HEIGHT);
             _sellAllBtn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
-            _sellAllBtn.text = "Sell All";
+            _sellAllBtn.text = Loc.Get("label.sellall");
             _sellAllBtn.textScale = 0.85f;
             _sellAllBtn.normalBgSprite = "ButtonMenu";
             _sellAllBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -292,7 +292,7 @@ namespace MyFirstMod
             _buy1MBtn = AddUIComponent<UIButton>();
             _buy1MBtn.size = new Vector2(105f, TAB_HEIGHT);
             _buy1MBtn.relativePosition = new Vector3(WIDTH - 117f, ACTION_Y);
-            _buy1MBtn.text = "10x 1M 5yr";
+            _buy1MBtn.text = Loc.Get("label.buy1m");
             _buy1MBtn.textScale = 0.75f;
             _buy1MBtn.normalBgSprite = "ButtonMenu";
             _buy1MBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -304,7 +304,7 @@ namespace MyFirstMod
             _buy10MBtn = AddUIComponent<UIButton>();
             _buy10MBtn.size = new Vector2(105f, TAB_HEIGHT);
             _buy10MBtn.relativePosition = new Vector3(WIDTH - 230f, ACTION_Y);
-            _buy10MBtn.text = "10x 10M 5yr";
+            _buy10MBtn.text = Loc.Get("label.buy10m");
             _buy10MBtn.textScale = 0.75f;
             _buy10MBtn.normalBgSprite = "ButtonMenu";
             _buy10MBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -316,7 +316,7 @@ namespace MyFirstMod
             _buy1BBtn = AddUIComponent<UIButton>();
             _buy1BBtn.size = new Vector2(90f, TAB_HEIGHT);
             _buy1BBtn.relativePosition = new Vector3(WIDTH - 328f, ACTION_Y);
-            _buy1BBtn.text = "Buy 1B 5yr";
+            _buy1BBtn.text = Loc.Get("label.buy1b");
             _buy1BBtn.textScale = 0.75f;
             _buy1BBtn.normalBgSprite = "ButtonMenu";
             _buy1BBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -328,7 +328,7 @@ namespace MyFirstMod
             _pay50Btn = AddUIComponent<UIButton>();
             _pay50Btn.size = new Vector2(90f, TAB_HEIGHT);
             _pay50Btn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
-            _pay50Btn.text = "Pay 50%";
+            _pay50Btn.text = Loc.Get("label.pay50");
             _pay50Btn.textScale = 0.8f;
             _pay50Btn.normalBgSprite = "ButtonMenu";
             _pay50Btn.hoveredBgSprite = "ButtonMenuHovered";
@@ -340,7 +340,7 @@ namespace MyFirstMod
             _pay25Btn = AddUIComponent<UIButton>();
             _pay25Btn.size = new Vector2(90f, TAB_HEIGHT);
             _pay25Btn.relativePosition = new Vector3(WIDTH - 200f, ACTION_Y);
-            _pay25Btn.text = "Pay 25%";
+            _pay25Btn.text = Loc.Get("label.pay25");
             _pay25Btn.textScale = 0.8f;
             _pay25Btn.normalBgSprite = "ButtonMenu";
             _pay25Btn.hoveredBgSprite = "ButtonMenuHovered";
@@ -352,7 +352,7 @@ namespace MyFirstMod
             _issue50Btn = AddUIComponent<UIButton>();
             _issue50Btn.size = new Vector2(100f, TAB_HEIGHT);
             _issue50Btn.relativePosition = new Vector3(WIDTH - 306f, ACTION_Y);
-            _issue50Btn.text = "Issue 50%";
+            _issue50Btn.text = Loc.Get("label.issue50");
             _issue50Btn.textScale = 0.8f;
             _issue50Btn.normalBgSprite = "ButtonMenu";
             _issue50Btn.hoveredBgSprite = "ButtonMenuHovered";
@@ -369,7 +369,7 @@ namespace MyFirstMod
             _issue25Btn = AddUIComponent<UIButton>();
             _issue25Btn.size = new Vector2(100f, TAB_HEIGHT);
             _issue25Btn.relativePosition = new Vector3(WIDTH - 414f, ACTION_Y);
-            _issue25Btn.text = "Issue 25%";
+            _issue25Btn.text = Loc.Get("label.issue25");
             _issue25Btn.textScale = 0.8f;
             _issue25Btn.normalBgSprite = "ButtonMenu";
             _issue25Btn.hoveredBgSprite = "ButtonMenuHovered";
@@ -386,7 +386,7 @@ namespace MyFirstMod
             _autoHedgeBtn = AddUIComponent<UIButton>();
             _autoHedgeBtn.size = new Vector2(95f, TAB_HEIGHT);
             _autoHedgeBtn.relativePosition = new Vector3(WIDTH - 326f, ACTION_Y);
-            _autoHedgeBtn.text = "Auto-Hedge";
+            _autoHedgeBtn.text = Loc.Get("label.autohedge");
             _autoHedgeBtn.textScale = 0.75f;
             _autoHedgeBtn.normalBgSprite = "ButtonMenu";
             _autoHedgeBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -398,7 +398,7 @@ namespace MyFirstMod
             _sell25SwapsBtn = AddUIComponent<UIButton>();
             _sell25SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
             _sell25SwapsBtn.relativePosition = new Vector3(WIDTH - 223f, ACTION_Y);
-            _sell25SwapsBtn.text = "Sell 25%";
+            _sell25SwapsBtn.text = Loc.Get("label.sell25");
             _sell25SwapsBtn.textScale = 0.75f;
             _sell25SwapsBtn.normalBgSprite = "ButtonMenu";
             _sell25SwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -410,7 +410,7 @@ namespace MyFirstMod
             _sell50SwapsBtn = AddUIComponent<UIButton>();
             _sell50SwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
             _sell50SwapsBtn.relativePosition = new Vector3(WIDTH - 150f, ACTION_Y);
-            _sell50SwapsBtn.text = "Sell 50%";
+            _sell50SwapsBtn.text = Loc.Get("label.sell50");
             _sell50SwapsBtn.textScale = 0.75f;
             _sell50SwapsBtn.normalBgSprite = "ButtonMenu";
             _sell50SwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -422,7 +422,7 @@ namespace MyFirstMod
             _exitAllSwapsBtn = AddUIComponent<UIButton>();
             _exitAllSwapsBtn.size = new Vector2(65f, TAB_HEIGHT);
             _exitAllSwapsBtn.relativePosition = new Vector3(WIDTH - 77f, ACTION_Y);
-            _exitAllSwapsBtn.text = "Exit All";
+            _exitAllSwapsBtn.text = Loc.Get("label.exitall");
             _exitAllSwapsBtn.textScale = 0.75f;
             _exitAllSwapsBtn.normalBgSprite = "ButtonMenu";
             _exitAllSwapsBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -434,7 +434,7 @@ namespace MyFirstMod
             _reportLatestBtn = AddUIComponent<UIButton>();
             _reportLatestBtn.size = new Vector2(90f, TAB_HEIGHT);
             _reportLatestBtn.relativePosition = new Vector3(WIDTH - 200f, ACTION_Y);
-            _reportLatestBtn.text = "Latest";
+            _reportLatestBtn.text = Loc.Get("label.latest");
             _reportLatestBtn.textScale = 0.8f;
             _reportLatestBtn.normalBgSprite = "ButtonMenu";
             _reportLatestBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -446,7 +446,7 @@ namespace MyFirstMod
             _reportHistoryBtn = AddUIComponent<UIButton>();
             _reportHistoryBtn.size = new Vector2(90f, TAB_HEIGHT);
             _reportHistoryBtn.relativePosition = new Vector3(WIDTH - 102f, ACTION_Y);
-            _reportHistoryBtn.text = "History";
+            _reportHistoryBtn.text = Loc.Get("label.history");
             _reportHistoryBtn.textScale = 0.8f;
             _reportHistoryBtn.normalBgSprite = "ButtonMenu";
             _reportHistoryBtn.hoveredBgSprite = "ButtonMenuHovered";
@@ -561,7 +561,7 @@ namespace MyFirstMod
             BondMarketEngine engine = BondMarketEngine.Instance;
             if (engine == null)
             {
-                _summaryLabel.text = "Bond market engine not ready...";
+                _summaryLabel.text = Loc.Get("status.notready");
                 return;
             }
 
@@ -578,7 +578,8 @@ namespace MyFirstMod
                     engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f ? "Historical"
                         : engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f ? "Volatile" : "Standard",
                     engine.RateVolatilityScale <= 0.6f ? "Calm" : engine.RateVolatilityScale >= 1.8f ? "Turbulent" : "Normal",
-                    engine.CitizenTradingEnabled ? "ON" : "OFF");
+                    engine.CitizenTradingEnabled
+                        ? Loc.Get("settings.trading.enabled") : Loc.Get("settings.trading.disabled"));
             }
             else if (_activeTab == 6)
             {
@@ -731,7 +732,7 @@ namespace MyFirstMod
                         "{0} [{1}]  Face: {2:N0}  {3:F1}%  {4}d",
                         b.Name, rTag, b.FaceValue, b.CouponRate * 100f, daysLeft);
                     _priceLabels[i].text = string.Format("{0:N0} ~{1:F0}bp", price, spreadBp);
-                    _actionButtons[i].text = "Buy";
+                    _actionButtons[i].text = Loc.Get("label.buy");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Buy;
@@ -746,8 +747,9 @@ namespace MyFirstMod
             }
 
             if (total > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
-                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total);
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  ({3})",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total,
+                    Loc.Get("hint.scroll"));
 
             _footerLabel.text = string.Format("Bonds available: {0}  |  Portfolio: {1} bonds",
                 engine.MarketCount, engine.PortfolioCount);
@@ -809,7 +811,7 @@ namespace MyFirstMod
                         b.Name, rTag, b.CouponRate * 100f, b.PurchasePrice, plStr, daysLeft);
                     float sellSpreadBp = Friction.HalfSpread(b.IssuerRating, (float)b.RemainingPeriods / BondPricing.PeriodsPerYear) * 10000f;
                     _priceLabels[i].text = string.Format("{0:N0} ~{1:F0}bp", price, sellSpreadBp);
-                    _actionButtons[i].text = "Sell";
+                    _actionButtons[i].text = Loc.Get("label.sell");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Sell;
@@ -824,8 +826,9 @@ namespace MyFirstMod
             }
 
             if (total > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
-                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total);
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  ({3})",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total,
+                    Loc.Get("hint.scroll"));
             else
                 _scrollHintLabel.text = "";
 
@@ -880,24 +883,26 @@ namespace MyFirstMod
                     string stateTag;
                     switch (ib.State)
                     {
-                        case BondState.Delinquent: stateTag = "DELINQUENT"; break;
-                        case BondState.Defaulted:  stateTag = "DEFAULTED"; break;
-                        case BondState.Redeemed:    stateTag = "REDEEMED"; break;
+                        case BondState.Delinquent: stateTag = Loc.Get("state.delinquent"); break;
+                        case BondState.Defaulted:  stateTag = Loc.Get("state.defaulted"); break;
+                        case BondState.Redeemed:    stateTag = Loc.Get("state.redeemed"); break;
                         default:
-                            stateTag = ib.PlacedFraction >= 0.99f ? "ACTIVE"
-                                : ib.PlacedFraction <= 0.01f ? "PENDING"
-                                : ib.PlacedFraction < 0.20f ? "LOW"
+                            stateTag = ib.PlacedFraction >= 0.99f ? Loc.Get("state.active")
+                                : ib.PlacedFraction <= 0.01f ? Loc.Get("state.pending")
+                                : ib.PlacedFraction < 0.20f ? Loc.Get("state.low")
                                 : string.Format("{0:F0}%", ib.PlacedFraction * 100f);
                             break;
                     }
                     string arrearsTag = ib.Arrears > 0.01f ? string.Format(" arr:{0:N0}", ib.Arrears) : "";
+                    string revTag = ib.Revenue != RevenueSource.None
+                        ? " " + BondPricing.RevenueLabel(ib.Revenue) : "";
                     float owedNow = ib.OutstandingPrincipal + ib.Arrears;
                     _infoLabels[i].text = string.Format(
-                        "{0}  {1:N0} [{2}{3}]  {4:F1}%  {5}mo  Cost: {6:N0}",
-                        ib.Name, owedNow, stateTag, arrearsTag,
+                        "{0}{1}  {2:N0} [{3}{4}]  {5:F1}%  {6}mo  Cost: {7:N0}",
+                        ib.Name, revTag, owedNow, stateTag, arrearsTag,
                         ib.CouponRate * 100f, monthsLeft, ib.CouponsReceived);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriodCoupon);
-                    _actionButtons[i].text = "Repay";
+                    _actionButtons[i].text = Loc.Get("label.repay");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Repay;
@@ -909,18 +914,22 @@ namespace MyFirstMod
                     string tName = engine.GetTemplateName(tIdx);
                     float tFace = engine.GetTemplateFace(tIdx);
                     int tPeriods = engine.GetTemplatePeriods(tIdx);
+                    RevenueSource tRev = engine.GetTemplateRevenue(tIdx);
                     float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
                     int years = tPeriods / 12;
                     float cover = engine.EstimateAuctionCover(tPeriods);
 
+                    string revTag = tRev != RevenueSource.None
+                        ? string.Format(" [{0}]", BondPricing.RevenueLabel(tRev))
+                        : "";
                     _infoLabels[i].text = string.Format(
-                        "{0}   {1:N0}   {2:F1}%   {3}yr   {4:N0}/per",
-                        tName, tFace, yieldPct, years, perPeriodCoupon);
+                        "{0}{1}   {2:N0}   {3:F1}%   {4}yr   {5:N0}/per",
+                        tName, revTag, tFace, yieldPct, years, perPeriodCoupon);
                     string coverTag = cover >= PrimaryAuction.MinCover
                         ? string.Format("BtC {0:F1}x", cover)
-                        : "WEAK";
+                        : Loc.Get("hint.weak");
                     _priceLabels[i].text = string.Format("{0:N0}  {1}", tFace, coverTag);
-                    _actionButtons[i].text = "Issue";
+                    _actionButtons[i].text = Loc.Get("label.issue");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = canIssue;
                     _rowAction[i] = RowAction.Issue;
@@ -935,19 +944,20 @@ namespace MyFirstMod
             }
 
             if (totalItems > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
-                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  ({3})",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems,
+                    Loc.Get("hint.scroll"));
             else if (!canIssue && engine.Rating == CreditRating.D)
-                _scrollHintLabel.text = "RATING D - BOND MARKET ACCESS DENIED";
+                _scrollHintLabel.text = Loc.Get("hint.ratingd");
             else if (!canIssue && engine.DemandScore < 0.10f)
-                _scrollHintLabel.text = "NO DEMAND - CITIZENS UNWILLING TO BUY BONDS";
+                _scrollHintLabel.text = Loc.Get("hint.nodemand");
             else if (!canIssue && engine.IssuedCount >= engine.MaxIssuedBonds)
-                _scrollHintLabel.text = string.Format("MAX SLOTS ({0}/{0}) - REPAY EXISTING DEBT FIRST",
-                    engine.MaxIssuedBonds);
+                _scrollHintLabel.text = string.Format("{0} ({1}/{1})",
+                    Loc.Get("hint.maxslots"), engine.MaxIssuedBonds);
             else if (!canIssue && engine.RemainingCapacity < 1000f)
-                _scrollHintLabel.text = "MARKET SATURATED - CAPACITY FULL, WAIT FOR CITY GROWTH";
+                _scrollHintLabel.text = Loc.Get("hint.saturated");
             else if (!canIssue)
-                _scrollHintLabel.text = "CANNOT ISSUE - CHECK RATING AND DEMAND";
+                _scrollHintLabel.text = Loc.Get("hint.cannotissue");
             else
                 _scrollHintLabel.text = "";
 
@@ -1002,7 +1012,7 @@ namespace MyFirstMod
                 if (swapIdx < total)
                 {
                     SwapView s = _cachedSwaps[swapIdx];
-                    string direction = s.PayFixed ? "Pay Fixed" : "Rcv Fixed";
+                    string direction = s.PayFixed ? Loc.Get("label.payfixed") : Loc.Get("label.rcvfixed");
                     string plStr = s.CumulativePL >= 0f
                         ? "+" + s.CumulativePL.ToString("N0")
                         : s.CumulativePL.ToString("N0");
@@ -1013,7 +1023,7 @@ namespace MyFirstMod
                         s.Id, direction, s.NotionalAmount,
                         s.FixedRate * 100f, monthsLeft, plStr);
                     _priceLabels[i].text = string.Format("{0:N0}/per", s.LastSettlement);
-                    _actionButtons[i].text = "Exit";
+                    _actionButtons[i].text = Loc.Get("label.exit");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Terminate;
@@ -1028,8 +1038,9 @@ namespace MyFirstMod
             }
 
             if (total > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
-                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total);
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  ({3})",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, total), total,
+                    Loc.Get("hint.scroll"));
             else
                 _scrollHintLabel.text = "";
 
@@ -1089,7 +1100,7 @@ namespace MyFirstMod
                         "[BUY] {0} [{1}]  {2:F1}%  Face: {3:N0}  P/L: {4}  {5}mo",
                         b.Name, rTag, b.CouponRate * 100f, b.FaceValue, plStr, b.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}", price);
-                    _actionButtons[i].text = "Sell";
+                    _actionButtons[i].text = Loc.Get("label.sell");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Sell;
@@ -1105,20 +1116,20 @@ namespace MyFirstMod
                     switch (ib.State)
                     {
                         case BondState.Delinquent:
-                            oweTag = string.Format("[DELINQUENT arr:{0:N0}]", ib.Arrears); break;
+                            oweTag = string.Format("[{0} arr:{1:N0}]", Loc.Get("state.delinquent"), ib.Arrears); break;
                         case BondState.Defaulted:
-                            oweTag = string.Format("[DEFAULTED arr:{0:N0}]", ib.Arrears); break;
+                            oweTag = string.Format("[{0} arr:{1:N0}]", Loc.Get("state.defaulted"), ib.Arrears); break;
                         case BondState.Redeemed:
-                            oweTag = "[REDEEMED]"; break;
+                            oweTag = "[" + Loc.Get("state.redeemed") + "]"; break;
                         default:
-                            oweTag = "[OWE]"; break;
+                            oweTag = "[" + Loc.Get("state.owe") + "]"; break;
                     }
                     _infoLabels[i].text = string.Format(
                         "{0} {1}  {2:F1}%  Owed: {3:N0} ({4:F0}%)  Paid: {5:N0}  {6}mo",
                         oweTag, ib.Name, ib.CouponRate * 100f, ib.OutstandingPrincipal + ib.Arrears,
                         ib.PlacedFraction * 100f, ib.CouponsReceived, ib.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}/per", perPeriod);
-                    _actionButtons[i].text = "Repay";
+                    _actionButtons[i].text = Loc.Get("label.repay");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Repay;
@@ -1137,7 +1148,7 @@ namespace MyFirstMod
                         "[SWAP] {0}  {1}  Notional: {2:N0}  {3:F1}%  P/L: {4}  {5}mo",
                         s.Id, dir, s.NotionalAmount, s.FixedRate * 100f, plStr, s.RemainingPeriods);
                     _priceLabels[i].text = string.Format("{0:N0}/per", s.LastSettlement);
-                    _actionButtons[i].text = "Exit";
+                    _actionButtons[i].text = Loc.Get("label.exit");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.Terminate;
@@ -1152,10 +1163,11 @@ namespace MyFirstMod
             }
 
             if (totalItems > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  (scroll to see more)",
-                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems);
+                _scrollHintLabel.text = string.Format("Showing {0}-{1} of {2}  ({3})",
+                    _scrollOffset + 1, Math.Min(_scrollOffset + MAX_ROWS, totalItems), totalItems,
+                    Loc.Get("hint.scroll"));
             else if (totalItems == 0)
-                _scrollHintLabel.text = "No open positions";
+                _scrollHintLabel.text = Loc.Get("hint.nopositions");
             else
                 _scrollHintLabel.text = "";
 
@@ -1199,11 +1211,11 @@ namespace MyFirstMod
                     CimTransaction tx = _cachedTransactions[txIdx];
                     string pressureStr;
                     if (tx.Pressure > 0.1f)
-                        pressureStr = "BUY";
+                        pressureStr = Loc.Get("pressure.buy");
                     else if (tx.Pressure < -0.1f)
-                        pressureStr = "SELL";
+                        pressureStr = Loc.Get("pressure.sell");
                     else
-                        pressureStr = "EVEN";
+                        pressureStr = Loc.Get("pressure.even");
 
                     _infoLabels[i].text = string.Format(
                         "#{0}  Buy: {1:N0}  Sell: {2:N0}  [{3}]  {4}",
@@ -1220,9 +1232,9 @@ namespace MyFirstMod
             }
 
             if (total > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("{0} transactions  (scroll to see more)", total);
+                _scrollHintLabel.text = string.Format("{0} transactions  ({1})", total, Loc.Get("hint.scroll"));
             else if (total == 0)
-                _scrollHintLabel.text = "No citizen trading activity yet - issue bonds first";
+                _scrollHintLabel.text = Loc.Get("hint.noactivity");
             else
                 _scrollHintLabel.text = "";
 
@@ -1259,12 +1271,12 @@ namespace MyFirstMod
             {
                 for (int i = 0; i < MAX_ROWS; i++)
                 {
-                    _infoLabels[i].text = i == 2 ? "No quarterly reports yet. First report generates after 3 periods." : "";
+                    _infoLabels[i].text = i == 2 ? Loc.Get("hint.noreports") : "";
                     _priceLabels[i].text = "";
                     _actionButtons[i].isVisible = false;
                 }
                 _scrollHintLabel.text = "";
-                _footerLabel.text = "Awaiting first quarterly report...";
+                _footerLabel.text = Loc.Get("hint.awaitreport");
                 return;
             }
 
@@ -1370,7 +1382,7 @@ namespace MyFirstMod
                         rp.Happiness * 100f, rp.EmploymentRate * 100f, unemp,
                         rp.CreditStatus);
                     _priceLabels[i].text = string.Format("Yield: {0:F1}%", rp.RequiredYield * 100f);
-                    _actionButtons[i].text = "View";
+                    _actionButtons[i].text = Loc.Get("label.view");
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = true;
                     _rowAction[i] = RowAction.SelectReport;
@@ -1385,7 +1397,7 @@ namespace MyFirstMod
             }
 
             if (total > MAX_ROWS)
-                _scrollHintLabel.text = string.Format("{0} reports  (scroll to see more)", total);
+                _scrollHintLabel.text = string.Format("{0} reports  ({1})", total, Loc.Get("hint.scroll"));
             else
                 _scrollHintLabel.text = "";
 
@@ -1758,31 +1770,36 @@ namespace MyFirstMod
             _issue50Btn.isVisible = false;
             _scrollHintLabel.text = "";
 
-            string hazardLabel = engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f ? "Historical (x1)"
-                : engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f ? "Volatile (x60)" : "Standard (x25)";
-            string rateVolLabel = engine.RateVolatilityScale <= 0.6f ? "Calm (x0.5)"
-                : engine.RateVolatilityScale >= 1.8f ? "Turbulent (x2.0)" : "Normal (x1.0)";
-            string tradingLabel = engine.CitizenTradingEnabled ? "Enabled" : "Disabled";
+            string hazardLabel = engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f
+                ? Loc.Get("settings.hazard.historical")
+                : engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f
+                    ? Loc.Get("settings.hazard.volatile") : Loc.Get("settings.hazard.standard");
+            string rateVolLabel = engine.RateVolatilityScale <= 0.6f
+                ? Loc.Get("settings.ratevol.calm")
+                : engine.RateVolatilityScale >= 1.8f
+                    ? Loc.Get("settings.ratevol.turbulent") : Loc.Get("settings.ratevol.normal");
+            string tradingLabel = engine.CitizenTradingEnabled
+                ? Loc.Get("settings.trading.enabled") : Loc.Get("settings.trading.disabled");
 
-            _infoLabels[0].text = "Default Hazard Multiplier - controls issuer default frequency";
+            _infoLabels[0].text = Loc.Get("settings.hazard") + " - " + Loc.Get("settings.hazard.desc");
             _priceLabels[0].text = hazardLabel;
-            _actionButtons[0].text = "Cycle";
+            _actionButtons[0].text = Loc.Get("label.cycle");
             _actionButtons[0].isVisible = true;
             _actionButtons[0].isEnabled = true;
             _rowAction[0] = RowAction.SettingCycle;
             _rowArg[0] = 0;
 
-            _infoLabels[1].text = "Rate Volatility - controls interest rate movement intensity";
+            _infoLabels[1].text = Loc.Get("settings.ratevol") + " - " + Loc.Get("settings.ratevol.desc");
             _priceLabels[1].text = rateVolLabel;
-            _actionButtons[1].text = "Cycle";
+            _actionButtons[1].text = Loc.Get("label.cycle");
             _actionButtons[1].isVisible = true;
             _actionButtons[1].isEnabled = true;
             _rowAction[1] = RowAction.SettingCycle;
             _rowArg[1] = 1;
 
-            _infoLabels[2].text = "Citizen Bond Trading - enables/disables citizen market activity";
+            _infoLabels[2].text = Loc.Get("settings.trading") + " - " + Loc.Get("settings.trading.desc");
             _priceLabels[2].text = tradingLabel;
-            _actionButtons[2].text = "Toggle";
+            _actionButtons[2].text = Loc.Get("label.toggle");
             _actionButtons[2].isVisible = true;
             _actionButtons[2].isEnabled = true;
             _rowAction[2] = RowAction.SettingCycle;
@@ -1792,7 +1809,7 @@ namespace MyFirstMod
             _priceLabels[3].text = "";
             _actionButtons[3].isVisible = false;
 
-            _infoLabels[4].text = "Keyboard shortcut: Shift+B to toggle panel visibility";
+            _infoLabels[4].text = Loc.Get("settings.shortcut");
             _priceLabels[4].text = "";
             _actionButtons[4].isVisible = false;
 
@@ -1800,7 +1817,7 @@ namespace MyFirstMod
             _priceLabels[5].text = "";
             _actionButtons[5].isVisible = false;
 
-            _footerLabel.text = "Settings are saved with your city and persist across sessions.";
+            _footerLabel.text = Loc.Get("settings.footer");
         }
 
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)

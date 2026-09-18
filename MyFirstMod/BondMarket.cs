@@ -8,6 +8,11 @@ namespace MyFirstMod
     // payment; it transitions. Redeemed is terminal and retained for history.
     public enum BondState { Active, Delinquent, Defaulted, Redeemed }
 
+    // Phase 6 (WO-11): revenue bonds are backed by a specific city service's
+    // income stream. None = general-obligation bond (backed by the city's full
+    // taxing power). A revenue source ties the bond's credit to that service.
+    public enum RevenueSource { None, Water, Electricity, PublicTransport }
+
     public struct PayDebtResult
     {
         public int Retired;
@@ -59,6 +64,10 @@ namespace MyFirstMod
         public string IssuerName;
         public CreditRating IssuerRating;
 
+        // Phase 6 (WO-11): the city service whose revenue backs this bond.
+        // None for general-obligation bonds.
+        public RevenueSource Revenue;
+
         // Debt service, capacity and repayment all key off the amount still
         // owed, so SubscribedFace now reports OutstandingPrincipal.
         public float SubscribedFace { get { return OutstandingPrincipal; } }
@@ -97,6 +106,7 @@ namespace MyFirstMod
             IssuePeriod = 0;
             IssuerName = "";
             IssuerRating = CreditRating.A;
+            Revenue = RevenueSource.None;
         }
     }
 
@@ -121,6 +131,7 @@ namespace MyFirstMod
         public bool InDefault; // State == Defaulted, mirrored for existing UI checks
         public string IssuerName;      // Phase 5: issuer behind a market/portfolio bond
         public CreditRating IssuerRating;
+        public RevenueSource Revenue;  // Phase 6: service backing (None = GO)
         public float Price; // market/portfolio present value at snapshot time (0 for issued)
 
         public float SubscribedFace { get { return OutstandingPrincipal; } }
@@ -144,6 +155,7 @@ namespace MyFirstMod
                 InDefault = b.InDefault,
                 IssuerName = b.IssuerName,
                 IssuerRating = b.IssuerRating,
+                Revenue = b.Revenue,
                 Price = price
             };
         }
@@ -318,6 +330,17 @@ namespace MyFirstMod
                 case CreditRating.CCC: return "CCC";
                 case CreditRating.D:   return "D";
                 default: return "?";
+            }
+        }
+
+        public static string RevenueLabel(RevenueSource src)
+        {
+            switch (src)
+            {
+                case RevenueSource.Water:           return "Water";
+                case RevenueSource.Electricity:     return "Electric";
+                case RevenueSource.PublicTransport:  return "Transit";
+                default: return "GO";
             }
         }
     }
