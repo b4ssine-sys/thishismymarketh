@@ -1325,6 +1325,21 @@ namespace MyFirstMod
             return y;
         }
 
+        private float AuctionFairYield(int periods)
+        {
+            float years = (float)periods / BondPricing.PeriodsPerYear;
+            float spot = _yieldCurve.Lambda > 0.0001f ? _yieldCurve.SpotRate(years) : _marketFloatingRate;
+            return spot;
+        }
+
+        public float EstimateAuctionCover(int periods)
+        {
+            lock (_lock)
+            {
+                return PrimaryAuction.EstimateCover(_requiredYield, AuctionFairYield(periods), _demandScore);
+            }
+        }
+
         private float BondDurationYears(Bond b)
         {
             return (float)b.RemainingPeriods / BondPricing.PeriodsPerYear;
@@ -1754,14 +1769,27 @@ namespace MyFirstMod
                 if (currentFace + face > _absorptionCapacity)
                     return false;
 
-                float couponRate = _requiredYield;
+                float offeredYield = _requiredYield;
+                float fairYield = AuctionFairYield(periods);
+                AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
+                if (!ar.Filled)
+                    return false;
+
+                float couponRate = ar.ClearingYield;
 
                 _nextBondId++;
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.PlacedFraction = 0f;       // nothing placed with investors yet
-                ib.OutstandingPrincipal = 0f; // and nothing owed until it is placed
+                ib.PlacedFraction = ar.FilledFraction;
+                ib.OutstandingPrincipal = face * ar.FilledFraction;
                 ib.IssuePeriod = _periodCounter;
                 _debtBook.Add(ib);
+
+                if (ib.OutstandingPrincipal > 0f)
+                {
+                    float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
+                    if (proceeds > 0f)
+                        AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
+                }
                 return true;
             }
         }
@@ -1775,7 +1803,7 @@ namespace MyFirstMod
                 if (_rating == CreditRating.D)
                     return false;
                 if (_debtBook.IssuanceSuspended ||
-                    !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS)) // Schema v5 lock-out
+                    !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS))
                     return false;
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
@@ -1800,15 +1828,28 @@ namespace MyFirstMod
                     face = remainingCapacity;
 
                 int periods = 60;
-                float couponRate = _requiredYield;
+                float offeredYield = _requiredYield;
+                float fairYield = AuctionFairYield(periods);
+                AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
+                if (!ar.Filled)
+                    return false;
+
+                float couponRate = ar.ClearingYield;
 
                 _nextBondId++;
                 string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
                 Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.PlacedFraction = 0f;       // nothing placed with investors yet
-                ib.OutstandingPrincipal = 0f; // and nothing owed until it is placed
+                ib.PlacedFraction = ar.FilledFraction;
+                ib.OutstandingPrincipal = face * ar.FilledFraction;
                 ib.IssuePeriod = _periodCounter;
                 _debtBook.Add(ib);
+
+                if (ib.OutstandingPrincipal > 0f)
+                {
+                    float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
+                    if (proceeds > 0f)
+                        AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
+                }
                 return true;
             }
         }

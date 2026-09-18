@@ -911,11 +911,15 @@ namespace MyFirstMod
                     int tPeriods = engine.GetTemplatePeriods(tIdx);
                     float perPeriodCoupon = (tFace * engine.RequiredYield) / BondPricing.PeriodsPerYear;
                     int years = tPeriods / 12;
+                    float cover = engine.EstimateAuctionCover(tPeriods);
 
                     _infoLabels[i].text = string.Format(
                         "{0}   {1:N0}   {2:F1}%   {3}yr   {4:N0}/per",
                         tName, tFace, yieldPct, years, perPeriodCoupon);
-                    _priceLabels[i].text = string.Format("{0:N0}", tFace);
+                    string coverTag = cover >= PrimaryAuction.MinCover
+                        ? string.Format("BtC {0:F1}x", cover)
+                        : "WEAK";
+                    _priceLabels[i].text = string.Format("{0:N0}  {1}", tFace, coverTag);
                     _actionButtons[i].text = "Issue";
                     _actionButtons[i].isVisible = true;
                     _actionButtons[i].isEnabled = canIssue;
@@ -1477,7 +1481,7 @@ namespace MyFirstMod
                     if (engine.IssueBond(_rowArg[index]))
                         RefreshData();
                     else
-                        Debug.Log("[MyFirstMod] Cannot issue bond - at capacity, locked out, or rating D.");
+                        Debug.Log("[MyFirstMod] Auction failed - undersubscribed, at capacity, locked out, or rating D.");
                     break;
 
                 case RowAction.Terminate:
@@ -1632,7 +1636,7 @@ namespace MyFirstMod
             }
             else
             {
-                Debug.Log("[MyFirstMod] Issue 25% failed - at capacity, rating D, or no demand.");
+                Debug.Log("[MyFirstMod] Issue 25% failed - auction undersubscribed, at capacity, or rating D.");
             }
         }
 
@@ -1648,7 +1652,7 @@ namespace MyFirstMod
             }
             else
             {
-                Debug.Log("[MyFirstMod] Issue 50% failed - at capacity, rating D, or no demand.");
+                Debug.Log("[MyFirstMod] Issue 50% failed - auction undersubscribed, at capacity, or rating D.");
             }
         }
 

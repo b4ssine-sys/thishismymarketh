@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WO-2/WO-3 compile harness: links EVERY mod source file and builds them
+    against the stub-reference shim (GameStubs). If the game API surface
+    the mod touches changes, this project breaks on CI before a player
+    ever sees a crash.
+
+    Gate A acceptance: introduce a deliberately wrong member reference in
+    a mod file and verify CI goes red; revert and verify CI goes green.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>MyFirstMod</RootNamespace>
+    <OutputType>Library</OutputType>
+    <NoWarn>0649;0067;0169;0414</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Stubs\GameStubs.csproj" />
+  </ItemGroup>
+
+  <!-- Link every mod source file. Single source of truth; no copies. -->
+  <ItemGroup>
+    <Compile Include="..\MyFirstMod\BondMarket.cs" Link="Linked\BondMarket.cs" />
+    <Compile Include="..\MyFirstMod\BondMarketEngine.cs" Link="Linked\BondMarketEngine.cs" />
+    <Compile Include="..\MyFirstMod\BondMarketPanel.cs" Link="Linked\BondMarketPanel.cs" />
+    <Compile Include="..\MyFirstMod\CimDemandEngine.cs" Link="Linked\CimDemandEngine.cs" />
+    <Compile Include="..\MyFirstMod\Credit\CreditModel.cs" Link="Linked\CreditModel.cs" />
+    <Compile Include="..\MyFirstMod\Credit\IssuerModel.cs" Link="Linked\IssuerModel.cs" />
+    <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
+    <Compile Include="..\MyFirstMod\DebtBook.cs" Link="Linked\DebtBook.cs" />
+    <Compile Include="..\MyFirstMod\Loading.cs" Link="Linked\Loading.cs" />
+    <Compile Include="..\MyFirstMod\Localization.cs" Link="Linked\Localization.cs" />
+    <Compile Include="..\MyFirstMod\Market\DeterministicRandom.cs" Link="Linked\DeterministicRandom.cs" />
+    <Compile Include="..\MyFirstMod\Market\Friction.cs" Link="Linked\Friction.cs" />
+    <Compile Include="..\MyFirstMod\Market\PrimaryAuction.cs" Link="Linked\PrimaryAuction.cs" />
+    <Compile Include="..\MyFirstMod\Market\RateProcess.cs" Link="Linked\RateProcess.cs" />
+    <Compile Include="..\MyFirstMod\Mod.cs" Link="Linked\Mod.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\SwapPricing.cs" Link="Linked\SwapPricing.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\YieldCurve.cs" Link="Linked\YieldCurve.cs" />
+    <Compile Include="..\MyFirstMod\ResidentialBuildingLog.cs" Link="Linked\ResidentialBuildingLog.cs" />
+    <Compile Include="..\MyFirstMod\SaveDataExtension.cs" Link="Linked\SaveDataExtension.cs" />
+    <Compile Include="..\MyFirstMod\Sim\EconomyReader.cs" Link="Linked\EconomyReader.cs" />
+    <Compile Include="..\MyFirstMod\StateSerializer.cs" Link="Linked\StateSerializer.cs" />
+  </ItemGroup>
+
+</Project>
