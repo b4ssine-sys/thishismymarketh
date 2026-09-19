@@ -344,6 +344,7 @@ namespace MyFirstMod
         {
             BinaryReader sr = ReadSection(r);
             int n = sr.ReadInt32();
+            if (n < 0 || n > 1000) throw new InvalidDataException("issuer count");
             List<MarketIssuer> list = new List<MarketIssuer>();
             for (int i = 0; i < n; i++)
             {
@@ -442,14 +443,17 @@ namespace MyFirstMod
 
             BinaryReader sw = ReadSection(r);
             int swapCount = sw.ReadInt32();
+            if (swapCount < 0 || swapCount > 10000) throw new InvalidDataException("swap count");
             for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(sw, version));
 
             BinaryReader tr = ReadSection(r);
             int txCount = tr.ReadInt32();
+            if (txCount < 0 || txCount > 100000) throw new InvalidDataException("transaction count");
             for (int i = 0; i < txCount; i++) s.Transactions.Add(ReadTransaction(tr));
 
             BinaryReader rr = ReadSection(r);
             int repCount = rr.ReadInt32();
+            if (repCount < 0 || repCount > 10000) throw new InvalidDataException("report count");
             for (int i = 0; i < repCount; i++) s.Reports.Add(ReadReportV7(rr));
 
             // v8: issuer roster section trails the reports. v7 saves have no such
@@ -474,6 +478,7 @@ namespace MyFirstMod
         {
             BinaryReader sr = ReadSection(r);
             int n = sr.ReadInt32();
+            if (n < 0 || n > 10000) throw new InvalidDataException("bond count");
             List<Bond> list = new List<Bond>();
             for (int i = 0; i < n; i++) list.Add(ReadBond(sr, version));
             return list;
@@ -605,6 +610,7 @@ namespace MyFirstMod
             if (!ValidateBondList(s.Issued, true)) return false;
             if (!ValidateBondList(s.Portfolio, false)) return false;
             if (!ValidateBondList(s.Market, false)) return false;
+            if (!ValidateBondList(s.Redeemed, true)) return false;
             return true;
         }
 

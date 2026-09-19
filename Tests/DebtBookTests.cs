@@ -368,5 +368,57 @@ namespace MyFirstMod.Tests
             Assert.True(b.PrincipalRepaid > 0f, "Principal repayment should be tracked");
             Assert.InRange(b.InterestPaid + b.PrincipalRepaid, cashPaid - 1f, cashPaid + 1f);
         }
+
+        // WO-30: early-retired bonds enter redemption history via RemoveBond.
+        [Fact]
+        public void WO30_RemoveBond_EntersRedeemedHistory()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 100000f, 0.05f, 60);
+            book.Add(b);
+            book.PlacePrimary(100000f);
+
+            Assert.True(book.RemoveBond("IB1"));
+            Assert.Equal(0, book.Count);
+            Assert.Equal(1, book.Redeemed.Count);
+            Assert.Equal("IB1", book.Redeemed[0].Id);
+            Assert.Equal(BondState.Redeemed, book.Redeemed[0].State);
+            Assert.Equal(0f, book.Redeemed[0].OutstandingPrincipal);
+            Assert.True(book.ValidateInvariants());
+        }
+
+        // WO-30: RepayByBudget full retirements enter redeemed history.
+        [Fact]
+        public void WO30_RepayByBudget_FullRetirement_EntersRedeemedHistory()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 50000f, 0.05f, 60);
+            book.Add(b);
+            book.PlacePrimary(50000f);
+
+            float owed = book.AmountOwed("IB1");
+            book.RepayByBudget(1, owed + 1f, Lockout, out int retired, out bool partial);
+
+            Assert.Equal(1, retired);
+            Assert.Equal(0, book.Count);
+            Assert.Equal(1, book.Redeemed.Count);
+            Assert.Equal(BondState.Redeemed, book.Redeemed[0].State);
+            Assert.True(book.ValidateInvariants());
+        }
+
+        // WO-30: ValidateInvariants checks redeemed bonds too.
+        [Fact]
+        public void WO30_ValidateInvariants_RejectsCorruptRedeemedBond()
+        {
+            var book = new DebtBook();
+            var b = NewIssued("IB1", 50000f, 0.05f, 60);
+            book.Add(b);
+            book.PlacePrimary(50000f);
+            book.RemoveBond("IB1");
+
+            Assert.Equal(1, book.Redeemed.Count);
+            book.Redeemed[0].OutstandingPrincipal = -500f;
+            Assert.False(book.ValidateInvariants());
+        }
     }
 }

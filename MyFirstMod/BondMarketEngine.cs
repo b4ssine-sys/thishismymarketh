@@ -22,9 +22,14 @@ namespace MyFirstMod
         private const int DEFAULT_DECAY_PER_PERIOD = 1;
         private const int DEFAULT_PENALTY_PER_EVENT = 12;
         private const int MAX_DEFAULT_PENALTY = 60;            // P0-2: cap so sustained default can't run the spike unbounded
-        private const int GRACE_PERIODS = 2;                   // Schema v5: periods delinquent before full default
-        private const float ARREARS_SPREAD = 0.03f;            // Schema v5: arrears accrue at coupon + 300bp
-        private const int DEFAULT_LOCKOUT_PERIODS = 12;        // P0-2: issuance lock-out window after arrears clear
+        // Servicing triad: GRACE_PERIODS, ARREARS_SPREAD, and DEFAULT_LOCKOUT_PERIODS
+        // are coupled. GRACE_PERIODS sets how many missed coupons before hard default;
+        // ARREARS_SPREAD penalizes arrears during grace; DEFAULT_LOCKOUT_PERIODS blocks
+        // new issuance after a default resolves. Changing one without the others skews
+        // the default lifecycle — see DebtBook.ServicePeriod and UpdateState.
+        private const int GRACE_PERIODS = 2;
+        private const float ARREARS_SPREAD = 0.03f;
+        private const int DEFAULT_LOCKOUT_PERIODS = 12;
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
@@ -1925,6 +1930,8 @@ namespace MyFirstMod
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
 
+                SeedTickCashFromGame();
+
                 string name = ISSUE_NAMES[optionIndex];
                 float face = ISSUE_FACES[optionIndex];
                 int periods = ISSUE_PERIODS[optionIndex];
@@ -1978,6 +1985,8 @@ namespace MyFirstMod
                     return false;
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
+
+                SeedTickCashFromGame();
 
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return false;

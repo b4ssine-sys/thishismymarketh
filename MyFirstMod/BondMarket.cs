@@ -373,18 +373,6 @@ namespace MyFirstMod
             return benchmarkRate + spread;
         }
 
-        public static CreditRating CalculateRating(float debtBurden, float dscr)
-        {
-            if (debtBurden < 0.05f && dscr > 3.0f) return CreditRating.AAA;
-            if (debtBurden < 0.10f && dscr > 2.0f) return CreditRating.AA;
-            if (debtBurden < 0.15f && dscr > 1.5f) return CreditRating.A;
-            if (debtBurden < 0.25f && dscr > 1.2f) return CreditRating.BBB;
-            if (debtBurden < 0.35f && dscr > 0.9f) return CreditRating.BB;
-            if (dscr > 0.8f) return CreditRating.B;
-            if (dscr > 0.5f) return CreditRating.CCC;
-            return CreditRating.D;
-        }
-
         public static string RatingLabel(CreditRating rating)
         {
             switch (rating)

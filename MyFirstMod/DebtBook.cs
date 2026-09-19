@@ -347,7 +347,13 @@ namespace MyFirstMod
             {
                 if (_bonds[i].Id == id)
                 {
+                    Bond b = _bonds[i];
                     RemoveActiveAt(i);
+                    b.State = BondState.Redeemed;
+                    b.Arrears = 0f;
+                    b.OutstandingPrincipal = 0f;
+                    _redeemed.Add(b);
+                    if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                     return true;
                 }
             }
@@ -377,7 +383,14 @@ namespace MyFirstMod
                 if (owed > budget) continue;
                 budget -= owed;
                 spent += owed;
+                b.PrincipalRepaid += b.OutstandingPrincipal;
+                b.InterestPaid += b.Arrears;
                 RemoveActiveAt(i);
+                b.State = BondState.Redeemed;
+                b.Arrears = 0f;
+                b.OutstandingPrincipal = 0f;
+                _redeemed.Add(b);
+                if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                 retiredCount++;
             }
 
@@ -416,6 +429,11 @@ namespace MyFirstMod
                     if (sb.OutstandingPrincipal + sb.Arrears < 1f)
                     {
                         RemoveActiveAt(smallest);
+                        sb.State = BondState.Redeemed;
+                        sb.Arrears = 0f;
+                        sb.OutstandingPrincipal = 0f;
+                        _redeemed.Add(sb);
+                        if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                         retiredCount++;
                     }
                     else
@@ -443,6 +461,14 @@ namespace MyFirstMod
                 if (b.State == BondState.Redeemed && b.OutstandingPrincipal > 1f) return false; // I6
                 if (b.Arrears < -EPS) return false;                                          // I8
                 if (b.PeriodsInArrears < 0) return false;                                    // I9
+            }
+            for (int i = 0; i < _redeemed.Count; i++)
+            {
+                Bond b = _redeemed[i];
+                if (b.PlacedFraction < -EPS || b.PlacedFraction > 1f + EPS) return false;   // I1
+                if (b.OutstandingPrincipal < -EPS) return false;                             // I2
+                if (b.FaceValue < 0f) return false;
+                if (b.Arrears < -EPS) return false;                                          // I8
             }
             return true;
         }

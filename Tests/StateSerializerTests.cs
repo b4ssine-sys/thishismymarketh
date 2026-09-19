@@ -362,6 +362,32 @@ namespace MyFirstMod.Tests
             Assert.True(s2.RevenueBondsEnabled);
         }
 
+        // WO-30: redeemed bonds round-trip through serialize/deserialize and pass
+        // validation. The ValidateState check now covers the Redeemed list too.
+        [Fact]
+        public void WO30_RedeemedBonds_RoundTrip()
+        {
+            var s = SampleState();
+            var rb = new Bond("IB99", "Retired", 80000f, 0.04f, 0);
+            rb.PlacedFraction = 1f;
+            rb.OutstandingPrincipal = 0f;
+            rb.Arrears = 0f;
+            rb.State = BondState.Redeemed;
+            rb.InterestPaid = 1200f;
+            rb.PrincipalRepaid = 80000f;
+            s.Redeemed.Add(rb);
+
+            byte[] bytes = StateSerializer.Serialize(s);
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.NotNull(s2);
+            Assert.Single(s2.Redeemed);
+            Assert.Equal("IB99", s2.Redeemed[0].Id);
+            Assert.Equal(BondState.Redeemed, s2.Redeemed[0].State);
+            Assert.Equal(0f, s2.Redeemed[0].OutstandingPrincipal);
+            Assert.Equal(1200f, s2.Redeemed[0].InterestPaid, 2);
+            Assert.Equal(80000f, s2.Redeemed[0].PrincipalRepaid, 2);
+        }
+
         private static void WriteV4BondList(BinaryWriter w, int count, float soldFraction, float face, float coupon, int periods)
         {
             w.Write(count);
