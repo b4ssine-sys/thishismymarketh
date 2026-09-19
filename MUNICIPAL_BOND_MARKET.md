@@ -105,7 +105,9 @@ organic = (currentMoney - prevMoney) - modCashDeltaPending
 
 An outlier filter rejects deltas beyond 6 standard deviations of the rolling mean (one-off game grants, desyncs). The window feeds downstream metrics: per-tick operating income/expense (preferring the game ledger via `EconomyReader` when available, falling back to balance-delta proxy), and revenue volatility.
 
-An authoritative cash cursor (`_tickCash`) is seeded from the game's balance each tick, then adjusted by every mod cash operation. This prevents multiple operations in one tick from all reading the same stale `LastCashAmount`.
+An authoritative cash cursor (`_tickCash`) is seeded from the game's balance each tick, then adjusted by every mod cash operation. This prevents multiple operations in one tick from all reading the same stale `LastCashAmount`. All UI entry points that move money (`IssueBond`, `IssueBondPercent`, `PayDebtPercent`, buy/sell operations) call `SeedTickCashFromGame()` before proceeding.
+
+Large-scale currency accumulators (`_realizedPL`, `_swapPL`, `_totalCitizenProceeds`) use `double` precision internally and cast to `float` only at the public API boundary, preventing drift from millions of small additions.
 
 ### Credit Model
 
@@ -221,7 +223,11 @@ Active --> Delinquent --> Defaulted
 - **Defaulted**: triggered by grace expiry or a missed maturity principal payment. Issuance suspended, lockout window of 12 periods
 - **Redeemed**: terminal state (term elapsed, all amounts cleared)
 
-The `DebtBook` owns servicing: it pays arrears first, then coupon, then principal from a single cash budget each period. `PlacedFraction` tracks primary take-up; `OutstandingPrincipal` tracks what's owed. These are strictly separated to prevent the infinite-money loop that occurred when one field carried both meanings.
+The `DebtBook` owns servicing via **two-pass pro-rata allocation**: pass 1 ages bonds and computes per-bond dues (arrears + coupon + maturing principal); pass 2 allocates the cash budget proportionally to each bond's share of total dues, then applies payments in priority order (arrears, coupon, principal). This ensures service outcomes are independent of array insertion order. `PlacedFraction` tracks primary take-up; `OutstandingPrincipal` tracks what's owed. These are strictly separated to prevent the infinite-money loop that occurred when one field carried both meanings.
+
+Each bond tracks cumulative `InterestPaid` (arrears + coupon payments) and `PrincipalRepaid` separately for reporting. Early-retired bonds (via `RemoveBond` or `RepayByBudget`) enter the redeemed history with proper state cleanup.
+
+The servicing triad (`GRACE_PERIODS`, `ARREARS_SPREAD`, `DEFAULT_LOCKOUT_PERIODS`) is coupled: grace sets the delinquency window, arrears spread penalizes during grace, and lockout blocks issuance after resolution. Changing one without the others skews the default lifecycle.
 
 ### Market Friction
 
@@ -275,7 +281,7 @@ Each of the six market issuers has a **sector archetype** with a home rating and
 
 **Default hazard** (A-4): `BaseAnnualDefaultProb(rating) * hazardMultiplier`. The multiplier is player-configurable: Historical (x1), Standard (x25), Volatile (x60). On default, portfolio holders receive recovery x par; the issuer's market paper is pulled and the entity restructures back to its home rating.
 
-A **deterministic PRNG** (`DeterministicRandom`, xorshift128 deriving from `System.Random`) ensures stochastic outcomes survive save/load and cannot be save-scummed. Its 4-uint state is serialized.
+A **deterministic PRNG** (`DeterministicRandom`, xorshift128 deriving from `System.Random`) ensures stochastic outcomes survive save/load and cannot be save-scummed. Its 4-uint state is serialized. The engine maintains two RNG streams: a persisted sim-stream (`_rng`) for all simulation-thread stochastic decisions (rate process, migrations, market bond generation, citizen activity), and a cosmetic `_cosmeticRng` for UI-thread operations (buy buttons) that do not affect determinism.
 
 ---
 
@@ -319,7 +325,7 @@ The required yield is rate-limited to 50bp/period to prevent snapping, and cappe
 
 ## Serialization
 
-`StateSerializer` uses a **sectioned binary format** (v9) with per-section FNV-1a checksums:
+`StateSerializer` uses a **sectioned binary format** (v12) with per-section FNV-1a checksums:
 
 ```
 [version byte]
@@ -336,7 +342,7 @@ The required yield is rate-limited to 50bp/period to prevent snapping, and cappe
 [issuers section]        (v8+)
 ```
 
-Deserialization is atomic: the entire state is validated against invariants (I1-I9) in a staging object before being applied. Legacy saves (v1-6) are migrated through `ReadLegacyFlat`; v7 saves load through the same sectioned reader with newer fields defaulted. v9 adds the `RevenueSource` field per bond; v8 bonds default to `RevenueSource.None` (general obligation). No exception ever escapes `TryDeserialize`.
+Deserialization is atomic: the entire state is validated against invariants (I1-I9) in a staging object before being applied, including redeemed bonds. All deserialize counts (bonds, swaps, transactions, reports, issuers) are bounded to reject corrupt saves early. Legacy saves (v1-6) are migrated through `ReadLegacyFlat`; v7 saves load through the same sectioned reader with newer fields defaulted. v9 adds the `RevenueSource` field per bond; v12 adds per-bond `InterestPaid` and `PrincipalRepaid` tracking. No exception ever escapes `TryDeserialize`.
 
 **Invariants validated on load:**
 - I1: PlacedFraction in [0, 1]
@@ -357,7 +363,7 @@ Cities: Skylines runs simulation logic and UI on separate threads:
 
 - **Simulation thread**: `OnUpdateMoneyAmount` runs all state mutations (aging, servicing, settlement, citizen trading) inside `lock(_lock)`
 - **Main thread**: UI event handlers call public engine methods that acquire `lock(_lock)`
-- **Snapshot pattern**: `GetMarketSnapshot`, `GetPortfolioSnapshot`, `GetIssuedBondsSnapshot`, `GetActiveSwapsSnapshot` copy data into immutable `BondView`/`SwapView` DTOs. The UI works with its own copies, keyed by stable `Id`, never list indices
+- **Snapshot pattern**: `GetMarketSnapshot`, `GetPortfolioSnapshot`, `GetIssuedBondsSnapshot`, `GetActiveSwapsSnapshot` copy data into immutable `BondView`/`SwapView` DTOs. The UI works with its own copies, keyed by stable `Id`, never list indices. An `EngineSnapshot` (volatile reference, ~55 scalar fields) provides a thread-safe aggregate view of all UI-readable engine state, published at the end of `RecalculateMetricsInternal` and `AgeBondsInternal`
 
 Heavy per-period work (portfolio revaluation, credit model, rate pipeline, demand chain, demographic sampling) runs **once per period**, not every tick.
 
@@ -415,12 +421,12 @@ The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. 
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `BondMarket.cs` | 324 | Domain models: Bond, BondView, SwapView, InterestRateSwap, CimTransaction, QuarterlyReport, BondPricing, enums |
-| `BondMarketEngine.cs` | 2420 | Simulation engine: EconomyExtensionBase, cash tracking, metrics, aging, servicing, trading, snapshots, save/load |
-| `BondMarketPanel.cs` | 1870 | UI: 8-tab panel, row rendering, event handlers, summary/footer, toggle button |
-| `DebtBook.cs` | 415 | Issued debt lifecycle, servicing waterfall, repayment, placement, invariant validation |
+| `BondMarket.cs` | 403 | Domain models: Bond, BondView, SwapView, InterestRateSwap, CimTransaction, QuarterlyReport, EngineSnapshot, BondPricing, enums |
+| `BondMarketEngine.cs` | 2605 | Simulation engine: EconomyExtensionBase, cash tracking, metrics, aging, servicing, trading, snapshots, save/load |
+| `BondMarketPanel.cs` | 1912 | UI: 8-tab panel, row rendering, event handlers, summary/footer, toggle button |
+| `DebtBook.cs` | 476 | Issued debt lifecycle, pro-rata servicing, repayment, placement, invariant validation |
 | `CimDemandEngine.cs` | 211 | Citizen demand scoring, trading volumes, market pressure, absorption capacity |
-| `StateSerializer.cs` | 612 | Sectioned binary format v9, FNV-1a checksums, legacy migration (v1-8), atomic deserialization |
+| `StateSerializer.cs` | 637 | Sectioned binary format v12, FNV-1a checksums, legacy migration (v1-8), atomic deserialization |
 | `Credit/CreditModel.cs` | 84 | Annualized credit metrics from per-tick flows and DebtBook |
 | `Credit/RatingEngine.cs` | 40 | Rating grid evaluation with liquidity notch |
 | `Credit/IssuerModel.cs` | 167 | Issuer archetypes, home ratings, recovery rates, Markov migration, default hazard |
@@ -437,7 +443,7 @@ The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. 
 | `SaveDataExtension.cs` | 44 | SerializableDataExtensionBase bridge |
 | `Mod.cs` | 37 | IUserMod entry point, version 1.0.0 |
 
-**Total: 21 files, ~7,060 lines.**
+**Total: 21 files, ~7,520 lines.**
 
 Pure files (no game dependencies): BondMarket.cs, DebtBook.cs, CimDemandEngine.cs, StateSerializer.cs, Credit/*, Market/*, Pricing/*. These compile and test under net8.0 xUnit.
 
@@ -470,7 +476,7 @@ Pure files (no game dependencies): BondMarket.cs, DebtBook.cs, CimDemandEngine.c
 | ImpactK | 50bp | Friction | Impact at full-depth order |
 | DepthFraction | 20% | Friction | Depth as fraction of outstanding |
 | HAZARD_STANDARD | 25x | IssuerModel | Default hazard multiplier (default setting) |
-| FORMAT_VERSION | 9 | StateSerializer | Current save format |
+| FORMAT_VERSION | 12 | StateSerializer | Current save format |
 | REFRESH_INTERVAL | 4.0 | Panel | UI auto-refresh (seconds) |
 | MAX_ROWS | 6 | Panel | Visible rows in bond list |
 
