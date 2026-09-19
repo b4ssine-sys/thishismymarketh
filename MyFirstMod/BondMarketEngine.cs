@@ -73,9 +73,11 @@ namespace MyFirstMod
         private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
         private readonly System.Text.StringBuilder _detailBuilder = new System.Text.StringBuilder(64); // P2-3: reused
         private readonly object _lock = new object();
+        private volatile EngineSnapshot _snapshot = new EngineSnapshot();
         // Phase 5 (G-1): deterministic, serializable PRNG so stochastic outcomes
         // (issuer migration/default) survive reload and can't be save-scummed.
         private DeterministicRandom _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+        private Random _cosmeticRng = new System.Random();
 
         // Phase 5 (P1-2): market issuers, each with its own migrating credit.
         private readonly List<MarketIssuer> _issuers = new List<MarketIssuer>();
@@ -93,13 +95,13 @@ namespace MyFirstMod
         private bool _resetInProgress; // P0-1: re-entrancy guard for ResetStateInternal
         private int _defaultPenalty;
         private int _totalDefaults;
-        private float _realizedPL;
+        private double _realizedPL;
 
         private const int MAX_ACTIVE_SWAPS = 5;
         private readonly List<InterestRateSwap> _activeSwaps = new List<InterestRateSwap>();
         private int _nextSwapId;
         private float _revenueVolatility;
-        private float _swapPL;
+        private double _swapPL;
 
         private float _demandScore;
         private float _defaultProbability;
@@ -128,7 +130,7 @@ namespace MyFirstMod
         private readonly float[] _pressureHistory = new float[12];
         private int _pressureHistoryIndex;
         private float _citizenProceedsThisPeriod;
-        private float _totalCitizenProceeds;
+        private double _totalCitizenProceeds;
 
         private readonly List<CimTransaction> _transactionLog = new List<CimTransaction>();
         private const int MAX_TRANSACTION_LOG = 50;
@@ -202,6 +204,8 @@ namespace MyFirstMod
         private static readonly float[] MARKET_FACES = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
         private static readonly int[] MARKET_PERIODS = new int[] { 4, 6, 8, 10, 12, 16 };
 
+        public EngineSnapshot Snapshot { get { return _snapshot; } }
+
         public float GrossIncome { get { return _grossIncome; } }
         public float TotalExpenses { get { return _totalExpenses; } }
         public float DebtBurden { get { return _debtBurden; } }
@@ -218,7 +222,7 @@ namespace MyFirstMod
         public float PortfolioValue { get { return _portfolioValue; } }
         public int DefaultPenalty { get { return _defaultPenalty; } }
         public int TotalDefaults { get { return _totalDefaults; } }
-        public float RealizedPL { get { return _realizedPL; } }
+        public float RealizedPL { get { return (float)_realizedPL; } }
         public int TicksInCurrentPeriod { get { return _tickCounter; } }
 
         public int IssuedCount { get { lock (_lock) { return _issuedBonds.Count; } } }
@@ -229,7 +233,7 @@ namespace MyFirstMod
         public int MarketCount { get { lock (_lock) { return _marketBonds.Count; } } }
 
         public float RevenueVolatility { get { return _revenueVolatility; } }
-        public float SwapPL { get { return _swapPL; } }
+        public float SwapPL { get { return (float)_swapPL; } }
         public int SwapCount { get { lock (_lock) { return _activeSwaps.Count; } } }
         public int MaxActiveSwaps { get { return MAX_ACTIVE_SWAPS; } }
 
@@ -263,7 +267,7 @@ namespace MyFirstMod
         public float MarketPressure { get { return _smoothedPressure; } }
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
         public float CitizenProceedsThisPeriod { get { return _citizenProceedsThisPeriod; } }
-        public float TotalCitizenProceeds { get { return _totalCitizenProceeds; } }
+        public float TotalCitizenProceeds { get { return (float)_totalCitizenProceeds; } }
         public float Health { get { return _health; } }
         public float Education { get { return _education; } }
         public float LandValue { get { return _landValue; } }
@@ -399,7 +403,7 @@ namespace MyFirstMod
                 {
                     float total = 0f;
                     for (int i = 0; i < _issuedBonds.Count; i++)
-                        total += _issuedBonds[i].CouponsReceived;
+                        total += _issuedBonds[i].InterestPaid;
                     return total;
                 }
             }
@@ -760,6 +764,8 @@ namespace MyFirstMod
             _prevRequiredYield = _requiredYield;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
                 _population, _landValue, _education, _employmentRate, _demandScore);
+
+            PublishSnapshot();
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -777,6 +783,89 @@ namespace MyFirstMod
             if (totalDebtFace <= 0f)
                 return hedgedNotional > 0f ? 2f : 0f;
             return (hedgedNotional - totalDebtFace) / totalDebtFace;
+        }
+
+        private void PublishSnapshot()
+        {
+            var s = new EngineSnapshot();
+            s.GrossIncome = _grossIncome;
+            s.TotalExpenses = _totalExpenses;
+            s.DebtBurden = _debtBurden;
+            s.DSCR = _dscr;
+            s.MonthsOfReserves = _monthsOfReserves;
+            s.NOI = _noi;
+            s.Rating = _rating;
+            s.BenchmarkRate = _benchmarkRate;
+            s.RequiredYield = _requiredYield;
+            s.PortfolioValue = _portfolioValue;
+            s.DefaultPenalty = _defaultPenalty;
+            s.TotalDefaults = _totalDefaults;
+            s.RealizedPL = (float)_realizedPL;
+            s.TicksInCurrentPeriod = _tickCounter;
+            s.IssuedCount = _issuedBonds.Count;
+            s.PortfolioCount = _portfolioBonds.Count;
+            s.MarketCount = _marketBonds.Count;
+            s.RevenueVolatility = _revenueVolatility;
+            s.SwapPL = (float)_swapPL;
+            s.SwapCount = _activeSwaps.Count;
+            s.DemandScore = _demandScore;
+            s.DefaultProbability = _defaultProbability;
+            s.AbsorptionCapacity = _absorptionCapacity;
+
+            float currentFace = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                currentFace += _issuedBonds[i].FaceValue;
+            float remCap = _absorptionCapacity - currentFace;
+            s.RemainingCapacity = remCap > 0f ? remCap : 0f;
+
+            s.Population = _population;
+            s.Happiness = _happiness;
+            s.EmploymentRate = _employmentRate;
+            s.PopulationGrowth = _populationGrowth;
+            s.CitizenConfidence = _citizenConfidence;
+            s.BondAppeal = _bondAppeal;
+            s.FinancialHealth = _financialHealth;
+            s.CitizenBuyVolume = _citizenBuyVolume;
+            s.CitizenSellVolume = _citizenSellVolume;
+            s.SmoothedPressure = _smoothedPressure;
+            s.CitizenProceedsThisPeriod = _citizenProceedsThisPeriod;
+            s.TotalCitizenProceeds = (float)_totalCitizenProceeds;
+            s.Health = _health;
+            s.Education = _education;
+            s.LandValue = _landValue;
+            s.CrimeRate = _crimeRate;
+            s.CashReserves = _cashReserves;
+            s.CityVitals = _cityVitals;
+            s.Momentum = CimDemandEngine.CalculateMomentumMultiplier(_currentMarketState, _previousMarketState, 1.5f);
+            s.TransactionLogCount = _transactionLog.Count;
+            s.ReportCount = _reportHistory.Count;
+            s.CurrentQuarter = _quarterNumber;
+
+            float debtFace = 0f;
+            float debtOwed = 0f;
+            float couponsPaidTotal = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+            {
+                Bond ib = _issuedBonds[i];
+                debtFace += ib.SubscribedFace;
+                float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
+                debtOwed += ib.SubscribedFace + rc + ib.Arrears;
+                couponsPaidTotal += ib.InterestPaid;
+            }
+            s.TotalDebtFace = debtFace;
+            s.TotalDebtOwed = debtOwed;
+            s.TotalCouponsPaid = couponsPaidTotal;
+
+            float hedged = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedged += _activeSwaps[i].NotionalAmount;
+            s.TotalHedgedNotional = hedged;
+            s.OverHedgeRatio = CalculateOverHedgeRatioInternal();
+            s.CreditStatusLabel = CreditStatusLabel;
+            s.DemandLabelText = CimDemandEngine.DemandLabel(_demandScore);
+            s.PressureLabelText = CimDemandEngine.PressureLabel(_smoothedPressure);
+
+            _snapshot = s;
         }
 
         private void ReadCityDemographicsInternal(float cashDisplay)
@@ -969,7 +1058,7 @@ namespace MyFirstMod
                 }
                 else
                 {
-                    float couponPayment = (b.FaceValue * b.CouponRate) / BondPricing.PeriodsPerYear;
+                    float couponPayment = (b.OutstandingPrincipal * b.CouponRate) / BondPricing.PeriodsPerYear;
                     long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
                     if (couponInternal > 0)
                     {
@@ -1022,6 +1111,8 @@ namespace MyFirstMod
                 _periodsSinceReport = 0;
                 GenerateQuarterlyReportInternal();
             }
+
+            PublishSnapshot();
         }
 
         private void ServiceIssuedBondsInternal()
@@ -1224,7 +1315,7 @@ namespace MyFirstMod
                 float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
                 debtOwed += ib.SubscribedFace + rc + ib.Arrears;
                 totalSub += ib.PlacedFraction;
-                couponsPaid += ib.CouponsReceived;
+                couponsPaid += ib.InterestPaid;
             }
             rp.DebtFace = debtFace;
             rp.DebtOwed = debtOwed;
@@ -1246,8 +1337,8 @@ namespace MyFirstMod
                 hedged += _activeSwaps[i].NotionalAmount;
             rp.HedgedNotional = hedged;
 
-            rp.RealizedPL = _realizedPL;
-            rp.SwapPL = _swapPL;
+            rp.RealizedPL = (float)_realizedPL;
+            rp.SwapPL = (float)_swapPL;
             rp.RevenueVolatility = _revenueVolatility;
             rp.Happiness = _happiness;
             rp.EmploymentRate = _employmentRate;
@@ -1255,7 +1346,7 @@ namespace MyFirstMod
             rp.CitizenConfidence = _citizenConfidence;
             rp.BondAppeal = _bondAppeal;
             rp.FinancialHealth = _financialHealth;
-            rp.CitizenProceeds = _totalCitizenProceeds;
+            rp.CitizenProceeds = (float)_totalCitizenProceeds;
             rp.Outlook = GenerateOutlookInternal();
 
             _reportHistory.Add(rp);
@@ -1302,7 +1393,7 @@ namespace MyFirstMod
             _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.058f, 12));
             for (int i = 0; i < _marketBonds.Count; i++)
             {
-                AssignIssuer(_marketBonds[i]);
+                AssignIssuer(_marketBonds[i], _rng);
                 _marketBonds[i].CouponRate = IssuerYieldFor(_marketBonds[i]); // price near par at issuer credit
             }
         }
@@ -1344,10 +1435,10 @@ namespace MyFirstMod
             return null;
         }
 
-        private void AssignIssuer(Bond b)
+        private void AssignIssuer(Bond b, Random rng)
         {
             if (_issuers.Count == 0) InitIssuersInternal();
-            MarketIssuer m = _issuers[_rng.Next(_issuers.Count)];
+            MarketIssuer m = _issuers[rng.Next(_issuers.Count)];
             b.IssuerName = m.Name;
             b.IssuerRating = m.Rating;
         }
@@ -1642,6 +1733,7 @@ namespace MyFirstMod
             _creditModelNoticePending = false;
             EconomyReader.Reset();
             _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+            _cosmeticRng = new System.Random();
             _issuers.Clear();
             InitIssuersInternal();
             _annualCounter = 0;
@@ -1978,7 +2070,7 @@ namespace MyFirstMod
                 int periods = 60;
 
                 Bond b = MakeBond("Institutional Sovereign Note", face, 0.05f, periods);
-                AssignIssuer(b);
+                AssignIssuer(b, _cosmeticRng);
                 float price = BulkBuyExecPrice(b);
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
@@ -2005,7 +2097,7 @@ namespace MyFirstMod
                     if (face > depthRemaining) break;
 
                     Bond b = MakeBond("Corporate Tranche Note", face, 0.05f, 60);
-                    AssignIssuer(b);
+                    AssignIssuer(b, _cosmeticRng);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
@@ -2034,7 +2126,7 @@ namespace MyFirstMod
                     if (face > depthRemaining) break;
 
                     Bond b = MakeBond("10M Treasury Bond", face, 0.05f, 60);
-                    AssignIssuer(b);
+                    AssignIssuer(b, _cosmeticRng);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
@@ -2410,10 +2502,10 @@ namespace MyFirstMod
             BondMarketState s = new BondMarketState();
             s.NextBondId = _nextBondId; s.NextSwapId = _nextSwapId; s.TickCounter = _tickCounter;
             s.PeriodCounter = _periodCounter; s.DefaultPenalty = _defaultPenalty; s.TotalDefaults = _totalDefaults;
-            s.RealizedPL = _realizedPL; s.SwapPL = _swapPL; s.WindowIndex = _windowIndex;
+            s.RealizedPL = (float)_realizedPL; s.SwapPL = (float)_swapPL; s.WindowIndex = _windowIndex;
             s.Initialized = _initialized; s.TransactionSeq = _transactionSeq; s.PressureHistoryIndex = _pressureHistoryIndex;
             s.PeriodsSinceReport = _periodsSinceReport; s.QuarterNumber = _quarterNumber; s.QuarterDefaults = _quarterDefaults;
-            s.TotalCitizenProceeds = _totalCitizenProceeds; s.LastDefaultPeriod = _debtBook.LastDefaultPeriod;
+            s.TotalCitizenProceeds = (float)_totalCitizenProceeds; s.LastDefaultPeriod = _debtBook.LastDefaultPeriod;
             s.ShortRate = _shortRate; s.CyclePhase = _cyclePhase;
 
             s.CashFlowHistory = (float[])_cashFlowHistory.Clone();

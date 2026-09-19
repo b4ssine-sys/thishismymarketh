@@ -18,17 +18,21 @@ namespace MyFirstMod
     // crashes the tick.
     public static class EconomyReader
     {
-        private static bool _resolved;
-        private static MethodInfo _method;
-        private static int _shape;              // 0 = (Service,out,out); 1 = (Service,SubService,Level,out,out)
-        private static Array _services;         // cached ItemClass.Service values
+        private static volatile bool _resolved;
+        private static volatile MethodInfo _method;
+        private static int _shape;
+        private static Array _services;
         private static bool _servicesCached;
+        private static bool _fallbackLogged;
 
         public static void Reset()
         {
-            _resolved = false;
             _method = null;
+            _resolved = false;
             _shape = 0;
+            _services = null;
+            _servicesCached = false;
+            _fallbackLogged = false;
         }
 
         // Diagnostics (gate G-2): whether the ledger overload was found, and which
@@ -52,8 +56,7 @@ namespace MyFirstMod
 
         private static void Resolve(EconomyManager em)
         {
-            _resolved = true;
-            _method = null;
+            if (_resolved) return;
             try
             {
                 Type t = em.GetType();
@@ -62,16 +65,23 @@ namespace MyFirstMod
                 Type lvl = typeof(ItemClass.Level);
                 Type lref = typeof(long).MakeByRefType();
 
-                _method = t.GetMethod("GetIncomeAndExpenses", new Type[] { svc, sub, lvl, lref, lref });
-                if (_method != null) { _shape = 1; return; }
+                MethodInfo m = t.GetMethod("GetIncomeAndExpenses", new Type[] { svc, sub, lvl, lref, lref });
+                if (m != null) { _shape = 1; _method = m; _resolved = true; return; }
 
-                _method = t.GetMethod("GetIncomeAndExpenses", new Type[] { svc, lref, lref });
-                if (_method != null) { _shape = 0; return; }
+                m = t.GetMethod("GetIncomeAndExpenses", new Type[] { svc, lref, lref });
+                if (m != null) { _shape = 0; _method = m; _resolved = true; return; }
             }
             catch
             {
-                _method = null;
             }
+            _resolved = true;
+        }
+
+        private static void LogFallback()
+        {
+            if (_fallbackLogged) return;
+            _fallbackLogged = true;
+            UnityEngine.Debug.Log("[MyFirstMod] EconomyReader: ledger API unavailable, using balance-delta fallback");
         }
 
         // Sums cumulative operating income and expenses across all services.
@@ -85,25 +95,32 @@ namespace MyFirstMod
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return false;
                 if (!_servicesCached) CacheServices();
-                if (_services == null) return false;
+                Array services = _services;
+                if (services == null) return false;
                 if (!_resolved) Resolve(em);
-                if (_method == null) return false;
+                MethodInfo method = _method;
+                if (method == null)
+                {
+                    LogFallback();
+                    return false;
+                }
+                int shape = _shape;
 
-                int incIdx = _shape == 1 ? 3 : 1;
-                int expIdx = _shape == 1 ? 4 : 2;
+                int incIdx = shape == 1 ? 3 : 1;
+                int expIdx = shape == 1 ? 4 : 2;
 
                 long totalIncome = 0;
                 long totalExpense = 0;
-                for (int i = 0; i < _services.Length; i++)
+                for (int i = 0; i < services.Length; i++)
                 {
-                    ItemClass.Service service = (ItemClass.Service)_services.GetValue(i);
+                    ItemClass.Service service = (ItemClass.Service)services.GetValue(i);
                     if (service == ItemClass.Service.None) continue;
 
-                    object[] args = _shape == 1
+                    object[] args = shape == 1
                         ? new object[] { service, ItemClass.SubService.None, ItemClass.Level.None, 0L, 0L }
                         : new object[] { service, 0L, 0L };
 
-                    _method.Invoke(em, args);
+                    method.Invoke(em, args);
                     totalIncome += (long)args[incIdx];
                     totalExpense += (long)args[expIdx];
                 }
@@ -114,6 +131,7 @@ namespace MyFirstMod
             }
             catch
             {
+                LogFallback();
                 income = 0;
                 expense = 0;
                 return false;
@@ -134,22 +152,29 @@ namespace MyFirstMod
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return false;
                 if (!_resolved) Resolve(em);
-                if (_method == null) return false;
+                MethodInfo method = _method;
+                if (method == null)
+                {
+                    LogFallback();
+                    return false;
+                }
+                int shape = _shape;
 
-                int incIdx = _shape == 1 ? 3 : 1;
-                int expIdx = _shape == 1 ? 4 : 2;
+                int incIdx = shape == 1 ? 3 : 1;
+                int expIdx = shape == 1 ? 4 : 2;
 
-                object[] args = _shape == 1
+                object[] args = shape == 1
                     ? new object[] { service, ItemClass.SubService.None, ItemClass.Level.None, 0L, 0L }
                     : new object[] { service, 0L, 0L };
 
-                _method.Invoke(em, args);
+                method.Invoke(em, args);
                 income = (long)args[incIdx];
                 expense = (long)args[expIdx];
                 return true;
             }
             catch
             {
+                LogFallback();
                 income = 0;
                 expense = 0;
                 return false;

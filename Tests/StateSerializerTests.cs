@@ -18,6 +18,8 @@ namespace MyFirstMod.Tests
             b.PeriodsInArrears = 1;
             b.DefaultedAtPeriod = -1;
             b.IssuePeriod = 7;
+            b.InterestPaid = 456.7f;
+            b.PrincipalRepaid = 789.1f;
             return b;
         }
 
@@ -93,6 +95,8 @@ namespace MyFirstMod.Tests
             Assert.Equal(BondState.Delinquent, ib.State);
             Assert.Equal(1, ib.PeriodsInArrears);
             Assert.Equal(7, ib.IssuePeriod);
+            Assert.Equal(456.7f, ib.InterestPaid, 2);
+            Assert.Equal(789.1f, ib.PrincipalRepaid, 2);
 
             Assert.Single(s2.Portfolio);
             Assert.Single(s2.Market);

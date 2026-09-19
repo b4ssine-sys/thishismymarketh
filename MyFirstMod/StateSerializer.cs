@@ -70,7 +70,7 @@ namespace MyFirstMod
     // save loads by defaulting those. No exception ever escapes TryDeserialize.
     public static class StateSerializer
     {
-        public const byte FORMAT_VERSION = 11;
+        public const byte FORMAT_VERSION = 12;
         private const float EPS = 0.01f;
 
         // ---- FNV-1a 32-bit section checksum ----
@@ -187,6 +187,9 @@ namespace MyFirstMod
             sw.Write((int)b.IssuerRating);
             // v9: revenue source backing (Phase 6, WO-11).
             sw.Write((int)b.Revenue);
+            // v12: interest/principal split (WO-25).
+            sw.Write(b.InterestPaid);
+            sw.Write(b.PrincipalRepaid);
         }
 
         // Sectioned-format bond reader shared by v7 and v8. The 15 core fields are
@@ -215,6 +218,11 @@ namespace MyFirstMod
             if (version >= 9)
             {
                 b.Revenue = (RevenueSource)r.ReadInt32();
+            }
+            if (version >= 12)
+            {
+                b.InterestPaid = r.ReadSingle();
+                b.PrincipalRepaid = r.ReadSingle();
             }
             return b;
         }
@@ -365,7 +373,7 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
 
                 BondMarketState staging;
-                if (version >= 7 && version <= 11)
+                if (version >= 7 && version <= 12)
                     staging = ReadSectioned(r, version);
                 else if (version >= 1 && version <= 6)
                     staging = ReadLegacyFlat(r, version);
