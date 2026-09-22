@@ -1,3 +1,6 @@
+// CI-only stub: compiled solely by Stubs/GameStubs.csproj, which defines
+// GAME_STUBS. Inside the game these would collide with the real assemblies.
+#if GAME_STUBS
 namespace ICities
 {
     public interface IUserMod
@@ -67,3 +70,5 @@ namespace ICities
         public virtual void OnBuildingReleased(ushort id) { }
     }
 }
+
+#endif

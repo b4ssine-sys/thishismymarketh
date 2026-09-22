@@ -1,3 +1,7 @@
+// Test-only: compiled solely by Tests/BondMarket.Tests.csproj, which defines
+// BOND_MARKET_TESTS. The game compiles every .cs under Source\, so without
+// this guard a full repo copy fails in-game (C# 7 syntax, xUnit refs).
+#if BOND_MARKET_TESTS
 using Xunit;
 
 namespace MyFirstMod.Tests
@@ -239,3 +243,5 @@ namespace MyFirstMod.Tests
         }
     }
 }
+
+#endif

@@ -11,7 +11,7 @@
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>7.3</LangVersion>
+    <LangVersion>5</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>MyFirstMod</RootNamespace>

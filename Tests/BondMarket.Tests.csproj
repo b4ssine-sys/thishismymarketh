@@ -16,6 +16,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
+    <DefineConstants>$(DefineConstants);BOND_MARKET_TESTS</DefineConstants>
     <ImplicitUsings>disable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RootNamespace>MyFirstMod.Tests</RootNamespace>
