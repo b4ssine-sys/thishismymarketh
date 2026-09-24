@@ -57,6 +57,7 @@ namespace MyFirstMod
             base.OnLevelUnloading();
             ResidentialBuildingLog.Reset();
             EconomyReader.Reset();
+            TreasuryProbe.Reset();
             BondMarketEngine.Instance = null;
 
             if (_toggleButton != null)

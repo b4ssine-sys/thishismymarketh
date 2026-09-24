@@ -7,10 +7,11 @@ namespace MyFirstMod
         public const string Prefix = "[MyFirstMod] SELF-CHECK";
 
         public static string Format(string modVersion, int saveFormat, bool ledgerBound,
-            string ledgerShape, string gameBuild, string loadMode, bool uiCreated)
+            string ledgerShape, string gameBuild, string loadMode, bool uiCreated,
+            string cashMode)
         {
             return string.Format(
-                "{0} mod={1} save=v{2} ledger={3} ({4}) game={5} mode={6} ui={7}",
+                "{0} mod={1} save=v{2} ledger={3} ({4}) game={5} mode={6} ui={7} cash={8}",
                 Prefix,
                 string.IsNullOrEmpty(modVersion) ? "?" : modVersion,
                 saveFormat,
@@ -18,7 +19,8 @@ namespace MyFirstMod
                 string.IsNullOrEmpty(ledgerShape) ? "unbound" : ledgerShape,
                 string.IsNullOrEmpty(gameBuild) ? "unknown" : gameBuild,
                 string.IsNullOrEmpty(loadMode) ? "?" : loadMode,
-                uiCreated ? "OK" : "FAILED");
+                uiCreated ? "OK" : "FAILED",
+                string.IsNullOrEmpty(cashMode) ? "?" : cashMode);
         }
     }
 }

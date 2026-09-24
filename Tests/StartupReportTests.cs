@@ -13,7 +13,7 @@ namespace MyFirstMod.Tests
         public void Line_CarriesEveryDiagnosticField()
         {
             string line = StartupReport.Format("1.0.0", 12, true,
-                "(Service,out,out)", "1.21.1-f9", "LoadGame", true);
+                "(Service,out,out)", "1.21.1-f9", "LoadGame", true, "live-field");
 
             Assert.StartsWith(StartupReport.Prefix, line);
             Assert.Contains("mod=1.0.0", line);
@@ -22,17 +22,19 @@ namespace MyFirstMod.Tests
             Assert.Contains("game=1.21.1-f9", line);
             Assert.Contains("mode=LoadGame", line);
             Assert.Contains("ui=OK", line);
+            Assert.Contains("cash=live-field", line);
             Assert.DoesNotContain("\n", line);
         }
 
         [Fact]
         public void Line_FlagsFallbackAndUiFailure()
         {
-            string line = StartupReport.Format("1.0.0", 12, false, null, null, "NewGame", false);
+            string line = StartupReport.Format("1.0.0", 12, false, null, null, "NewGame", false, "unbound");
 
             Assert.Contains("ledger=FALLBACK (unbound)", line);
             Assert.Contains("game=unknown", line);
             Assert.Contains("ui=FAILED", line);
+            Assert.Contains("cash=unbound", line);
         }
     }
 }
