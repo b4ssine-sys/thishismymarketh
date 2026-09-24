@@ -30,16 +30,20 @@ namespace MyFirstMod
 
             // Build the UI defensively and log any failure: a silent exception
             // here leaves the player with no icon and no panel and no clue why.
+            bool uiCreated = false;
             try
             {
                 UIView view = UIView.GetAView();
                 _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
                 _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
+                uiCreated = _panel != null && _toggleButton != null;
             }
             catch (Exception e)
             {
                 Debug.LogError("[MyFirstMod] Failed to create bond market UI: " + e);
             }
+
+            SelfCheck.Log(mode.ToString(), uiCreated);
 
             ResidentialBuildingLog.Reset();
             if (ResidentialBuildingLog.Instance != null)

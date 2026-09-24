@@ -47,6 +47,20 @@ namespace MyFirstMod
             }
         }
 
+        // WO-34: bind (idempotently) without reading, for the startup self-check.
+        public static bool Probe()
+        {
+            try
+            {
+                EconomyManager em = Singleton<EconomyManager>.instance;
+                if (em != null && !_resolved) Resolve(em);
+            }
+            catch
+            {
+            }
+            return _method != null;
+        }
+
         private static void CacheServices()
         {
             _servicesCached = true;
