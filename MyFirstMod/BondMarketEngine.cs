@@ -453,6 +453,9 @@ namespace MyFirstMod
 
             lock (_lock)
             {
+                long liveBefore;
+                bool liveBeforeOk = TreasuryProbe.TryRead(out liveBefore);
+
                 if (PendingSaveData != null)
                 {
                     NeedsReset = false;
@@ -521,9 +524,14 @@ namespace MyFirstMod
                 {
                     AgeBondsInternal();
                 }
-            }
 
-            return internalMoneyAmount;
+                // Coupons, maturities, placement proceeds and swap settlements
+                // moved cash during this callback; make the return value carry
+                // them in case the game assigns it to the treasury.
+                long liveAfter = 0L;
+                bool liveOk = liveBeforeOk && TreasuryProbe.TryRead(out liveAfter);
+                return CashSettlement.ReturnValue(internalMoneyAmount, liveOk, liveBefore, liveAfter);
+            }
         }
 
         private void UpdateCashFlowHistory(long internalMoneyAmount)

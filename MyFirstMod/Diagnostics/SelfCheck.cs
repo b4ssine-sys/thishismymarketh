@@ -12,8 +12,10 @@ namespace MyFirstMod
             try
             {
                 bool bound = EconomyReader.Probe();
+                TreasuryProbe.Probe();
                 line = StartupReport.Format(Mod.Version, StateSerializer.FORMAT_VERSION,
-                    bound, EconomyReader.BindingShape, GameBuild(), loadMode, uiCreated);
+                    bound, EconomyReader.BindingShape, GameBuild(), loadMode, uiCreated,
+                    TreasuryProbe.Mode);
             }
             catch (Exception e)
             {

@@ -19,6 +19,9 @@ never skipped silently.
       **Record:** the `[MyFirstMod] SELF-CHECK` line, verbatim.
       Expect `ui=OK` and `save=v12`. `ledger=` answers Gate B's first question:
       which `GetIncomeAndExpenses` overload resolved (the shape in brackets).
+      Expect `cash=live-field`: the engine can read the treasury, so money it
+      moves inside the economy callback survives. `cash=unbound` makes step 2
+      the deciding test.
 - [ ] The toolbar icon (top-left) and Shift+B both open the panel.
 - [ ] A debt-free new city is **not** rated D, and the Emergency Note can be
       issued (RC-1 / WO-18). **Record:** rating shown.

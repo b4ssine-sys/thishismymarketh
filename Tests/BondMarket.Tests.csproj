@@ -38,6 +38,7 @@
     <Compile Include="..\MyFirstMod\Market\PrimaryAuction.cs" Link="Linked\PrimaryAuction.cs" />
     <Compile Include="..\MyFirstMod\Market\Friction.cs" Link="Linked\Friction.cs" />
     <Compile Include="..\MyFirstMod\Diagnostics\StartupReport.cs" Link="Linked\StartupReport.cs" />
+    <Compile Include="..\MyFirstMod\Sim\CashSettlement.cs" Link="Linked\CashSettlement.cs" />
   </ItemGroup>
 
   <ItemGroup>
