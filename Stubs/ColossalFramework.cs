@@ -1,3 +1,6 @@
+// CI-only stub: compiled solely by Stubs/GameStubs.csproj, which defines
+// GAME_STUBS. Inside the game these would collide with the real assemblies.
+#if GAME_STUBS
 namespace ColossalFramework
 {
     public static class Singleton<T> where T : class
@@ -256,3 +259,5 @@ namespace ColossalFramework.UI
         public UIComponent target;
     }
 }
+
+#endif

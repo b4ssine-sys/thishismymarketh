@@ -1,3 +1,4 @@
+using System;
 using ICities;
 using ColossalFramework.UI;
 using UnityEngine;
@@ -13,18 +14,32 @@ namespace MyFirstMod
         {
             base.OnLevelLoaded(mode);
 
-            if (mode != LoadMode.NewGame && mode != LoadMode.LoadGame)
+            // Any mode that puts the player in a playable city. A scenario start
+            // (NewGameFromScenario) is a normal game too; editors are skipped.
+            // Compared by name so this compiles whether or not the game build's
+            // LoadMode enum declares that member.
+            if (mode != LoadMode.NewGame && mode != LoadMode.LoadGame &&
+                mode.ToString() != "NewGameFromScenario")
                 return;
 
             Debug.Log("[MyFirstMod] Level loaded - Municipal Bond Market active.");
 
             BondMarketEngine.NeedsReset = true;
-            if (mode == LoadMode.NewGame)
-                BondMarketEngine.PendingSaveData = null;
+            if (mode != LoadMode.LoadGame)
+                BondMarketEngine.PendingSaveData = null; // fresh city: nothing to restore
 
-            UIView view = UIView.GetAView();
-            _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
-            _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
+            // Build the UI defensively and log any failure: a silent exception
+            // here leaves the player with no icon and no panel and no clue why.
+            try
+            {
+                UIView view = UIView.GetAView();
+                _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
+                _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("[MyFirstMod] Failed to create bond market UI: " + e);
+            }
 
             ResidentialBuildingLog.Reset();
             if (ResidentialBuildingLog.Instance != null)

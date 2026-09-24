@@ -20,6 +20,14 @@ A comprehensive municipal bond market simulation for **Cities: Skylines 1**. Iss
 
 ## Installation
 
+**Quickest:** from the repo root in PowerShell, run `.\deploy.ps1`. It clears
+`Mods\MyFirstMod\Source\` and copies in only the files under `MyFirstMod\`; the
+game compiles them on next launch. Don't copy the whole repo into `Source\`: the
+game compiles every `.cs` it finds there, including build output under `obj\`.
+Mod source must stay C# 5 compatible, and CI enforces that.
+
+**Or build a DLL:**
+
 1. Build the mod DLL targeting .NET Framework 3.5 (Unity Mono).
 2. Place the compiled DLL in your Cities: Skylines mod directory:
    - **Windows**: `%LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\MyFirstMod\`

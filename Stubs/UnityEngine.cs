@@ -1,3 +1,6 @@
+// CI-only stub: compiled solely by Stubs/GameStubs.csproj, which defines
+// GAME_STUBS. Inside the game these would collide with the real assemblies.
+#if GAME_STUBS
 namespace UnityEngine
 {
     public static class Debug
@@ -76,3 +79,5 @@ namespace UnityEngine
     {
     }
 }
+
+#endif
