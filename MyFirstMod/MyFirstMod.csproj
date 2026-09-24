@@ -1,22 +1,47 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    WO-33: the shipped mod DLL. Built against the REAL game assemblies, never
+    the stubs (Directive 01, Gate A: nothing ships from the shim). Players get
+    this DLL through the Workshop, so the game never compiles our source.
+
+    The game's managed DLLs can't be committed. Either edit GameDir below, or:
+      dotnet build MyFirstMod/MyFirstMod.csproj -c Release -p:ManagedDir="<...>/Cities_Data/Managed"
+    CI (.github/workflows/release.yml) fetches them from a repository secret.
+  -->
   <PropertyGroup>
     <!-- Cities: Skylines 1 runs on Unity Mono / .NET Framework 3.5 -->
     <TargetFramework>net35</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>MyFirstMod</AssemblyName>
+    <RootNamespace>MyFirstMod</RootNamespace>
 
-    <!-- Mod version. Bump on each Workshop update and keep in step with Mod.Version. -->
+    <!-- Mod version. Bump on each Workshop update and keep in step with Mod.Version;
+         the release workflow fails if the tag, this and Mod.Version disagree. -->
     <Version>1.0.0</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
 
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+    <NoWarn>0649;0067;0169;0414</NoWarn>
+
     <!-- Built and tested against Cities: Skylines 1.21.1-f9 -->
 
-    <!-- EDIT THIS to your Steam install path -->
-    <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines</GameDir>
-    <ManagedDir>$(GameDir)\Cities_Data\Managed</ManagedDir>
-    <ModsDir>$(LOCALAPPDATA)\Colossal Order\Cities_Skylines\Addons\Mods\$(AssemblyName)</ModsDir>
+    <!-- EDIT THIS to your Steam install path, or pass -p:ManagedDir=... -->
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines</GameDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)\Cities_Data\Managed</ManagedDir>
+    <ModsDir Condition="'$(ModsDir)' == ''">$(LOCALAPPDATA)\Colossal Order\Cities_Skylines\Addons\Mods\$(AssemblyName)</ModsDir>
+    <!-- Copy into the local Mods folder after a build; off on CI and off-Windows. -->
+    <DeployToGame Condition="'$(DeployToGame)' == '' and '$(OS)' == 'Windows_NT' and '$(CI)' == ''">true</DeployToGame>
   </PropertyGroup>
+
+  <!-- Supplies the .NET 3.5 reference assemblies so this builds on any OS. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 
   <!-- Reference the game's DLLs directly; never copy them into your output. -->
   <ItemGroup>
@@ -36,14 +61,19 @@
       <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <!-- Add more as you touch them, e.g. UnityEngine.CoreModule,
-         UnityEngine.IMGUIModule, UnityEngine.UI, ColossalBase, etc. -->
   </ItemGroup>
 
+  <Target Name="RequireGameAssemblies" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ManagedDir)\ICities.dll')"
+           Text="Game assemblies not found in '$(ManagedDir)'. Edit GameDir in MyFirstMod.csproj or pass -p:ManagedDir=&lt;Cities_Skylines&gt;/Cities_Data/Managed." />
+  </Target>
+
   <!-- Copy the built DLL straight into the game's Mods folder after each build. -->
-  <Target Name="Deploy" AfterTargets="Build">
+  <Target Name="Deploy" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
     <MakeDir Directories="$(ModsDir)" />
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(ModsDir)" />
+    <Warning Condition="Exists('$(ModsDir)\Source')"
+             Text="'$(ModsDir)\Source' exists: the game will ALSO compile that source and load the mod twice. Delete it (deploy.ps1 does)." />
   </Target>
 
 </Project>

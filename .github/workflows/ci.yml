@@ -44,3 +44,40 @@ jobs:
 
       - name: Test
         run: dotnet test Tests/BondMarket.Tests.csproj --configuration Release --no-build --verbosity normal
+
+  mod-dll:
+    name: Mod DLL against real game assemblies
+    # WO-33: catches a stub/real API mismatch on every push, before a tag. Skips
+    # with a notice until the CS_MANAGED_ZIP_URL secret is configured.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Versions agree
+        run: bash CI/check-version.sh
+
+      - name: Fetch game assemblies
+        id: fetch
+        env:
+          ZIP_URL: ${{ secrets.CS_MANAGED_ZIP_URL }}
+          ZIP_TOKEN: ${{ secrets.CS_MANAGED_ZIP_TOKEN }}
+          ZIP_SHA256: ${{ secrets.CS_MANAGED_ZIP_SHA256 }}
+        run: |
+          set +e
+          bash CI/fetch-game-assemblies.sh lib/Managed
+          code=$?
+          if [ $code -eq 2 ]; then echo "available=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [ $code -eq 0 ] && echo "available=true" >> "$GITHUB_OUTPUT"
+          exit $code
+
+      - name: Build mod DLL
+        if: steps.fetch.outputs.available == 'true'
+        run: >
+          dotnet build MyFirstMod/MyFirstMod.csproj --configuration Release
+          -p:ManagedDir="$PWD/lib/Managed" -p:DeployToGame=false
