@@ -161,6 +161,7 @@ namespace MyFirstMod
         {
             income = 0;
             expense = 0;
+            if (service == ItemClass.Service.None) return false;
             try
             {
                 EconomyManager em = Singleton<EconomyManager>.instance;
