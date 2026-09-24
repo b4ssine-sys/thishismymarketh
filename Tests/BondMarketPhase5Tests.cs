@@ -214,6 +214,69 @@ namespace MyFirstMod.Tests
         {
             Assert.Equal(20000f, Friction.DepthPerPeriod(100000f), 1);
         }
+
+        // WO-22 mandatory: migration distribution chi-square test. At AAA boundary
+        // (cur=0) with home=AAA and zero hazard, the only possible outcomes are
+        // stay-AAA or downgrade-to-AA. The pre-fix bug let the upgrade branch
+        // (roll < pUp, cur > 0 fails) fall through to the downgrade branch, inflating
+        // downgrades by ~44%. This test runs N trials and verifies the observed
+        // upgrade/stay/downgrade counts match the expected probabilities within a
+        // chi-square threshold.
+        [Fact]
+        public void WO22_MigrateAAA_DistributionMatchesExpected()
+        {
+            int N = 10000;
+            var rng = new DeterministicRandom(12345);
+            int upgrades = 0, stays = 0, downgrades = 0;
+
+            for (int i = 0; i < N; i++)
+            {
+                bool defaulted;
+                CreditRating result = IssuerModel.MigrateAnnual(
+                    CreditRating.AAA, CreditRating.AAA, 0f, rng, out defaulted);
+                Assert.False(defaulted);
+                if ((int)result < (int)CreditRating.AAA) upgrades++;
+                else if (result == CreditRating.AAA) stays++;
+                else downgrades++;
+            }
+
+            // At AAA with home=AAA: pUp = 0.08, pDown = 0.08 (no mean-reversion bias).
+            // But cur=0 means upgrade returns current (AAA), so effective:
+            //   P(stay) = pUp + (1 - pUp - pDown) = 1 - pDown = 0.92
+            //   P(downgrade) = pDown = 0.08
+            //   P(upgrade) = 0
+            Assert.Equal(0, upgrades);
+            float expectedStay = N * 0.92f;
+            float expectedDown = N * 0.08f;
+
+            float chiSq = ((stays - expectedStay) * (stays - expectedStay)) / expectedStay
+                        + ((downgrades - expectedDown) * (downgrades - expectedDown)) / expectedDown;
+
+            // Chi-square critical value for 1 df at p=0.001 is 10.83.
+            Assert.True(chiSq < 10.83f,
+                $"Chi-square {chiSq:F2} exceeds critical value 10.83 (p<0.001). " +
+                $"stays={stays} (exp {expectedStay}), down={downgrades} (exp {expectedDown})");
+        }
+
+        // WO-22: verify CCC boundary clamp prevents fall-through in the opposite direction.
+        [Fact]
+        public void WO22_MigrateCCC_DowngradeClampedToStay()
+        {
+            int N = 5000;
+            var rng = new DeterministicRandom(99);
+            int stayedCCC = 0;
+
+            for (int i = 0; i < N; i++)
+            {
+                bool defaulted;
+                CreditRating result = IssuerModel.MigrateAnnual(
+                    CreditRating.CCC, CreditRating.CCC, 0f, rng, out defaulted);
+                if (defaulted) continue;
+                if (result == CreditRating.CCC) stayedCCC++;
+                Assert.True((int)result <= (int)CreditRating.CCC,
+                    "CCC should never migrate below CCC (only to D via hazard)");
+            }
+        }
     }
 }
 

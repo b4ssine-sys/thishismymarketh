@@ -22,9 +22,14 @@ namespace MyFirstMod
         private const int DEFAULT_DECAY_PER_PERIOD = 1;
         private const int DEFAULT_PENALTY_PER_EVENT = 12;
         private const int MAX_DEFAULT_PENALTY = 60;            // P0-2: cap so sustained default can't run the spike unbounded
-        private const int GRACE_PERIODS = 2;                   // Schema v5: periods delinquent before full default
-        private const float ARREARS_SPREAD = 0.03f;            // Schema v5: arrears accrue at coupon + 300bp
-        private const int DEFAULT_LOCKOUT_PERIODS = 12;        // P0-2: issuance lock-out window after arrears clear
+        // Servicing triad: GRACE_PERIODS, ARREARS_SPREAD, and DEFAULT_LOCKOUT_PERIODS
+        // are coupled. GRACE_PERIODS sets how many missed coupons before hard default;
+        // ARREARS_SPREAD penalizes arrears during grace; DEFAULT_LOCKOUT_PERIODS blocks
+        // new issuance after a default resolves. Changing one without the others skews
+        // the default lifecycle — see DebtBook.ServicePeriod and UpdateState.
+        private const int GRACE_PERIODS = 2;
+        private const float ARREARS_SPREAD = 0.03f;
+        private const int DEFAULT_LOCKOUT_PERIODS = 12;
 
         private readonly float[] _cashFlowHistory = new float[WINDOW_SIZE];
         private int _windowIndex;
@@ -46,8 +51,11 @@ namespace MyFirstMod
         // Phase 2 (P1-1/P1-9): smoothed per-tick operating income/expense that feed
         // the annualized credit model. Sourced from the game ledger when available
         // (EconomyReader), otherwise from the balance-delta proxy window.
-        private float _avgIncomePerTick;
-        private float _avgExpensePerTick;
+        private float _avgIncomePerPeriod;
+        private float _avgExpensePerPeriod;
+        private int _totalTicks;
+        private int _lastFlowSampleTick;
+        private int _measuredTicksPerPeriod = TICKS_PER_PERIOD;
         private long _prevLedgerIncome;
         private long _prevLedgerExpense;
         private bool _ledgerBaselineSet;
@@ -70,15 +78,18 @@ namespace MyFirstMod
         private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
         private readonly System.Text.StringBuilder _detailBuilder = new System.Text.StringBuilder(64); // P2-3: reused
         private readonly object _lock = new object();
+        private volatile EngineSnapshot _snapshot = new EngineSnapshot();
         // Phase 5 (G-1): deterministic, serializable PRNG so stochastic outcomes
         // (issuer migration/default) survive reload and can't be save-scummed.
         private DeterministicRandom _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+        private Random _cosmeticRng = new System.Random();
 
         // Phase 5 (P1-2): market issuers, each with its own migrating credit.
         private readonly List<MarketIssuer> _issuers = new List<MarketIssuer>();
         private float _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
         private float _rateVolatilityScale = 1f;
         private bool _citizenTradingEnabled = true;
+        private bool _revenueBondsEnabled; // quarantined until Gate B; default off
         private int _annualCounter;
 
         private int _tickCounter;
@@ -89,13 +100,13 @@ namespace MyFirstMod
         private bool _resetInProgress; // P0-1: re-entrancy guard for ResetStateInternal
         private int _defaultPenalty;
         private int _totalDefaults;
-        private float _realizedPL;
+        private double _realizedPL;
 
         private const int MAX_ACTIVE_SWAPS = 5;
         private readonly List<InterestRateSwap> _activeSwaps = new List<InterestRateSwap>();
         private int _nextSwapId;
         private float _revenueVolatility;
-        private float _swapPL;
+        private double _swapPL;
 
         private float _demandScore;
         private float _defaultProbability;
@@ -124,7 +135,7 @@ namespace MyFirstMod
         private readonly float[] _pressureHistory = new float[12];
         private int _pressureHistoryIndex;
         private float _citizenProceedsThisPeriod;
-        private float _totalCitizenProceeds;
+        private double _totalCitizenProceeds;
 
         private readonly List<CimTransaction> _transactionLog = new List<CimTransaction>();
         private const int MAX_TRANSACTION_LOG = 50;
@@ -198,6 +209,8 @@ namespace MyFirstMod
         private static readonly float[] MARKET_FACES = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
         private static readonly int[] MARKET_PERIODS = new int[] { 4, 6, 8, 10, 12, 16 };
 
+        public EngineSnapshot Snapshot { get { return _snapshot; } }
+
         public float GrossIncome { get { return _grossIncome; } }
         public float TotalExpenses { get { return _totalExpenses; } }
         public float DebtBurden { get { return _debtBurden; } }
@@ -214,7 +227,7 @@ namespace MyFirstMod
         public float PortfolioValue { get { return _portfolioValue; } }
         public int DefaultPenalty { get { return _defaultPenalty; } }
         public int TotalDefaults { get { return _totalDefaults; } }
-        public float RealizedPL { get { return _realizedPL; } }
+        public float RealizedPL { get { return (float)_realizedPL; } }
         public int TicksInCurrentPeriod { get { return _tickCounter; } }
 
         public int IssuedCount { get { lock (_lock) { return _issuedBonds.Count; } } }
@@ -225,7 +238,7 @@ namespace MyFirstMod
         public int MarketCount { get { lock (_lock) { return _marketBonds.Count; } } }
 
         public float RevenueVolatility { get { return _revenueVolatility; } }
-        public float SwapPL { get { return _swapPL; } }
+        public float SwapPL { get { return (float)_swapPL; } }
         public int SwapCount { get { lock (_lock) { return _activeSwaps.Count; } } }
         public int MaxActiveSwaps { get { return MAX_ACTIVE_SWAPS; } }
 
@@ -259,7 +272,7 @@ namespace MyFirstMod
         public float MarketPressure { get { return _smoothedPressure; } }
         public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
         public float CitizenProceedsThisPeriod { get { return _citizenProceedsThisPeriod; } }
-        public float TotalCitizenProceeds { get { return _totalCitizenProceeds; } }
+        public float TotalCitizenProceeds { get { return (float)_totalCitizenProceeds; } }
         public float Health { get { return _health; } }
         public float Education { get { return _education; } }
         public float LandValue { get { return _landValue; } }
@@ -274,6 +287,7 @@ namespace MyFirstMod
         public float HazardMultiplier { get { return _hazardMultiplier; } set { _hazardMultiplier = value; } }
         public float RateVolatilityScale { get { return _rateVolatilityScale; } set { _rateVolatilityScale = value; } }
         public bool CitizenTradingEnabled { get { return _citizenTradingEnabled; } set { _citizenTradingEnabled = value; } }
+        public bool RevenueBondsEnabled { get { return _revenueBondsEnabled; } set { _revenueBondsEnabled = value; } }
 
         public void GetReportSnapshot(List<QuarterlyReport> dest)
         {
@@ -394,7 +408,7 @@ namespace MyFirstMod
                 {
                     float total = 0f;
                     for (int i = 0; i < _issuedBonds.Count; i++)
-                        total += _issuedBonds[i].CouponsReceived;
+                        total += _issuedBonds[i].InterestPaid;
                     return total;
                 }
             }
@@ -416,6 +430,22 @@ namespace MyFirstMod
         public float GetTemplateFace(int index) { return ISSUE_FACES[index]; }
         public int GetTemplatePeriods(int index) { return ISSUE_PERIODS[index]; }
         public RevenueSource GetTemplateRevenue(int index) { return ISSUE_REVENUE[index]; }
+        public bool IsTemplateAvailable(int index)
+        {
+            if (index < 0 || index >= ISSUE_REVENUE.Length) return false;
+            if (ISSUE_REVENUE[index] != RevenueSource.None && !_revenueBondsEnabled) return false;
+            return true;
+        }
+        public int AvailableTemplateCount
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < ISSUE_REVENUE.Length; i++)
+                    if (IsTemplateAvailable(i)) n++;
+                return n;
+            }
+        }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
@@ -446,6 +476,7 @@ namespace MyFirstMod
 
                 _tickCounter++;
                 _ticksThisPeriod++;
+                _totalTicks++;
                 bool periodBoundary = false;
                 try
                 {
@@ -564,28 +595,34 @@ namespace MyFirstMod
 
             float cashDisplay = (float)internalMoneyAmount / INTERNAL_UNIT_SCALE;
 
-            // Phase 2 (P1-9): source per-tick operating income/expense from the game
-            // ledger when available; otherwise fall back to the balance-delta proxy
-            // (net>0 -> income, net<0 -> expense) smoothed over the window.
-            float tickIncome, tickExpense;
-            bool flowFromLedger = SampleTickOperatingFlow(out tickIncome, out tickExpense);
+            // WO-17: self-derive the sampling cadence so the annualization
+            // factor tracks actual tick spacing, not a hardcoded constant.
+            int elapsed = _totalTicks - _lastFlowSampleTick;
+            if (elapsed > 0) _measuredTicksPerPeriod = elapsed;
+            _lastFlowSampleTick = _totalTicks;
+
+            // Source per-period operating flow from the game ledger when available;
+            // otherwise fall back to the balance-delta proxy scaled by the measured
+            // cadence. The sampler runs once per period, so its raw delta IS per-period.
+            float periodIncome, periodExpense;
+            bool flowFromLedger = SamplePeriodOperatingFlow(out periodIncome, out periodExpense);
             if (flowFromLedger)
             {
-                float a = 1f / WINDOW_SIZE; // ~60-tick EMA to match the window horizon
-                _avgIncomePerTick = _avgIncomePerTick <= 0f ? tickIncome : _avgIncomePerTick + a * (tickIncome - _avgIncomePerTick);
-                _avgExpensePerTick = _avgExpensePerTick <= 0f ? tickExpense : _avgExpensePerTick + a * (tickExpense - _avgExpensePerTick);
+                float a = 0.25f; // ~4-period EMA horizon (per-period stepping)
+                _avgIncomePerPeriod = _avgIncomePerPeriod <= 0f ? periodIncome : _avgIncomePerPeriod + a * (periodIncome - _avgIncomePerPeriod);
+                _avgExpensePerPeriod = _avgExpensePerPeriod <= 0f ? periodExpense : _avgExpensePerPeriod + a * (periodExpense - _avgExpensePerPeriod);
             }
             else
             {
-                _avgIncomePerTick = (totalPositive / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
-                _avgExpensePerTick = (totalNegative / WINDOW_SIZE) / INTERNAL_UNIT_SCALE;
+                _avgIncomePerPeriod = (totalPositive / WINDOW_SIZE) * _measuredTicksPerPeriod / INTERNAL_UNIT_SCALE;
+                _avgExpensePerPeriod = (totalNegative / WINDOW_SIZE) * _measuredTicksPerPeriod / INTERNAL_UNIT_SCALE;
             }
 
-            // Phase 2 (P1-1): annualized credit metrics via the pure CreditModel -
-            // no more per-tick / per-period unit mix, no cash-threshold DSCR fudge.
+            // RC-1: annualized credit metrics via the pure CreditModel.
+            // Per-period averages × periodsPerYear — no tick factor.
             CreditMetrics cm = CreditModel.CalculateMetrics(
-                _avgIncomePerTick, _avgExpensePerTick, _debtBook, cashDisplay,
-                TICKS_PER_PERIOD, BondPricing.PeriodsPerYear);
+                _avgIncomePerPeriod, _avgExpensePerPeriod, _debtBook, cashDisplay,
+                BondPricing.PeriodsPerYear);
 
             _grossIncome = cm.AnnualOperatingRevenue;
             _totalExpenses = cm.AnnualOperatingExpense;
@@ -614,15 +651,16 @@ namespace MyFirstMod
             {
                 _g2DiagSamples++;
                 Debug.Log(string.Format(
-                    "[MyFirstMod] G-2 sample {0}/3 (run {1}) | bound={2} shape={3} | flow source={4} | raw tick inc/exp={5:F1}/{6:F1} | annualized rev/exp/NOI={7:F0}/{8:F0}/{9:F0} | DSCR={10:F2} burden={11:F3} reserves={12:F1}mo | rating={13}",
+                    "[MyFirstMod] G-2 sample {0}/3 (run {1}) | bound={2} shape={3} | flow source={4} | period inc/exp={5:F1}/{6:F1} (cadence={14}t) | annualized rev/exp/NOI={7:F0}/{8:F0}/{9:F0} | DSCR={10:F2} burden={11:F3} reserves={12:F1}mo | rating={13}",
                     _g2DiagSamples, _metricRuns,
                     EconomyReader.MethodResolved,
                     EconomyReader.BindingShape,
                     flowFromLedger ? "GAME LEDGER" : "balance-delta fallback",
-                    tickIncome, tickExpense,
+                    periodIncome, periodExpense,
                     _grossIncome, _totalExpenses, _noi,
                     _dscr, _debtBurden, _monthsOfReserves,
-                    BondPricing.RatingLabel(_rating)));
+                    BondPricing.RatingLabel(_rating),
+                    _measuredTicksPerPeriod));
             }
 
             // Phase 4 (P1-4/P1-5): the exogenous short rate evolves once per period
@@ -660,7 +698,8 @@ namespace MyFirstMod
             _requiredYield = baseYield + defaultSpike;
 
             float totalWealth = cashDisplay + _portfolioValue;
-            float wealthBase = _avgIncomePerTick * WINDOW_SIZE;
+            float periodsInWindow = (float)WINDOW_SIZE / _measuredTicksPerPeriod;
+            float wealthBase = _avgIncomePerPeriod * periodsInWindow;
             if (wealthBase < 50000f) wealthBase = 50000f;
             float wealthRatio = totalWealth / wealthBase;
             if (wealthRatio < 0f) wealthRatio = 0f;
@@ -730,6 +769,8 @@ namespace MyFirstMod
             _prevRequiredYield = _requiredYield;
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
                 _population, _landValue, _education, _employmentRate, _demandScore);
+
+            PublishSnapshot();
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -747,6 +788,89 @@ namespace MyFirstMod
             if (totalDebtFace <= 0f)
                 return hedgedNotional > 0f ? 2f : 0f;
             return (hedgedNotional - totalDebtFace) / totalDebtFace;
+        }
+
+        private void PublishSnapshot()
+        {
+            var s = new EngineSnapshot();
+            s.GrossIncome = _grossIncome;
+            s.TotalExpenses = _totalExpenses;
+            s.DebtBurden = _debtBurden;
+            s.DSCR = _dscr;
+            s.MonthsOfReserves = _monthsOfReserves;
+            s.NOI = _noi;
+            s.Rating = _rating;
+            s.BenchmarkRate = _benchmarkRate;
+            s.RequiredYield = _requiredYield;
+            s.PortfolioValue = _portfolioValue;
+            s.DefaultPenalty = _defaultPenalty;
+            s.TotalDefaults = _totalDefaults;
+            s.RealizedPL = (float)_realizedPL;
+            s.TicksInCurrentPeriod = _tickCounter;
+            s.IssuedCount = _issuedBonds.Count;
+            s.PortfolioCount = _portfolioBonds.Count;
+            s.MarketCount = _marketBonds.Count;
+            s.RevenueVolatility = _revenueVolatility;
+            s.SwapPL = (float)_swapPL;
+            s.SwapCount = _activeSwaps.Count;
+            s.DemandScore = _demandScore;
+            s.DefaultProbability = _defaultProbability;
+            s.AbsorptionCapacity = _absorptionCapacity;
+
+            float currentFace = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                currentFace += _issuedBonds[i].FaceValue;
+            float remCap = _absorptionCapacity - currentFace;
+            s.RemainingCapacity = remCap > 0f ? remCap : 0f;
+
+            s.Population = _population;
+            s.Happiness = _happiness;
+            s.EmploymentRate = _employmentRate;
+            s.PopulationGrowth = _populationGrowth;
+            s.CitizenConfidence = _citizenConfidence;
+            s.BondAppeal = _bondAppeal;
+            s.FinancialHealth = _financialHealth;
+            s.CitizenBuyVolume = _citizenBuyVolume;
+            s.CitizenSellVolume = _citizenSellVolume;
+            s.SmoothedPressure = _smoothedPressure;
+            s.CitizenProceedsThisPeriod = _citizenProceedsThisPeriod;
+            s.TotalCitizenProceeds = (float)_totalCitizenProceeds;
+            s.Health = _health;
+            s.Education = _education;
+            s.LandValue = _landValue;
+            s.CrimeRate = _crimeRate;
+            s.CashReserves = _cashReserves;
+            s.CityVitals = _cityVitals;
+            s.Momentum = CimDemandEngine.CalculateMomentumMultiplier(_currentMarketState, _previousMarketState, 1.5f);
+            s.TransactionLogCount = _transactionLog.Count;
+            s.ReportCount = _reportHistory.Count;
+            s.CurrentQuarter = _quarterNumber;
+
+            float debtFace = 0f;
+            float debtOwed = 0f;
+            float couponsPaidTotal = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+            {
+                Bond ib = _issuedBonds[i];
+                debtFace += ib.SubscribedFace;
+                float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
+                debtOwed += ib.SubscribedFace + rc + ib.Arrears;
+                couponsPaidTotal += ib.InterestPaid;
+            }
+            s.TotalDebtFace = debtFace;
+            s.TotalDebtOwed = debtOwed;
+            s.TotalCouponsPaid = couponsPaidTotal;
+
+            float hedged = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedged += _activeSwaps[i].NotionalAmount;
+            s.TotalHedgedNotional = hedged;
+            s.OverHedgeRatio = CalculateOverHedgeRatioInternal();
+            s.CreditStatusLabel = CreditStatusLabel;
+            s.DemandLabelText = CimDemandEngine.DemandLabel(_demandScore);
+            s.PressureLabelText = CimDemandEngine.PressureLabel(_smoothedPressure);
+
+            _snapshot = s;
         }
 
         private void ReadCityDemographicsInternal(float cashDisplay)
@@ -869,11 +993,11 @@ namespace MyFirstMod
         // the game exposes no usable data (e.g. very early in a load).
         private void ApplyFallbackDemographicsInternal()
         {
-            float avgIncome = _avgIncomePerTick;
-            float avgExpense = _avgExpensePerTick;
+            float avgIncome = _avgIncomePerPeriod;
+            float avgExpense = _avgExpensePerPeriod;
             float dscrH = Math.Min(Math.Max(_dscr / 3f, 0f), 1f);
 
-            if (_population < 100) _population = Math.Max(100, (int)(avgIncome * 10f));
+            if (_population < 100) _population = Math.Max(100, (int)(avgIncome / _measuredTicksPerPeriod * 10f));
             _happiness = dscrH;
             if (_health <= 0f) _health = dscrH * 0.8f + 0.2f;
             if (_education <= 0f) _education = 0.5f;
@@ -888,15 +1012,14 @@ namespace MyFirstMod
             return _debtBook.PeriodCouponTotal(BondPricing.PeriodsPerYear);
         }
 
-        // Phase 2 (P1-9): per-tick operating income/expense from the game ledger.
-        // The ledger accumulators are cumulative, so we difference against the
-        // previous sample. Returns false on the first sample (no baseline), on an
-        // accumulator reset, or when the ledger API is unavailable - the caller
-        // then falls back to the balance-delta proxy.
-        private bool SampleTickOperatingFlow(out float tickIncome, out float tickExpense)
+        // WO-17: per-period operating flow from the game ledger. Called once per
+        // period, so the raw delta between cumulative samples IS one period's
+        // worth of flow. Returns false on the first sample (no baseline), on an
+        // accumulator reset, or when the ledger API is unavailable.
+        private bool SamplePeriodOperatingFlow(out float periodIncome, out float periodExpense)
         {
-            tickIncome = 0f;
-            tickExpense = 0f;
+            periodIncome = 0f;
+            periodExpense = 0f;
 
             long incCum, expCum;
             if (!EconomyReader.TryReadCumulative(out incCum, out expCum))
@@ -917,8 +1040,8 @@ namespace MyFirstMod
 
             if (di < 0 || de < 0) return false; // accumulator rolled over / reset
 
-            tickIncome = (float)di / INTERNAL_UNIT_SCALE;
-            tickExpense = (float)de / INTERNAL_UNIT_SCALE;
+            periodIncome = (float)di / INTERNAL_UNIT_SCALE;
+            periodExpense = (float)de / INTERNAL_UNIT_SCALE;
             return true;
         }
 
@@ -940,7 +1063,7 @@ namespace MyFirstMod
                 }
                 else
                 {
-                    float couponPayment = (b.FaceValue * b.CouponRate) / BondPricing.PeriodsPerYear;
+                    float couponPayment = (b.OutstandingPrincipal * b.CouponRate) / BondPricing.PeriodsPerYear;
                     long couponInternal = (long)(couponPayment * INTERNAL_UNIT_SCALE);
                     if (couponInternal > 0)
                     {
@@ -993,15 +1116,12 @@ namespace MyFirstMod
                 _periodsSinceReport = 0;
                 GenerateQuarterlyReportInternal();
             }
+
+            PublishSnapshot();
         }
 
         private void ServiceIssuedBondsInternal()
         {
-            // Schema v5: servicing is owned by the DebtBook. It pays arrears,
-            // coupon, then principal per bond from a single cash budget (what the
-            // live cursor affords), rolls shortfalls into arrears, and transitions
-            // the lifecycle. We move exactly the cash it reports consuming, and
-            // fold the counts into the narrative penalty.
             float budget = (float)_tickCash / INTERNAL_UNIT_SCALE;
             int missed, newDefaults;
             float cashPaid = _debtBook.ServicePeriod(
@@ -1010,9 +1130,13 @@ namespace MyFirstMod
                 out missed, out newDefaults);
 
             if (cashPaid > 0f)
-                SpendCashUpTo((long)(cashPaid * INTERNAL_UNIT_SCALE));
+            {
+                long wanted = (long)(cashPaid * INTERNAL_UNIT_SCALE);
+                long actual = SpendCashUpTo(wanted);
+                if (actual < wanted)
+                    _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
+            }
 
-            // Narrative counters (no longer the source of truth for rating/issuance).
             if (newDefaults > 0)
             {
                 _defaultPenalty = Math.Min(
@@ -1048,10 +1172,7 @@ namespace MyFirstMod
                 {
                     long cashInternal = (long)(-netPayment * INTERNAL_UNIT_SCALE);
                     if (cashInternal > 0 && !TrySpendCash(cashInternal))
-                    {
-                        _activeSwaps.RemoveAt(i);
-                        continue;
-                    }
+                        swap.UnpaidSettlement += -netPayment;
                 }
 
                 swap.LastSettlement = netPayment;
@@ -1199,7 +1320,7 @@ namespace MyFirstMod
                 float rc = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
                 debtOwed += ib.SubscribedFace + rc + ib.Arrears;
                 totalSub += ib.PlacedFraction;
-                couponsPaid += ib.CouponsReceived;
+                couponsPaid += ib.InterestPaid;
             }
             rp.DebtFace = debtFace;
             rp.DebtOwed = debtOwed;
@@ -1221,8 +1342,8 @@ namespace MyFirstMod
                 hedged += _activeSwaps[i].NotionalAmount;
             rp.HedgedNotional = hedged;
 
-            rp.RealizedPL = _realizedPL;
-            rp.SwapPL = _swapPL;
+            rp.RealizedPL = (float)_realizedPL;
+            rp.SwapPL = (float)_swapPL;
             rp.RevenueVolatility = _revenueVolatility;
             rp.Happiness = _happiness;
             rp.EmploymentRate = _employmentRate;
@@ -1230,7 +1351,7 @@ namespace MyFirstMod
             rp.CitizenConfidence = _citizenConfidence;
             rp.BondAppeal = _bondAppeal;
             rp.FinancialHealth = _financialHealth;
-            rp.CitizenProceeds = _totalCitizenProceeds;
+            rp.CitizenProceeds = (float)_totalCitizenProceeds;
             rp.Outlook = GenerateOutlookInternal();
 
             _reportHistory.Add(rp);
@@ -1277,7 +1398,7 @@ namespace MyFirstMod
             _marketBonds.Add(MakeBond("Capital Improvement Bond", 200000f, 0.058f, 12));
             for (int i = 0; i < _marketBonds.Count; i++)
             {
-                AssignIssuer(_marketBonds[i]);
+                AssignIssuer(_marketBonds[i], _rng);
                 _marketBonds[i].CouponRate = IssuerYieldFor(_marketBonds[i]); // price near par at issuer credit
             }
         }
@@ -1319,10 +1440,10 @@ namespace MyFirstMod
             return null;
         }
 
-        private void AssignIssuer(Bond b)
+        private void AssignIssuer(Bond b, Random rng)
         {
             if (_issuers.Count == 0) InitIssuersInternal();
-            MarketIssuer m = _issuers[_rng.Next(_issuers.Count)];
+            MarketIssuer m = _issuers[rng.Next(_issuers.Count)];
             b.IssuerName = m.Name;
             b.IssuerRating = m.Rating;
         }
@@ -1406,6 +1527,14 @@ namespace MyFirstMod
             float mid = BondPricing.PresentValue(b, IssuerYieldFor(b));
             float depth = Friction.DepthPerPeriod(b.FaceValue);
             return Friction.ExecutionPrice(mid, true, b.IssuerRating, BondDurationYears(b), mid, depth);
+        }
+
+        private float TotalMarketDepth()
+        {
+            float totalFace = 0f;
+            for (int i = 0; i < _marketBonds.Count; i++)
+                totalFace += _marketBonds[i].FaceValue;
+            return totalFace * 100f;
         }
 
         private Bond MakeBond(string name, float face, float coupon, int periods)
@@ -1534,12 +1663,11 @@ namespace MyFirstMod
         private bool TrySpendCash(long internalAmount)
         {
             if (internalAmount <= 0L) return true;
-            // P0-6: affordability is checked against the live cursor, not the
-            // stale LastCashAmount, so repeated spends in one tick can't all
-            // approve against the same pre-tick balance.
             if (_tickCash < internalAmount) return false;
-            SpendCashUpTo(internalAmount);
-            return true;
+            long actual = SpendCashUpTo(internalAmount);
+            if (actual == internalAmount) return true;
+            if (actual > 0L) AddCashToCity(actual);
+            return false;
         }
 
         // Returns the amount the game actually added (P0-7). Callers that don't
@@ -1598,15 +1726,19 @@ namespace MyFirstMod
             _cashSamples = 0;
             _tickCash = 0;
             _modCashDeltaPending = 0;
-            _avgIncomePerTick = 0f;
-            _avgExpensePerTick = 0f;
+            _avgIncomePerPeriod = 0f;
+            _avgExpensePerPeriod = 0f;
             _prevLedgerIncome = 0;
             _prevLedgerExpense = 0;
             _ledgerBaselineSet = false;
+            _totalTicks = 0;
+            _lastFlowSampleTick = 0;
+            _measuredTicksPerPeriod = TICKS_PER_PERIOD;
             _monthsOfReserves = 0f;
             _creditModelNoticePending = false;
             EconomyReader.Reset();
             _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
+            _cosmeticRng = new System.Random();
             _issuers.Clear();
             InitIssuersInternal();
             _annualCounter = 0;
@@ -1643,6 +1775,7 @@ namespace MyFirstMod
             _hazardMultiplier = IssuerModel.HAZARD_STANDARD;
             _rateVolatilityScale = 1f;
             _citizenTradingEnabled = true;
+            _revenueBondsEnabled = false;
             _demandScore = 0f;
             _defaultProbability = 0f;
             _cityVitals = 0f;
@@ -1797,10 +1930,15 @@ namespace MyFirstMod
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
 
+                SeedTickCashFromGame();
+
                 string name = ISSUE_NAMES[optionIndex];
                 float face = ISSUE_FACES[optionIndex];
                 int periods = ISSUE_PERIODS[optionIndex];
                 RevenueSource revSrc = ISSUE_REVENUE[optionIndex];
+
+                if (revSrc != RevenueSource.None && !_revenueBondsEnabled)
+                    return false;
 
                 float currentFace = 0f;
                 for (int i = 0; i < _issuedBonds.Count; i++)
@@ -1847,6 +1985,8 @@ namespace MyFirstMod
                     return false;
                 if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
                     return false;
+
+                SeedTickCashFromGame();
 
                 EconomyManager em = Singleton<EconomyManager>.instance;
                 if (em == null) return false;
@@ -1914,7 +2054,13 @@ namespace MyFirstMod
                     _periodCounter, budget, DEFAULT_LOCKOUT_PERIODS, out retired, out partial);
 
                 if (spent > 0f)
-                    SpendCashUpTo((long)(spent * INTERNAL_UNIT_SCALE));
+                {
+                    long wanted = (long)(spent * INTERNAL_UNIT_SCALE);
+                    long actual = SpendCashUpTo(wanted);
+                    if (actual < wanted)
+                        _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
+                    spent = (float)actual / INTERNAL_UNIT_SCALE;
+                }
 
                 result.Retired = retired;
                 result.PartialPaydown = partial && retired == 0;
@@ -1929,12 +2075,12 @@ namespace MyFirstMod
             {
                 SeedTickCashFromGame();
                 float face = 1000000000f;
+                if (face > TotalMarketDepth()) return false;
                 int periods = 60;
 
                 Bond b = MakeBond("Institutional Sovereign Note", face, 0.05f, periods);
-                AssignIssuer(b);
-                b.CouponRate = IssuerYieldFor(b);
-                float price = BulkBuyExecPrice(b); // P1-8: half-spread + depth impact
+                AssignIssuer(b, _cosmeticRng);
+                float price = BulkBuyExecPrice(b);
                 long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
                 if (!TrySpendCash(priceInternal))
@@ -1950,28 +2096,23 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return 0;
                 SeedTickCashFromGame();
-                long remaining = em.LastCashAmount;
-
-                int periods = 60;
+                float depthRemaining = TotalMarketDepth();
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("Corporate Tranche Note", 1000000f, 0.05f, periods);
-                    AssignIssuer(b);
-                    b.CouponRate = IssuerYieldFor(b);
+                    float face = 1000000f;
+                    if (face > depthRemaining) break;
+
+                    Bond b = MakeBond("Corporate Tranche Note", face, 0.05f, 60);
+                    AssignIssuer(b, _cosmeticRng);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
-                    if (remaining < priceInternal)
-                        break;
+                    if (!TrySpendCash(priceInternal)) break;
 
-                    remaining -= priceInternal;
-                    if (!TrySpendCash(priceInternal))
-                        break;
+                    depthRemaining -= face;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
@@ -1984,28 +2125,23 @@ namespace MyFirstMod
         {
             lock (_lock)
             {
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return 0;
                 SeedTickCashFromGame();
-                long remaining = em.LastCashAmount;
-
-                int periods = 60;
+                float depthRemaining = TotalMarketDepth();
                 int bought = 0;
 
                 for (int i = 0; i < 10; i++)
                 {
-                    Bond b = MakeBond("10M Treasury Bond", 10000000f, 0.05f, periods);
-                    AssignIssuer(b);
-                    b.CouponRate = IssuerYieldFor(b);
+                    float face = 10000000f;
+                    if (face > depthRemaining) break;
+
+                    Bond b = MakeBond("10M Treasury Bond", face, 0.05f, 60);
+                    AssignIssuer(b, _cosmeticRng);
                     float price = BulkBuyExecPrice(b);
                     long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
 
-                    if (remaining < priceInternal)
-                        break;
+                    if (!TrySpendCash(priceInternal)) break;
 
-                    remaining -= priceInternal;
-                    if (!TrySpendCash(priceInternal))
-                        break;
+                    depthRemaining -= face;
                     b.PurchasePrice = price;
                     _portfolioBonds.Add(b);
                     bought++;
@@ -2020,6 +2156,8 @@ namespace MyFirstMod
             {
                 if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
                     return false;
+                for (int j = 0; j < _activeSwaps.Count; j++)
+                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
                 if (notional <= 0f || periods <= 0)
                     return false;
 
@@ -2172,6 +2310,8 @@ namespace MyFirstMod
             {
                 if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
                     return false;
+                for (int j = 0; j < _activeSwaps.Count; j++)
+                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
                 if (_issuedBonds.Count == 0)
                     return false;
 
@@ -2371,10 +2511,10 @@ namespace MyFirstMod
             BondMarketState s = new BondMarketState();
             s.NextBondId = _nextBondId; s.NextSwapId = _nextSwapId; s.TickCounter = _tickCounter;
             s.PeriodCounter = _periodCounter; s.DefaultPenalty = _defaultPenalty; s.TotalDefaults = _totalDefaults;
-            s.RealizedPL = _realizedPL; s.SwapPL = _swapPL; s.WindowIndex = _windowIndex;
+            s.RealizedPL = (float)_realizedPL; s.SwapPL = (float)_swapPL; s.WindowIndex = _windowIndex;
             s.Initialized = _initialized; s.TransactionSeq = _transactionSeq; s.PressureHistoryIndex = _pressureHistoryIndex;
             s.PeriodsSinceReport = _periodsSinceReport; s.QuarterNumber = _quarterNumber; s.QuarterDefaults = _quarterDefaults;
-            s.TotalCitizenProceeds = _totalCitizenProceeds; s.LastDefaultPeriod = _debtBook.LastDefaultPeriod;
+            s.TotalCitizenProceeds = (float)_totalCitizenProceeds; s.LastDefaultPeriod = _debtBook.LastDefaultPeriod;
             s.ShortRate = _shortRate; s.CyclePhase = _cyclePhase;
 
             s.CashFlowHistory = (float[])_cashFlowHistory.Clone();
@@ -2392,6 +2532,7 @@ namespace MyFirstMod
             s.HazardMultiplier = _hazardMultiplier;
             s.RateVolatilityScale = _rateVolatilityScale;
             s.CitizenTradingEnabled = _citizenTradingEnabled;
+            s.RevenueBondsEnabled = _revenueBondsEnabled;
             return s;
         }
 
@@ -2438,12 +2579,16 @@ namespace MyFirstMod
             _hazardMultiplier = s.HazardMultiplier;
             _rateVolatilityScale = s.RateVolatilityScale;
             _citizenTradingEnabled = s.CitizenTradingEnabled;
+            _revenueBondsEnabled = s.RevenueBondsEnabled;
 
             _cashSamples = WINDOW_SIZE; // the window array is restored; treat it as populated
             _prevMoneySet = false;      // re-baseline cash tracking on the first tick after load
             _ledgerBaselineSet = false; // re-baseline the ledger diff after load
-            _avgIncomePerTick = 0f;     // EMAs warm back up from the restored window
-            _avgExpensePerTick = 0f;
+            _avgIncomePerPeriod = 0f;     // EMAs warm back up from the restored window
+            _avgExpensePerPeriod = 0f;
+            _totalTicks = 0;
+            _lastFlowSampleTick = 0;
+            _measuredTicksPerPeriod = TICKS_PER_PERIOD;
             _ticksThisPeriod = 0;
             _lastGameMonth = -1;
             _periodMetricsInitialized = false;

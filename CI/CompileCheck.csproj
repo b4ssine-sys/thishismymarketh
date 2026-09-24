@@ -8,44 +8,33 @@
 
     Gate A acceptance: introduce a deliberately wrong member reference in
     a mod file and verify CI goes red; revert and verify CI goes green.
+
+    This build is a type check only. The DLL it produces references the stub
+    assembly and never ships (Directive 01, Gate A); the shipped DLL comes from
+    MyFirstMod/MyFirstMod.csproj built against the real game assemblies.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net35</TargetFramework>
     <LangVersion>5</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>MyFirstMod</RootNamespace>
     <OutputType>Library</OutputType>
     <NoWarn>0649;0067;0169;0414</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Stubs\GameStubs.csproj" />
   </ItemGroup>
 
-  <!-- Link every mod source file. Single source of truth; no copies. -->
+  <!-- Every mod source file, by glob, so a new file can never miss the gate. -->
   <ItemGroup>
-    <Compile Include="..\MyFirstMod\BondMarket.cs" Link="Linked\BondMarket.cs" />
-    <Compile Include="..\MyFirstMod\BondMarketEngine.cs" Link="Linked\BondMarketEngine.cs" />
-    <Compile Include="..\MyFirstMod\BondMarketPanel.cs" Link="Linked\BondMarketPanel.cs" />
-    <Compile Include="..\MyFirstMod\CimDemandEngine.cs" Link="Linked\CimDemandEngine.cs" />
-    <Compile Include="..\MyFirstMod\Credit\CreditModel.cs" Link="Linked\CreditModel.cs" />
-    <Compile Include="..\MyFirstMod\Credit\IssuerModel.cs" Link="Linked\IssuerModel.cs" />
-    <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
-    <Compile Include="..\MyFirstMod\DebtBook.cs" Link="Linked\DebtBook.cs" />
-    <Compile Include="..\MyFirstMod\Loading.cs" Link="Linked\Loading.cs" />
-    <Compile Include="..\MyFirstMod\Localization.cs" Link="Linked\Localization.cs" />
-    <Compile Include="..\MyFirstMod\Market\DeterministicRandom.cs" Link="Linked\DeterministicRandom.cs" />
-    <Compile Include="..\MyFirstMod\Market\Friction.cs" Link="Linked\Friction.cs" />
-    <Compile Include="..\MyFirstMod\Market\PrimaryAuction.cs" Link="Linked\PrimaryAuction.cs" />
-    <Compile Include="..\MyFirstMod\Market\RateProcess.cs" Link="Linked\RateProcess.cs" />
-    <Compile Include="..\MyFirstMod\Mod.cs" Link="Linked\Mod.cs" />
-    <Compile Include="..\MyFirstMod\Pricing\SwapPricing.cs" Link="Linked\SwapPricing.cs" />
-    <Compile Include="..\MyFirstMod\Pricing\YieldCurve.cs" Link="Linked\YieldCurve.cs" />
-    <Compile Include="..\MyFirstMod\ResidentialBuildingLog.cs" Link="Linked\ResidentialBuildingLog.cs" />
-    <Compile Include="..\MyFirstMod\SaveDataExtension.cs" Link="Linked\SaveDataExtension.cs" />
-    <Compile Include="..\MyFirstMod\Sim\EconomyReader.cs" Link="Linked\EconomyReader.cs" />
-    <Compile Include="..\MyFirstMod\StateSerializer.cs" Link="Linked\StateSerializer.cs" />
+    <Compile Include="..\MyFirstMod\**\*.cs" Exclude="..\MyFirstMod\bin\**;..\MyFirstMod\obj\**" LinkBase="Linked" />
   </ItemGroup>
 
 </Project>

@@ -41,6 +41,7 @@ namespace MyFirstMod
         public float HazardMultiplier = IssuerModel.HAZARD_STANDARD;
         public float RateVolatilityScale = 1f;
         public bool CitizenTradingEnabled = true;
+        public bool RevenueBondsEnabled;
 
         // windows
         public float[] CashFlowHistory = new float[0];
@@ -69,7 +70,7 @@ namespace MyFirstMod
     // save loads by defaulting those. No exception ever escapes TryDeserialize.
     public static class StateSerializer
     {
-        public const byte FORMAT_VERSION = 9;
+        public const byte FORMAT_VERSION = 12;
         private const float EPS = 0.01f;
 
         // ---- FNV-1a 32-bit section checksum ----
@@ -133,6 +134,7 @@ namespace MyFirstMod
                 sw.Write(s.HazardMultiplier);
                 sw.Write(s.RateVolatilityScale);
                 sw.Write(s.CitizenTradingEnabled);
+                sw.Write(s.RevenueBondsEnabled);
                 WriteSection(w, sec);
             }
 
@@ -185,6 +187,9 @@ namespace MyFirstMod
             sw.Write((int)b.IssuerRating);
             // v9: revenue source backing (Phase 6, WO-11).
             sw.Write((int)b.Revenue);
+            // v12: interest/principal split (WO-25).
+            sw.Write(b.InterestPaid);
+            sw.Write(b.PrincipalRepaid);
         }
 
         // Sectioned-format bond reader shared by v7 and v8. The 15 core fields are
@@ -214,6 +219,11 @@ namespace MyFirstMod
             {
                 b.Revenue = (RevenueSource)r.ReadInt32();
             }
+            if (version >= 12)
+            {
+                b.InterestPaid = r.ReadSingle();
+                b.PrincipalRepaid = r.ReadSingle();
+            }
             return b;
         }
 
@@ -228,19 +238,20 @@ namespace MyFirstMod
                     InterestRateSwap s = swaps[i];
                     sw.Write(s.Id); sw.Write(s.NotionalAmount); sw.Write(s.FixedRate);
                     sw.Write(s.TotalPeriods); sw.Write(s.RemainingPeriods); sw.Write(s.PayFixed);
-                    sw.Write(s.CumulativePL); sw.Write(s.LastSettlement);
+                    sw.Write(s.CumulativePL); sw.Write(s.LastSettlement); sw.Write(s.UnpaidSettlement);
                 }
                 WriteSection(w, sec);
             }
         }
 
-        private static InterestRateSwap ReadSwap(BinaryReader r)
+        private static InterestRateSwap ReadSwap(BinaryReader r, byte version)
         {
             string id = r.ReadString(); float notional = r.ReadSingle(); float fixedRate = r.ReadSingle();
             int totalP = r.ReadInt32(); int remainP = r.ReadInt32(); bool payFixed = r.ReadBoolean();
             float cumPL = r.ReadSingle(); float lastS = r.ReadSingle();
             InterestRateSwap s = new InterestRateSwap(id, notional, fixedRate, totalP, payFixed);
             s.RemainingPeriods = remainP; s.CumulativePL = cumPL; s.LastSettlement = lastS;
+            if (version >= 11) s.UnpaidSettlement = r.ReadSingle();
             return s;
         }
 
@@ -333,6 +344,7 @@ namespace MyFirstMod
         {
             BinaryReader sr = ReadSection(r);
             int n = sr.ReadInt32();
+            if (n < 0 || n > 1000) throw new InvalidDataException("issuer count");
             List<MarketIssuer> list = new List<MarketIssuer>();
             for (int i = 0; i < n; i++)
             {
@@ -362,7 +374,7 @@ namespace MyFirstMod
                 byte version = r.ReadByte();
 
                 BondMarketState staging;
-                if (version >= 7 && version <= 9)
+                if (version >= 7 && version <= 12)
                     staging = ReadSectioned(r, version);
                 else if (version >= 1 && version <= 6)
                     staging = ReadLegacyFlat(r, version);
@@ -418,6 +430,8 @@ namespace MyFirstMod
                 s.HazardMultiplier = sc.ReadSingle();
                 s.RateVolatilityScale = sc.ReadSingle();
                 s.CitizenTradingEnabled = sc.ReadBoolean();
+                if (version >= 10)
+                    s.RevenueBondsEnabled = sc.ReadBoolean();
             }
 
             s.CashFlowHistory = ReadFloatArraySection(r);
@@ -429,14 +443,17 @@ namespace MyFirstMod
 
             BinaryReader sw = ReadSection(r);
             int swapCount = sw.ReadInt32();
-            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(sw));
+            if (swapCount < 0 || swapCount > 10000) throw new InvalidDataException("swap count");
+            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(sw, version));
 
             BinaryReader tr = ReadSection(r);
             int txCount = tr.ReadInt32();
+            if (txCount < 0 || txCount > 100000) throw new InvalidDataException("transaction count");
             for (int i = 0; i < txCount; i++) s.Transactions.Add(ReadTransaction(tr));
 
             BinaryReader rr = ReadSection(r);
             int repCount = rr.ReadInt32();
+            if (repCount < 0 || repCount > 10000) throw new InvalidDataException("report count");
             for (int i = 0; i < repCount; i++) s.Reports.Add(ReadReportV7(rr));
 
             // v8: issuer roster section trails the reports. v7 saves have no such
@@ -461,6 +478,7 @@ namespace MyFirstMod
         {
             BinaryReader sr = ReadSection(r);
             int n = sr.ReadInt32();
+            if (n < 0 || n > 10000) throw new InvalidDataException("bond count");
             List<Bond> list = new List<Bond>();
             for (int i = 0; i < n; i++) list.Add(ReadBond(sr, version));
             return list;
@@ -489,7 +507,7 @@ namespace MyFirstMod
             s.Market = ReadLegacyBondList(r, version);
 
             int swapCount = r.ReadInt32();
-            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(r));
+            for (int i = 0; i < swapCount; i++) s.Swaps.Add(ReadSwap(r, version));
 
             int txCount = r.ReadInt32();
             for (int i = 0; i < txCount; i++) s.Transactions.Add(ReadTransaction(r));
@@ -592,6 +610,7 @@ namespace MyFirstMod
             if (!ValidateBondList(s.Issued, true)) return false;
             if (!ValidateBondList(s.Portfolio, false)) return false;
             if (!ValidateBondList(s.Market, false)) return false;
+            if (!ValidateBondList(s.Redeemed, true)) return false;
             return true;
         }
 

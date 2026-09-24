@@ -133,10 +133,10 @@ namespace MyFirstMod
             else if (cur > hm) pUp += 0.10f;   // above home number -> nudge up
 
             double roll = rng.NextDouble();
-            if (roll < pUp && cur > 0)
-                return (CreditRating)(cur - 1);   // improve one notch (toward AAA)
-            if (roll < pUp + pDown && cur < (int)CreditRating.CCC)
-                return (CreditRating)(cur + 1);   // worsen one notch (not to D by drift)
+            if (roll < pUp)
+                return cur > 0 ? (CreditRating)(cur - 1) : current;
+            if (roll < pUp + pDown)
+                return cur < (int)CreditRating.CCC ? (CreditRating)(cur + 1) : current;
             return current;
         }
 

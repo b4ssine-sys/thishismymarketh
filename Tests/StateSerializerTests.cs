@@ -22,6 +22,8 @@ namespace MyFirstMod.Tests
             b.PeriodsInArrears = 1;
             b.DefaultedAtPeriod = -1;
             b.IssuePeriod = 7;
+            b.InterestPaid = 456.7f;
+            b.PrincipalRepaid = 789.1f;
             return b;
         }
 
@@ -97,6 +99,8 @@ namespace MyFirstMod.Tests
             Assert.Equal(BondState.Delinquent, ib.State);
             Assert.Equal(1, ib.PeriodsInArrears);
             Assert.Equal(7, ib.IssuePeriod);
+            Assert.Equal(456.7f, ib.InterestPaid, 2);
+            Assert.Equal(789.1f, ib.PrincipalRepaid, 2);
 
             Assert.Single(s2.Portfolio);
             Assert.Single(s2.Market);
@@ -336,6 +340,56 @@ namespace MyFirstMod.Tests
 
             w.Flush();
             return ms.ToArray();
+        }
+
+        [Fact]
+        public void V11_SwapUnpaidSettlement_RoundTrips()
+        {
+            var s = SampleState();
+            s.Swaps[0].UnpaidSettlement = 4567.89f;
+            byte[] bytes = StateSerializer.Serialize(s);
+
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.NotNull(s2);
+            Assert.Single(s2.Swaps);
+            Assert.Equal(4567.89f, s2.Swaps[0].UnpaidSettlement, 2);
+        }
+
+        [Fact]
+        public void V11_RevenueBondsEnabled_RoundTrips()
+        {
+            var s = SampleState();
+            s.RevenueBondsEnabled = true;
+            byte[] bytes = StateSerializer.Serialize(s);
+
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.True(s2.RevenueBondsEnabled);
+        }
+
+        // WO-30: redeemed bonds round-trip through serialize/deserialize and pass
+        // validation. The ValidateState check now covers the Redeemed list too.
+        [Fact]
+        public void WO30_RedeemedBonds_RoundTrip()
+        {
+            var s = SampleState();
+            var rb = new Bond("IB99", "Retired", 80000f, 0.04f, 0);
+            rb.PlacedFraction = 1f;
+            rb.OutstandingPrincipal = 0f;
+            rb.Arrears = 0f;
+            rb.State = BondState.Redeemed;
+            rb.InterestPaid = 1200f;
+            rb.PrincipalRepaid = 80000f;
+            s.Redeemed.Add(rb);
+
+            byte[] bytes = StateSerializer.Serialize(s);
+            Assert.True(StateSerializer.TryDeserialize(bytes, out BondMarketState s2));
+            Assert.NotNull(s2);
+            Assert.Single(s2.Redeemed);
+            Assert.Equal("IB99", s2.Redeemed[0].Id);
+            Assert.Equal(BondState.Redeemed, s2.Redeemed[0].State);
+            Assert.Equal(0f, s2.Redeemed[0].OutstandingPrincipal);
+            Assert.Equal(1200f, s2.Redeemed[0].InterestPaid, 2);
+            Assert.Equal(80000f, s2.Redeemed[0].PrincipalRepaid, 2);
         }
 
         private static void WriteV4BondList(BinaryWriter w, int count, float soldFraction, float face, float coupon, int periods)

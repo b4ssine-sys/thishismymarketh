@@ -10,8 +10,11 @@ namespace MyFirstMod
     {
         public static CreditRating EvaluateRating(CreditMetrics m, bool hasActiveArrears)
         {
-            // 1. Hard default floor: unresolved arrears or coverage collapse.
-            if (hasActiveArrears || m.DSCR < 0.2f) return CreditRating.D;
+            // 1. Hard default floor: unresolved arrears, or coverage collapse
+            // when there is debt to cover. WO-18: an unlevered city (no debt
+            // service) cannot collapse — DSCR is undefined there.
+            if (hasActiveArrears) return CreditRating.D;
+            if (m.AnnualDebtService > 1f && m.DSCR < 0.2f) return CreditRating.D;
 
             // 2. Base rating from the core credit ratios.
             // 0=AAA 1=AA 2=A 3=BBB 4=BB 5=B 6=CCC 7=D

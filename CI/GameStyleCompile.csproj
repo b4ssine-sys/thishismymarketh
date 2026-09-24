@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles the WHOLE repository the way the game does when a player drops
+    it into Mods\MyFirstMod\Source: every .cs file, C# 5, .NET 3.5, no build
+    defines. Test and stub files must compile to nothing (their #if guards),
+    and the mod must compile against the game API. Game types come from the
+    stub assembly, referenced as a separate DLL exactly like the real game
+    assemblies would be; the stub SOURCES in this glob are inert here because
+    GAME_STUBS is not defined.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <OutputType>Library</OutputType>
+    <AssemblyName>WholeRepoGameStyle</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>0649;0067;0169;0414</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Stubs\GameStubs.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\**\*.cs" Exclude="..\**\bin\**;..\**\obj\**" LinkBase="Repo" />
+  </ItemGroup>
+
+</Project>

@@ -12,3 +12,7 @@ obj/
 TestResults/
 [Tt]est[Rr]esults/
 *.trx
+
+# Game assemblies (never commit) and release packaging
+lib/
+dist/

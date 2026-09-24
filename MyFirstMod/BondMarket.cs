@@ -30,6 +30,8 @@ namespace MyFirstMod
         public int RemainingPeriods;
         public float PurchasePrice;
         public float CouponsReceived;
+        public float InterestPaid;
+        public float PrincipalRepaid;
 
         // P0-3: one field used to carry two unrelated meanings (how much of an
         // issue investors had taken up, AND how much principal was still owed),
@@ -97,6 +99,8 @@ namespace MyFirstMod
             RemainingPeriods = totalPeriods;
             PurchasePrice = 0f;
             CouponsReceived = 0f;
+            InterestPaid = 0f;
+            PrincipalRepaid = 0f;
             PlacedFraction = 1f;
             OutstandingPrincipal = faceValue;
             Arrears = 0f;
@@ -124,15 +128,17 @@ namespace MyFirstMod
         public int RemainingPeriods;
         public float PurchasePrice;
         public float CouponsReceived;
+        public float InterestPaid;
+        public float PrincipalRepaid;
         public float PlacedFraction;
         public float OutstandingPrincipal;
         public float Arrears;
         public BondState State;
-        public bool InDefault; // State == Defaulted, mirrored for existing UI checks
-        public string IssuerName;      // Phase 5: issuer behind a market/portfolio bond
+        public bool InDefault;
+        public string IssuerName;
         public CreditRating IssuerRating;
-        public RevenueSource Revenue;  // Phase 6: service backing (None = GO)
-        public float Price; // market/portfolio present value at snapshot time (0 for issued)
+        public RevenueSource Revenue;
+        public float Price;
 
         public float SubscribedFace { get { return OutstandingPrincipal; } }
 
@@ -148,6 +154,8 @@ namespace MyFirstMod
                 RemainingPeriods = b.RemainingPeriods,
                 PurchasePrice = b.PurchasePrice,
                 CouponsReceived = b.CouponsReceived,
+                InterestPaid = b.InterestPaid,
+                PrincipalRepaid = b.PrincipalRepaid,
                 PlacedFraction = b.PlacedFraction,
                 OutstandingPrincipal = b.OutstandingPrincipal,
                 Arrears = b.Arrears,
@@ -171,6 +179,7 @@ namespace MyFirstMod
         public bool PayFixed;
         public float CumulativePL;
         public float LastSettlement;
+        public float UnpaidSettlement;
 
         public static SwapView From(InterestRateSwap s)
         {
@@ -183,7 +192,8 @@ namespace MyFirstMod
                 RemainingPeriods = s.RemainingPeriods,
                 PayFixed = s.PayFixed,
                 CumulativePL = s.CumulativePL,
-                LastSettlement = s.LastSettlement
+                LastSettlement = s.LastSettlement,
+                UnpaidSettlement = s.UnpaidSettlement
             };
         }
     }
@@ -198,6 +208,7 @@ namespace MyFirstMod
         public bool PayFixed;
         public float CumulativePL;
         public float LastSettlement;
+        public float UnpaidSettlement;
 
         public InterestRateSwap(string id, float notional, float fixedRate, int totalPeriods, bool payFixed)
         {
@@ -262,6 +273,64 @@ namespace MyFirstMod
         public float CitizenProceeds;
     }
 
+    public class EngineSnapshot
+    {
+        public float GrossIncome;
+        public float TotalExpenses;
+        public float DebtBurden;
+        public float DSCR;
+        public float MonthsOfReserves;
+        public float NOI;
+        public CreditRating Rating;
+        public float BenchmarkRate;
+        public float RequiredYield;
+        public float PortfolioValue;
+        public int DefaultPenalty;
+        public int TotalDefaults;
+        public float RealizedPL;
+        public int TicksInCurrentPeriod;
+        public int IssuedCount;
+        public int PortfolioCount;
+        public int MarketCount;
+        public float RevenueVolatility;
+        public float SwapPL;
+        public int SwapCount;
+        public float DemandScore;
+        public float DefaultProbability;
+        public float AbsorptionCapacity;
+        public float RemainingCapacity;
+        public int Population;
+        public float Happiness;
+        public float EmploymentRate;
+        public float PopulationGrowth;
+        public float CitizenConfidence;
+        public float BondAppeal;
+        public float FinancialHealth;
+        public float CitizenBuyVolume;
+        public float CitizenSellVolume;
+        public float SmoothedPressure;
+        public float CitizenProceedsThisPeriod;
+        public float TotalCitizenProceeds;
+        public float Health;
+        public float Education;
+        public float LandValue;
+        public float CrimeRate;
+        public float CashReserves;
+        public float CityVitals;
+        public float Momentum;
+        public int TransactionLogCount;
+        public int ReportCount;
+        public int CurrentQuarter;
+        public float TotalDebtFace;
+        public float TotalDebtOwed;
+        public float TotalCouponsPaid;
+        public float TotalHedgedNotional;
+        public float OverHedgeRatio;
+        public string CreditStatusLabel;
+        public string DemandLabelText;
+        public string PressureLabelText;
+    }
+
     public static class BondPricing
     {
         public const int PeriodsPerYear = 12;
@@ -273,17 +342,16 @@ namespace MyFirstMod
         public static float PresentValue(Bond bond, float annualYield)
         {
             if (bond.RemainingPeriods <= 0)
-                return bond.FaceValue;
+                return bond.OutstandingPrincipal;
 
             float r = annualYield / PeriodsPerYear;
-            float coupon = (bond.FaceValue * bond.CouponRate) / PeriodsPerYear;
+            float coupon = (bond.OutstandingPrincipal * bond.CouponRate) / PeriodsPerYear;
 
-            // Guard r <= 0: with no discounting PV is just the undiscounted sum.
             if (r <= 0f)
-                return coupon * bond.RemainingPeriods + bond.FaceValue;
+                return coupon * bond.RemainingPeriods + bond.OutstandingPrincipal;
 
             double d = Math.Pow(1.0 + r, -bond.RemainingPeriods);
-            double pv = coupon * (1.0 - d) / r + bond.FaceValue * d;
+            double pv = coupon * (1.0 - d) / r + bond.OutstandingPrincipal * d;
             return (float)pv;
         }
 
@@ -303,18 +371,6 @@ namespace MyFirstMod
                 default: spread = 0.0200f; break;
             }
             return benchmarkRate + spread;
-        }
-
-        public static CreditRating CalculateRating(float debtBurden, float dscr)
-        {
-            if (debtBurden < 0.05f && dscr > 3.0f) return CreditRating.AAA;
-            if (debtBurden < 0.10f && dscr > 2.0f) return CreditRating.AA;
-            if (debtBurden < 0.15f && dscr > 1.5f) return CreditRating.A;
-            if (debtBurden < 0.25f && dscr > 1.2f) return CreditRating.BBB;
-            if (debtBurden < 0.35f && dscr > 0.9f) return CreditRating.BB;
-            if (dscr > 0.8f) return CreditRating.B;
-            if (dscr > 0.5f) return CreditRating.CCC;
-            return CreditRating.D;
         }
 
         public static string RatingLabel(CreditRating rating)

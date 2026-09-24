@@ -124,6 +124,19 @@ namespace MyFirstMod.Tests
             Assert.True(aaa < bbb, "AAA should yield less than BBB");
             Assert.True(bbb < d, "BBB should yield less than D");
         }
+
+        [Fact]
+        public void WO21_SeparateCouponFromDiscount_PricesAwayFromPar()
+        {
+            var bond = new Bond("B1", "BulkBuy", 1000000f, 0.05f, 60);
+            float discountRate = 0.08f;
+            float pv = BondPricing.PresentValue(bond, discountRate);
+            Assert.True(pv < 1000000f, "Coupon 5% discounted at 8% must price below par");
+
+            float premiumRate = 0.03f;
+            float pvPremium = BondPricing.PresentValue(bond, premiumRate);
+            Assert.True(pvPremium > 1000000f, "Coupon 5% discounted at 3% must price above par");
+        }
     }
 }
 

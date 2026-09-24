@@ -1,0 +1,80 @@
+name: Release
+
+# WO-33: every tagged release carries a prebuilt mod DLL, built against the REAL
+# game assemblies (never the CI stubs), so players install from the Workshop and
+# the game never compiles our source.
+#
+# The game's managed DLLs cannot be committed. Provide them as repository secrets:
+#   CS_MANAGED_ZIP_URL     URL of a zip holding Assembly-CSharp.dll, ColossalManaged.dll,
+#                          ICities.dll and UnityEngine.dll from Cities_Data/Managed
+#   CS_MANAGED_ZIP_TOKEN   (optional) bearer token for that URL, e.g. a private release asset
+#   CS_MANAGED_ZIP_SHA256  (optional) pins the zip's checksum
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mod-dll:
+    name: Build and attach mod DLL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Versions agree (tag, Mod.Version, csproj)
+        run: bash CI/check-version.sh "${GITHUB_REF_NAME}"
+
+      - name: Pure-logic tests must be green
+        run: dotnet test Tests/BondMarket.Tests.csproj --configuration Release
+
+      - name: Fetch game assemblies
+        env:
+          ZIP_URL: ${{ secrets.CS_MANAGED_ZIP_URL }}
+          ZIP_TOKEN: ${{ secrets.CS_MANAGED_ZIP_TOKEN }}
+          ZIP_SHA256: ${{ secrets.CS_MANAGED_ZIP_SHA256 }}
+        run: bash CI/fetch-game-assemblies.sh lib/Managed
+
+      - name: Build mod DLL
+        run: >
+          dotnet build MyFirstMod/MyFirstMod.csproj --configuration Release
+          -p:ManagedDir="$PWD/lib/Managed" -p:DeployToGame=false
+
+      - name: Package (DLL only, no Source folder)
+        run: |
+          ver="$(sed -n 's/.*const string Version = "\([^"]*\)".*/\1/p' MyFirstMod/Mod.cs)"
+          mkdir -p dist/MyFirstMod
+          cp MyFirstMod/bin/Release/net35/MyFirstMod.dll dist/MyFirstMod/
+          (cd dist && zip -r "../MunicipalBondMarket-${ver}.zip" MyFirstMod)
+          if unzip -l "MunicipalBondMarket-${ver}.zip" | grep -qiE '\.cs$|/Source/'; then
+            echo "::error::package contains source; the game would compile it"; exit 1
+          fi
+          (cd dist/MyFirstMod && sha256sum MyFirstMod.dll > ../../MyFirstMod.dll.sha256)
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyFirstMod-dll
+          path: |
+            dist/MyFirstMod/MyFirstMod.dll
+            MunicipalBondMarket-*.zip
+            MyFirstMod.dll.sha256
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MyFirstMod/MyFirstMod.dll
+            MunicipalBondMarket-*.zip
+            MyFirstMod.dll.sha256
+          generate_release_notes: true

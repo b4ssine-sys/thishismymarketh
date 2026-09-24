@@ -20,21 +20,41 @@ A comprehensive municipal bond market simulation for **Cities: Skylines 1**. Iss
 
 ## Installation
 
-**Quickest:** from the repo root in PowerShell, run `.\deploy.ps1`. It clears
-`Mods\MyFirstMod\Source\` and copies in only the files under `MyFirstMod\`; the
-game compiles them on next launch. Don't copy the whole repo into `Source\`: the
-game compiles every `.cs` it finds there, including build output under `obj\`.
-Mod source must stay C# 5 compatible, and CI enforces that.
+**Players:** subscribe on the Steam Workshop, or download `MyFirstMod.dll` from a
+tagged GitHub release and place it (and nothing else) in your Mods folder:
 
-**Or build a DLL:**
+- **Windows**: `%LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\MyFirstMod\`
+- **macOS**: `~/Library/Application Support/Colossal Order/Cities_Skylines/Addons/Mods/MyFirstMod/`
+- **Linux**: `~/.local/share/Colossal Order/Cities_Skylines/Addons/Mods/MyFirstMod/`
 
-1. Build the mod DLL targeting .NET Framework 3.5 (Unity Mono).
-2. Place the compiled DLL in your Cities: Skylines mod directory:
-   - **Windows**: `%LOCALAPPDATA%\Colossal Order\Cities_Skylines\Addons\Mods\MyFirstMod\`
-   - **macOS**: `~/Library/Application Support/Colossal Order/Cities_Skylines/Addons/Mods/MyFirstMod/`
-   - **Linux**: `~/.local/share/Colossal Order/Cities_Skylines/Addons/Mods/MyFirstMod/`
-3. Enable "Municipal Bond Market" in the Content Manager.
-4. Press **Shift+B** in-game to open the bond market panel.
+There must be no `Source\` folder next to the DLL: the game compiles any source it
+finds there and would load the mod twice. Enable "Municipal Bond Market" in the
+Content Manager, then press **Shift+B** in-game or click the toolbar icon.
+
+**Developers:** from the repo root in PowerShell, run `.\deploy.ps1`. It builds
+`MyFirstMod.dll` against your installed game (`-GameDir` if Steam is not in the
+default place), copies only the DLL, and removes any old `Source\` folder.
+`.\deploy.ps1 -FromSource` is the fallback for machines without a .NET SDK.
+
+**Diagnosing a missing UI:** every level load writes one line to the Debug Output
+(F7) starting with `[MyFirstMod] SELF-CHECK`, carrying the mod version, save format,
+whether the game-ledger reader bound, the game build, the load mode and whether
+the UI was created. Include that line in any bug report.
+
+## Releasing
+
+1. Bump the version in `MyFirstMod/Mod.cs` and `MyFirstMod/MyFirstMod.csproj` (CI
+   fails if they disagree).
+2. Push a tag `vX.Y.Z` matching that version. `.github/workflows/release.yml`
+   runs the tests, builds the DLL against the real game assemblies and attaches
+   `MyFirstMod.dll`, a zip of the Workshop folder and a SHA-256 to the release.
+3. Publish that folder to the Workshop from the in-game Content Manager.
+
+The game's assemblies cannot be committed, so the release build fetches them from
+repository secrets: `CS_MANAGED_ZIP_URL` (a zip of `Assembly-CSharp.dll`,
+`ColossalManaged.dll`, `ICities.dll` and `UnityEngine.dll` from
+`Cities_Data/Managed`), plus optional `CS_MANAGED_ZIP_TOKEN` and
+`CS_MANAGED_ZIP_SHA256`. The stub-built CI assembly never ships.
 
 ## Usage
 
@@ -100,9 +120,10 @@ Pure logic files (DebtBook, Credit/, Market/, Pricing/) compile against .NET 8 f
 
 ## CI
 
-Two GitHub Actions jobs run on every push:
-- **pure-logic-tests** -- xUnit tests for DebtBook, credit model, auction, friction, yield curve, and swap pricing
-- **compile-check** -- Full type-check of all 21 source files against stub shims (no game DLLs required)
+GitHub Actions jobs on every push (`.github/workflows/ci.yml`):
+- **pure-logic-tests** -- xUnit tests for the pure modules (debt book, credit model, auction, friction, curve, swaps, serializer)
+- **compile-check** -- every file under `MyFirstMod/` (by glob) type-checked against stub shims, targeting the game's .NET 3.5 runtime
+- **mod-dll** -- builds the real DLL against the game assemblies when the secret is configured, so a stub/real API mismatch shows up before a release
 
 ## Technical Details
 

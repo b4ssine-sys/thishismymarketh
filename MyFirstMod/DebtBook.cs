@@ -183,28 +183,49 @@ namespace MyFirstMod
             newDefaults = 0;
 
             float budget = cashBudget < 0f ? 0f : cashBudget;
-            float totalPaid = 0f;
+            if (_bonds.Count == 0) return 0f;
 
-            for (int i = _bonds.Count - 1; i >= 0; i--)
+            // Pass 1: age bonds and compute per-bond dues.
+            float totalDue = 0f;
+            float[] dues = new float[_bonds.Count];
+            float[] coupons = new float[_bonds.Count];
+            float[] principalsDue = new float[_bonds.Count];
+            bool[] maturingFlag = new bool[_bonds.Count];
+
+            for (int i = 0; i < _bonds.Count; i++)
             {
                 Bond b = _bonds[i];
                 if (b.RemainingPeriods > 0) b.RemainingPeriods--;
                 if (b.RemainingPeriods < 0) b.RemainingPeriods = 0;
-                bool maturing = b.RemainingPeriods <= 0;
+                maturingFlag[i] = b.RemainingPeriods <= 0;
 
-                // Unpaid arrears compound a penalty ABOVE the coupon rate, so
-                // defaulting costs more than paying (reverses the old inversion).
                 if (b.Arrears > 0f)
                     b.Arrears += b.Arrears * ((b.CouponRate + arrearsSpread) / periodsPerYear);
 
-                float coupon = (b.OutstandingPrincipal * b.CouponRate) / periodsPerYear;
-                float principalDue = maturing ? b.OutstandingPrincipal : 0f;
-                float due = b.Arrears + coupon + principalDue;
+                coupons[i] = (b.OutstandingPrincipal * b.CouponRate) / periodsPerYear;
+                principalsDue[i] = maturingFlag[i] ? b.OutstandingPrincipal : 0f;
+                dues[i] = b.Arrears + coupons[i] + principalsDue[i];
+                totalDue += dues[i];
+            }
 
-                float pay = budget < due ? budget : due;
+            // Pass 2: allocate budget pro-rata then apply payments.
+            float totalPaid = 0f;
+            for (int i = _bonds.Count - 1; i >= 0; i--)
+            {
+                Bond b = _bonds[i];
+                float due = dues[i];
+                float pay;
+                if (budget >= totalDue)
+                    pay = due;
+                else
+                    pay = totalDue > 0f ? budget * (due / totalDue) : 0f;
+                if (pay > due) pay = due;
                 if (pay < 0f) pay = 0f;
-                budget -= pay;
                 totalPaid += pay;
+
+                float coupon = coupons[i];
+                bool maturing = maturingFlag[i];
+                float principalDue = principalsDue[i];
 
                 float rem = pay;
                 float arrearsPaid = rem < b.Arrears ? rem : b.Arrears;
@@ -221,18 +242,17 @@ namespace MyFirstMod
                     rem -= principalPaid;
                 }
 
-                b.CouponsReceived += arrearsPaid + couponPaid + principalPaid;
+                b.CouponsReceived += couponPaid;
+                b.InterestPaid += arrearsPaid + couponPaid;
+                b.PrincipalRepaid += principalPaid;
 
                 float couponShort = coupon - couponPaid;
                 float principalShort = maturing ? (principalDue - principalPaid) : 0f;
-                // A failed maturity principal repayment is a HARD default (no grace);
-                // a missed coupon uses the grace window. (Matches real municipal
-                // behavior and the plan's TC-02.)
                 bool hardDefault = maturing && principalShort > EPS;
                 if (couponShort + principalShort > EPS)
                 {
                     b.Arrears += couponShort + principalShort;
-                    if (maturing) b.OutstandingPrincipal -= principalShort; // rolled into arrears -> ~0
+                    if (maturing) b.OutstandingPrincipal -= principalShort;
                     missedPayments++;
                 }
 
@@ -249,6 +269,21 @@ namespace MyFirstMod
                 }
             }
             return totalPaid;
+        }
+
+        public void PushbackShortfall(float shortfall)
+        {
+            if (shortfall <= 0f || _bonds.Count == 0) return;
+            float totalPrincipal = 0f;
+            for (int i = 0; i < _bonds.Count; i++)
+                totalPrincipal += _bonds[i].OutstandingPrincipal;
+            if (totalPrincipal <= 0f)
+            {
+                _bonds[0].Arrears += shortfall;
+                return;
+            }
+            for (int i = 0; i < _bonds.Count; i++)
+                _bonds[i].Arrears += shortfall * (_bonds[i].OutstandingPrincipal / totalPrincipal);
         }
 
         private void UpdateState(Bond b, int currentPeriod, int gracePeriods, int lockoutPeriods, bool hardDefault)
@@ -312,7 +347,13 @@ namespace MyFirstMod
             {
                 if (_bonds[i].Id == id)
                 {
+                    Bond b = _bonds[i];
                     RemoveActiveAt(i);
+                    b.State = BondState.Redeemed;
+                    b.Arrears = 0f;
+                    b.OutstandingPrincipal = 0f;
+                    _redeemed.Add(b);
+                    if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                     return true;
                 }
             }
@@ -342,7 +383,14 @@ namespace MyFirstMod
                 if (owed > budget) continue;
                 budget -= owed;
                 spent += owed;
+                b.PrincipalRepaid += b.OutstandingPrincipal;
+                b.InterestPaid += b.Arrears;
                 RemoveActiveAt(i);
+                b.State = BondState.Redeemed;
+                b.Arrears = 0f;
+                b.OutstandingPrincipal = 0f;
+                _redeemed.Add(b);
+                if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                 retiredCount++;
             }
 
@@ -381,6 +429,11 @@ namespace MyFirstMod
                     if (sb.OutstandingPrincipal + sb.Arrears < 1f)
                     {
                         RemoveActiveAt(smallest);
+                        sb.State = BondState.Redeemed;
+                        sb.Arrears = 0f;
+                        sb.OutstandingPrincipal = 0f;
+                        _redeemed.Add(sb);
+                        if (_redeemed.Count > MAX_REDEEMED_HISTORY) _redeemed.RemoveAt(0);
                         retiredCount++;
                     }
                     else
@@ -408,6 +461,14 @@ namespace MyFirstMod
                 if (b.State == BondState.Redeemed && b.OutstandingPrincipal > 1f) return false; // I6
                 if (b.Arrears < -EPS) return false;                                          // I8
                 if (b.PeriodsInArrears < 0) return false;                                    // I9
+            }
+            for (int i = 0; i < _redeemed.Count; i++)
+            {
+                Bond b = _redeemed[i];
+                if (b.PlacedFraction < -EPS || b.PlacedFraction > 1f + EPS) return false;   // I1
+                if (b.OutstandingPrincipal < -EPS) return false;                             // I2
+                if (b.FaceValue < 0f) return false;
+                if (b.Arrears < -EPS) return false;                                          // I8
             }
             return true;
         }

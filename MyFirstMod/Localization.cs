@@ -93,6 +93,10 @@ namespace MyFirstMod
                 case "settings.trading.desc": return "enables/disables citizen market activity";
                 case "settings.trading.enabled": return "Enabled";
                 case "settings.trading.disabled": return "Disabled";
+                case "settings.revenue": return "Revenue Bonds";
+                case "settings.revenue.desc": return "enables service-backed revenue bond issuance";
+                case "settings.revenue.enabled": return "Enabled";
+                case "settings.revenue.disabled": return "Disabled (Quarantined)";
                 case "settings.shortcut": return "Keyboard shortcut: Shift+B to toggle panel visibility";
                 case "settings.footer": return "Settings are saved with your city and persist across sessions.";
 
