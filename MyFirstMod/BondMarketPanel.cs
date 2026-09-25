@@ -529,6 +529,50 @@ namespace MyFirstMod
             _footerLabel.text = "";
         }
 
+        private int _lastSnapshotVersion = -1;
+        private int _lastSeenResult;
+        private string _lastResultText = "";
+
+        private static EngineSnapshot CurrentSnapshot()
+        {
+            BondMarketEngine e = BondMarketEngine.Instance;
+            return e != null ? e.Snapshot : null;
+        }
+
+        // WO-40: every action is an order the simulation carries out on its next
+        // tick; the outcome arrives in the snapshot's RecentResults.
+        private void Submit(EngineCommand command)
+        {
+            BondMarketEngine e = BondMarketEngine.Instance;
+            if (e == null) return;
+            e.Submit(command);
+            _lastResultText = Loc.Get("status.queued");
+            ShowResultLine();
+        }
+
+        private void ReportNewResults(EngineSnapshot snap)
+        {
+            CommandResult[] results = snap.RecentResults;
+            for (int i = 0; i < results.Length; i++)
+            {
+                CommandResult r = results[i];
+                if (r == null || r.Sequence <= _lastSeenResult) continue;
+                _lastSeenResult = r.Sequence;
+                if (string.IsNullOrEmpty(r.Message)) continue;
+                _lastResultText = r.Success ? r.Message : Loc.Get("status.failed") + ": " + r.Message;
+                Debug.Log("[MyFirstMod] " + _lastResultText);
+            }
+            ShowResultLine();
+        }
+
+        private void ShowResultLine()
+        {
+            if (_titleLabel == null) return;
+            _titleLabel.text = string.IsNullOrEmpty(_lastResultText)
+                ? Loc.Get("panel.title")
+                : Loc.Get("panel.title") + "   -   " + _lastResultText;
+        }
+
         public void Toggle()
         {
             isVisible = !isVisible;
@@ -548,6 +592,16 @@ namespace MyFirstMod
 
             if (!isVisible) return;
 
+            EngineSnapshot snap = CurrentSnapshot();
+            if (snap != null && snap.Version != _lastSnapshotVersion)
+            {
+                _lastSnapshotVersion = snap.Version;
+                _refreshTimer = 0f;
+                ReportNewResults(snap);
+                RefreshData();
+                return;
+            }
+
             _refreshTimer += Time.deltaTime;
             if (_refreshTimer >= REFRESH_INTERVAL)
             {
@@ -558,7 +612,7 @@ namespace MyFirstMod
 
         private void RefreshData()
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
+            EngineSnapshot engine = CurrentSnapshot();
             if (engine == null)
             {
                 _summaryLabel.text = Loc.Get("status.notready");
@@ -691,7 +745,7 @@ namespace MyFirstMod
                 RefreshReport(engine);
         }
 
-        private void RefreshMarket(BondMarketEngine engine)
+        private void RefreshMarket(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = true;
@@ -755,7 +809,7 @@ namespace MyFirstMod
                 engine.MarketCount, engine.PortfolioCount);
         }
 
-        private void RefreshPortfolio(BondMarketEngine engine)
+        private void RefreshPortfolio(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = true;
             _sellAllBtn.isEnabled = engine.PortfolioCount > 0;
@@ -837,7 +891,7 @@ namespace MyFirstMod
                 totalValue, totalPLStr, engine.PortfolioCount);
         }
 
-        private void RefreshCityDebt(BondMarketEngine engine)
+        private void RefreshCityDebt(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -988,7 +1042,7 @@ namespace MyFirstMod
                 engine.RemainingCapacity, engine.TotalCouponsPaid, status, penaltyStr, citizenStr, pressureStr);
         }
 
-        private void RefreshHedging(BondMarketEngine engine)
+        private void RefreshHedging(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -1064,7 +1118,7 @@ namespace MyFirstMod
             _footerLabel.text = string.Format("Swap P/L: {0}  |  {1}", swapPLStr, recommendation);
         }
 
-        private void RefreshPositions(BondMarketEngine engine)
+        private void RefreshPositions(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -1194,7 +1248,7 @@ namespace MyFirstMod
                 totalPV, engine.TotalDebtFace, swapPLStr, totalItems);
         }
 
-        private void RefreshActivity(BondMarketEngine engine)
+        private void RefreshActivity(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -1259,7 +1313,7 @@ namespace MyFirstMod
                 engine.TotalCitizenProceeds);
         }
 
-        private void RefreshReport(BondMarketEngine engine)
+        private void RefreshReport(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -1422,7 +1476,7 @@ namespace MyFirstMod
         private void OnScrollWheel(UIComponent component, UIMouseEventParameter eventParam)
         {
             if (_activeTab == 7) return;
-            BondMarketEngine engine = BondMarketEngine.Instance;
+            EngineSnapshot engine = CurrentSnapshot();
             if (engine == null) return;
 
             if (_activeTab == 6 && _reportMode == 0)
@@ -1465,7 +1519,7 @@ namespace MyFirstMod
 
         private void OnActionClick(int index)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
+            EngineSnapshot engine = CurrentSnapshot();
             if (engine == null) return;
             if (index < 0 || index >= MAX_ROWS) return;
 
@@ -1479,45 +1533,11 @@ namespace MyFirstMod
 
             switch (action)
             {
-                case RowAction.Buy:
-                    if (engine.BuyBond(id))
-                        RefreshData();
-                    else
-                        Debug.Log("[MyFirstMod] Buy failed - not enough funds or bond no longer available.");
-                    break;
-
-                case RowAction.Sell:
-                    if (engine.SellBond(id))
-                    {
-                        ClampScrollToContent(engine);
-                        RefreshData();
-                    }
-                    break;
-
-                case RowAction.Repay:
-                    if (engine.RepaySingleBond(id))
-                    {
-                        ClampScrollToContent(engine);
-                        RefreshData();
-                    }
-                    else
-                        Debug.Log("[MyFirstMod] Cannot repay bond - not enough funds or bond no longer outstanding.");
-                    break;
-
-                case RowAction.Issue:
-                    if (engine.IssueBond(_rowArg[index]))
-                        RefreshData();
-                    else
-                        Debug.Log("[MyFirstMod] Auction failed - undersubscribed, at capacity, locked out, or rating D.");
-                    break;
-
-                case RowAction.Terminate:
-                    if (engine.TerminateSwap(id))
-                    {
-                        ClampScrollToContent(engine);
-                        RefreshData();
-                    }
-                    break;
+                case RowAction.Buy: Submit(EngineCommand.BuyBond(id)); break;
+                case RowAction.Sell: Submit(EngineCommand.SellBond(id)); break;
+                case RowAction.Repay: Submit(EngineCommand.RepayBond(id)); break;
+                case RowAction.Issue: Submit(EngineCommand.IssueBond(_rowArg[index], 0f)); break;
+                case RowAction.Terminate: Submit(EngineCommand.TerminateSwap(id)); break;
 
                 case RowAction.SelectReport:
                     int rpIdx = _rowArg[index];
@@ -1533,38 +1553,38 @@ namespace MyFirstMod
                     int setting = _rowArg[index];
                     if (setting == 0)
                     {
+                        float next;
                         if (engine.HazardMultiplier <= IssuerModel.HAZARD_HISTORICAL + 0.1f)
-                            engine.HazardMultiplier = IssuerModel.HAZARD_STANDARD;
+                            next = IssuerModel.HAZARD_STANDARD;
                         else if (engine.HazardMultiplier >= IssuerModel.HAZARD_VOLATILE - 0.1f)
-                            engine.HazardMultiplier = IssuerModel.HAZARD_HISTORICAL;
+                            next = IssuerModel.HAZARD_HISTORICAL;
                         else
-                            engine.HazardMultiplier = IssuerModel.HAZARD_VOLATILE;
+                            next = IssuerModel.HAZARD_VOLATILE;
+                        Submit(EngineCommand.SetHazardMultiplier(next));
                     }
                     else if (setting == 1)
                     {
-                        if (engine.RateVolatilityScale <= 0.6f)
-                            engine.RateVolatilityScale = 1f;
-                        else if (engine.RateVolatilityScale >= 1.8f)
-                            engine.RateVolatilityScale = 0.5f;
-                        else
-                            engine.RateVolatilityScale = 2f;
+                        float next;
+                        if (engine.RateVolatilityScale <= 0.6f) next = 1f;
+                        else if (engine.RateVolatilityScale >= 1.8f) next = 0.5f;
+                        else next = 2f;
+                        Submit(EngineCommand.SetRateVolatility(next));
                     }
                     else if (setting == 2)
                     {
-                        engine.CitizenTradingEnabled = !engine.CitizenTradingEnabled;
+                        Submit(EngineCommand.SetCitizenTrading(!engine.CitizenTradingEnabled));
                     }
                     else if (setting == 3)
                     {
-                        engine.RevenueBondsEnabled = !engine.RevenueBondsEnabled;
+                        Submit(EngineCommand.SetRevenueBonds(!engine.RevenueBondsEnabled));
                     }
-                    RefreshData();
                     break;
             }
         }
 
         // Keep the scroll offset within the current item count after an action
         // removes a row.
-        private void ClampScrollToContent(BondMarketEngine engine)
+        private void ClampScrollToContent(EngineSnapshot engine)
         {
             int totalItems;
             if (_activeTab == 0)
@@ -1584,107 +1604,43 @@ namespace MyFirstMod
 
         private void OnBuy1MClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int bought = engine.Buy10x1MBonds();
-            if (bought > 0)
-                RefreshData();
-            else
-                Debug.Log("[MyFirstMod] Buy 10x 1M 5yr failed - not enough funds.");
+            Submit(EngineCommand.BuyBulk10x1M());
         }
 
         private void OnBuy10MClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int bought = engine.Buy10x10MBonds();
-            if (bought > 0)
-                RefreshData();
-            else
-                Debug.Log("[MyFirstMod] Buy 10x 10M 5yr failed - not enough funds.");
+            Submit(EngineCommand.BuyBulk10x10M());
         }
 
         private void OnBuy1BClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            if (engine.Buy1BBond())
-                RefreshData();
-            else
-                Debug.Log("[MyFirstMod] Buy 1B 5yr failed - not enough funds.");
+            Submit(EngineCommand.BuyBulk1B());
         }
 
         private void OnSellAllClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int sold = engine.SellAllBonds();
             _scrollOffset = 0;
-            if (sold > 0)
-                Debug.Log("[MyFirstMod] Sold all " + sold.ToString() + " bonds");
-            RefreshData();
+            Submit(EngineCommand.SellAllBonds());
         }
 
         private void OnPay25Click(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            PayDebtResult r = engine.PayDebtPercent(0.25f);
-            if (r.Retired > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + r.Retired.ToString() + " bonds (25% target)");
-            else if (r.PartialPaydown)
-                Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (25% target)");
-            RefreshData();
+            Submit(EngineCommand.PayDebtPercent(0.25f));
         }
 
         private void OnPay50Click(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            PayDebtResult r = engine.PayDebtPercent(0.50f);
-            if (r.Retired > 0)
-                Debug.Log("[MyFirstMod] Early repayment: retired " + r.Retired.ToString() + " bonds (50% target)");
-            else if (r.PartialPaydown)
-                Debug.Log("[MyFirstMod] Early repayment: partial paydown on smallest bond (50% target)");
-            RefreshData();
+            Submit(EngineCommand.PayDebtPercent(0.50f));
         }
 
         private void OnIssue25Click(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            if (engine.IssueBondPercent(0.25f))
-            {
-                Debug.Log("[MyFirstMod] Issued 25% bank bond successfully.");
-                RefreshData();
-            }
-            else
-            {
-                Debug.Log("[MyFirstMod] Issue 25% failed - auction undersubscribed, at capacity, or rating D.");
-            }
+            Submit(EngineCommand.IssueBondPercent(0.25f));
         }
 
         private void OnIssue50Click(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            if (engine.IssueBondPercent(0.50f))
-            {
-                Debug.Log("[MyFirstMod] Issued 50% bank bond successfully.");
-                RefreshData();
-            }
-            else
-            {
-                Debug.Log("[MyFirstMod] Issue 50% failed - auction undersubscribed, at capacity, or rating D.");
-            }
+            Submit(EngineCommand.IssueBondPercent(0.50f));
         }
 
         private void OnCloseClick(UIComponent component, UIMouseEventParameter eventParam)
@@ -1771,7 +1727,7 @@ namespace MyFirstMod
             RefreshData();
         }
 
-        private void RefreshSettings(BondMarketEngine engine)
+        private void RefreshSettings(EngineSnapshot engine)
         {
             _sellAllBtn.isVisible = false;
             _buy1MBtn.isVisible = false;
@@ -1847,47 +1803,23 @@ namespace MyFirstMod
 
         private void OnAutoHedgeClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            if (engine.AutoHedge())
-                RefreshData();
-            else
-                Debug.Log("[MyFirstMod] Auto-hedge failed - no unhedged debt or swap limit reached.");
+            Submit(EngineCommand.AutoHedge());
         }
 
         private void OnExitAllSwapsClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int exited = engine.TerminateAllSwaps();
             _scrollOffset = 0;
-            if (exited > 0)
-                Debug.Log("[MyFirstMod] Terminated " + exited.ToString() + " swap(s)");
-            RefreshData();
+            Submit(EngineCommand.TerminateAllSwaps());
         }
 
         private void OnSell25SwapsClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int affected = engine.SellAllSwapsTranche(0.25f);
-            if (affected > 0)
-                Debug.Log("[MyFirstMod] Sold 25% tranche of " + affected.ToString() + " swap(s)");
-            RefreshData();
+            Submit(EngineCommand.SellAllSwapsTranche(0.25f));
         }
 
         private void OnSell50SwapsClick(UIComponent component, UIMouseEventParameter eventParam)
         {
-            BondMarketEngine engine = BondMarketEngine.Instance;
-            if (engine == null) return;
-
-            int affected = engine.SellAllSwapsTranche(0.50f);
-            if (affected > 0)
-                Debug.Log("[MyFirstMod] Sold 50% tranche of " + affected.ToString() + " swap(s)");
-            RefreshData();
+            Submit(EngineCommand.SellAllSwapsTranche(0.50f));
         }
 
         private void UpdateTabHighlights()

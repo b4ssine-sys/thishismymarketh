@@ -63,6 +63,23 @@ jobs:
       - name: Test
         run: dotnet test Tests/BondMarket.Tests.csproj --configuration Release --no-build --verbosity normal
 
+  engine-tests:
+    name: Engine harness (real engine, fake game)
+    # WO-40 and later: drives whole ticks, player orders, cash moves and saves
+    # through the unmodified engine against the stub game types.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test
+        run: dotnet test Tests.Engine/BondMarket.EngineTests.csproj --configuration Release
+
   mod-dll:
     name: Mod DLL against real game assemblies
     # WO-33: catches a stub/real API mismatch on every push, before a tag. Skips

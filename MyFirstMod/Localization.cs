@@ -57,6 +57,8 @@ namespace MyFirstMod
 
                 case "status.notready": return "Bond market engine not ready...";
                 case "status.loading": return "Loading financial data...";
+                case "status.queued": return "Order placed; it runs on the next simulation tick";
+                case "status.failed": return "Order failed";
 
                 case "hint.scroll": return "scroll to see more";
                 case "hint.nopositions": return "No open positions";

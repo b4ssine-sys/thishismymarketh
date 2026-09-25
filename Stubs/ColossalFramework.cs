@@ -38,12 +38,13 @@ namespace ColossalFramework
 
         public long LastCashAmount;
 
-        public int FetchResource(Resource resource, int amount, ItemClass.Service service, ItemClass.SubService subService, ItemClass.Level level)
+        // virtual only so the engine test harness can fake the treasury.
+        public virtual int FetchResource(Resource resource, int amount, ItemClass.Service service, ItemClass.SubService subService, ItemClass.Level level)
         {
             return amount;
         }
 
-        public int AddResource(Resource resource, int amount, ItemClass.Service service, ItemClass.SubService subService, ItemClass.Level level)
+        public virtual int AddResource(Resource resource, int amount, ItemClass.Service service, ItemClass.SubService subService, ItemClass.Level level)
         {
             return amount;
         }

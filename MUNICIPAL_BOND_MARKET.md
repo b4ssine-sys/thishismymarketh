@@ -105,7 +105,7 @@ organic = (currentMoney - prevMoney) - modCashDeltaPending
 
 An outlier filter rejects deltas beyond 6 standard deviations of the rolling mean (one-off game grants, desyncs). The window feeds downstream metrics: per-tick operating income/expense (preferring the game ledger via `EconomyReader` when available, falling back to balance-delta proxy), and revenue volatility.
 
-An authoritative cash cursor (`_tickCash`) is seeded from the game's balance each tick, then adjusted by every mod cash operation. This prevents multiple operations in one tick from all reading the same stale `LastCashAmount`. All UI entry points that move money (`IssueBond`, `IssueBondPercent`, `PayDebtPercent`, buy/sell operations) call `SeedTickCashFromGame()` before proceeding.
+An authoritative cash cursor (`_tickCash`) is seeded from the game's balance each tick, then adjusted by every mod cash operation. This prevents multiple operations in one tick from all reading the same stale `LastCashAmount`. Player orders run inside the tick (WO-40), so they settle against the same cursor.
 
 Large-scale currency accumulators (`_realizedPL`, `_swapPL`, `_totalCitizenProceeds`) use `double` precision internally and cast to `float` only at the public API boundary, preventing drift from millions of small additions.
 
@@ -359,13 +359,35 @@ Deserialization is atomic: the entire state is validated against invariants (I1-
 
 ## Threading Model
 
-Cities: Skylines runs simulation logic and UI on separate threads:
+Cities: Skylines runs simulation logic and UI on separate threads. Since WO-40
+they share no mutable state and there is no lock:
 
-- **Simulation thread**: `OnUpdateMoneyAmount` runs all state mutations (aging, servicing, settlement, citizen trading) inside `lock(_lock)`
-- **Main thread**: UI event handlers call public engine methods that acquire `lock(_lock)`
-- **Snapshot pattern**: `GetMarketSnapshot`, `GetPortfolioSnapshot`, `GetIssuedBondsSnapshot`, `GetActiveSwapsSnapshot` copy data into immutable `BondView`/`SwapView` DTOs. The UI works with its own copies, keyed by stable `Id`, never list indices. An `EngineSnapshot` (volatile reference, ~55 scalar fields) provides a thread-safe aggregate view of all UI-readable engine state, published at the end of `RecalculateMetricsInternal` and `AgeBondsInternal`
+- **Orders in.** Every player action is an `EngineCommand` placed on a lock-free
+  queue (`Engine/CommandQueue.cs`) with `BondMarketEngine.Submit`. The simulation
+  thread drains the queue at the start of its next tick and carries the orders
+  out against the balance the game has just handed it. Nothing reads the game's
+  balance outside the tick. While the game is paused, orders wait.
+- **Snapshots out.** At the end of any tick where something changed, the engine
+  publishes a new immutable `EngineSnapshot`: every figure the UI shows, the
+  market, portfolio, issued, redeemed, swap, report and activity lists as fresh
+  arrays of view objects, the yield curve, the credit metrics, the settings and
+  the results of recent orders. The UI reads the latest one and never touches
+  engine state. Idle ticks publish nothing and allocate nothing.
+- **Results.** Each order's outcome (success, count, cash moved, message) comes
+  back in `Snapshot.RecentResults`; `LastProcessedSequence` tells the UI when its
+  order has run.
+- **City change.** Orders still queued when a city is reset or restored are
+  discarded, so they never run in the next city.
+- **Saving.** `SerializeState` captures directly on the simulation thread. From
+  any other thread it retries until no tick ran during the capture (a sequence
+  counter bumped at the start and end of each tick), so a save never records half
+  a tick.
 
 Heavy per-period work (portfolio revaluation, credit model, rate pipeline, demand chain, demographic sampling) runs **once per period**, not every tick.
+
+The engine harness (`Tests.Engine/`) compiles the real engine against the stub
+game types with a fake treasury and drives whole ticks, orders, partial cash
+moves and saves on CI.
 
 ---
 
@@ -385,7 +407,9 @@ The game's `AddResource`/`FetchResource` accept `int`. Large bond values (multip
 
 ### Cash Cursor
 
-`EconomyManager.LastCashAmount` is stale within a tick. The engine maintains an authoritative `_tickCash` cursor seeded from the game balance each tick, decremented/incremented by every mod cash operation. Multiple operations in one tick see accurate running balances.
+The engine maintains an authoritative `_tickCash` cursor seeded from the balance the game hands `OnUpdateMoneyAmount` each tick, decremented/incremented by every mod cash operation, player orders included. Multiple operations in one tick see accurate running balances.
+
+Because those moves happen inside the economy callback, the callback returns what it was handed plus the change it measured in the game's live treasury field (`Sim/TreasuryProbe.cs`, `Sim/CashSettlement.cs`). That keeps every move exactly once whether the game assigns the return value to its treasury or ignores it. The self-check line reports `cash=live-field`, or `cash=unbound` if the field could not be found.
 
 ### Mod Cash Isolation
 
