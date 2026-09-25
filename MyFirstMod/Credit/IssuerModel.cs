@@ -19,7 +19,31 @@ namespace MyFirstMod
         public IssuerArchetype Archetype;
         public CreditRating HomeRating;
         public CreditRating Rating;
+        public CreditRating PreviousRating; // before the last annual migration (not saved)
         public bool Defaulted;
+    }
+
+    // Immutable copy of an issuer for the UI's issuer cards.
+    public sealed class IssuerView
+    {
+        public string Name;
+        public IssuerArchetype Archetype;
+        public CreditRating HomeRating;
+        public CreditRating Rating;
+        public CreditRating PreviousRating;
+        public float Spread;
+
+        public static IssuerView From(MarketIssuer m)
+        {
+            IssuerView v = new IssuerView();
+            v.Name = m.Name;
+            v.Archetype = m.Archetype;
+            v.HomeRating = m.HomeRating;
+            v.Rating = m.Rating;
+            v.PreviousRating = m.PreviousRating;
+            v.Spread = IssuerModel.IssuerSpread(m.Rating);
+            return v;
+        }
     }
 
     public static class IssuerModel
@@ -160,6 +184,7 @@ namespace MyFirstMod
             m.Archetype = a;
             m.HomeRating = HomeRatingFor(a);
             m.Rating = m.HomeRating;
+            m.PreviousRating = m.Rating;
             m.Defaulted = false;
             return m;
         }

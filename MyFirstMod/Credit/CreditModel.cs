@@ -30,22 +30,30 @@ namespace MyFirstMod
             float currentCashReserves,
             int periodsPerYear)
         {
-            var m = new CreditMetrics();
-
-            m.AnnualOperatingRevenue = avgIncomePerPeriod * periodsPerYear;
-            m.AnnualOperatingExpense = avgExpensePerPeriod * periodsPerYear;
-            m.AnnualNOI = m.AnnualOperatingRevenue - m.AnnualOperatingExpense;
-
-            m.AnnualDebtService = 0f;
+            float annualDebtService = 0f;
             if (debtBook != null)
             {
                 for (int i = 0; i < debtBook.Bonds.Count; i++)
                 {
                     Bond b = debtBook.Bonds[i];
                     if (b.State == BondState.Active || b.State == BondState.Delinquent)
-                        m.AnnualDebtService += b.OutstandingPrincipal * b.CouponRate;
+                        annualDebtService += b.OutstandingPrincipal * b.CouponRate;
                 }
             }
+            return FromAnnual(avgIncomePerPeriod * periodsPerYear, avgExpensePerPeriod * periodsPerYear,
+                annualDebtService, currentCashReserves, periodsPerYear);
+        }
+
+        // The ratios from annual figures. Shared by the engine and by what-if
+        // previews (WO-35, WO-36) so a preview can never disagree with the model.
+        public static CreditMetrics FromAnnual(float annualRevenue, float annualExpense,
+            float annualDebtService, float cashReserves, int periodsPerYear)
+        {
+            var m = new CreditMetrics();
+            m.AnnualOperatingRevenue = annualRevenue;
+            m.AnnualOperatingExpense = annualExpense;
+            m.AnnualNOI = annualRevenue - annualExpense;
+            m.AnnualDebtService = annualDebtService;
 
             if (m.AnnualDebtService <= 1f)
             {
@@ -66,7 +74,7 @@ namespace MyFirstMod
 
             float monthlyExpense = m.AnnualOperatingExpense / periodsPerYear;
             m.MonthsOfReserves = monthlyExpense > 100f
-                ? (currentCashReserves / monthlyExpense)
+                ? (cashReserves / monthlyExpense)
                 : 12f;
 
             return m;

@@ -13,6 +13,11 @@ namespace MyFirstMod
         public static volatile BondMarketEngine Instance;
         public static volatile bool NeedsReset;
 
+        // Seeds the simulation stream on the next reset, for reproducible cities
+        // (the headless simulator, WO-45, and the engine tests). Unset in play:
+        // a new city is seeded from the clock.
+        public static int? SeedForNextReset;
+
         // Handed over by SaveDataExtension.OnLoadData and taken exactly once by
         // the simulation thread.
         private static byte[] _pendingSaveData;
@@ -96,6 +101,20 @@ namespace MyFirstMod
         private int _submitSequence;
         private int _lastProcessedSequence;
         private int _commandsExecuted;
+
+        // WO-38: at most one alert per in-game month, delivered via the snapshot.
+        private readonly AlertPolicy _alertPolicy = new AlertPolicy();
+        private const int ALERT_HISTORY = 8;
+        private readonly Alert[] _alertRing = new Alert[ALERT_HISTORY];
+        private int _alertCount;
+        private int _alertNext;
+        private CreditRating _lastRatingSeen = CreditRating.AAA;
+        private bool _ratingSeen;
+        private readonly float[] _shortRateHistory = new float[BIG_RATE_MOVE_WINDOW + 1];
+        private int _shortRateSamples;
+        private const int BIG_RATE_MOVE_WINDOW = 3;        // periods
+        private const float BIG_RATE_MOVE = 0.0075f;       // 75bp over the window
+        private LadderMonth[] _ladder = new LadderMonth[0];
         private const int RESULT_HISTORY = 8;
         private readonly CommandResult[] _resultRing = new CommandResult[RESULT_HISTORY];
         private int _resultCount;
@@ -584,6 +603,11 @@ namespace MyFirstMod
             // active arrears is handled inside RatingEngine.
             bool hasArrears = _debtBook.AnyDefaulted || _debtBook.TotalArrears > 0.01f;
             _rating = RatingEngine.EvaluateRating(cm, hasArrears);
+            if (_ratingSeen && (int)_rating > (int)_lastRatingSeen)
+                _alertPolicy.Raise(AlertKind.Downgrade, string.Format("City credit rating cut from {0} to {1}.",
+                    BondPricing.RatingLabel(_lastRatingSeen), BondPricing.RatingLabel(_rating)));
+            _lastRatingSeen = _rating;
+            _ratingSeen = true;
 
             // Gate G-2: one-shot diagnostic to the Debug Output. Fires on the second
             // metrics pass (once the ledger baseline is set, so a real cumulative diff
@@ -617,6 +641,7 @@ namespace MyFirstMod
             float z = RateProcess.NextGaussian(_rng);
             float dtYears = 1f / BondPricing.PeriodsPerYear;
             _shortRate = RateProcess.Step(_shortRate, RATE_KAPPA, theta, RATE_SIGMA * _rateVolatilityScale, dtYears, z);
+            TrackRateMove();
 
             float longLevel = _shortRate + RATE_TERM_PREMIUM + _revenueVolatility * 0.01f;
             _yieldCurve = YieldCurve.FromShortRate(_shortRate, longLevel, RATE_CURVATURE, RATE_LAMBDA);
@@ -843,6 +868,21 @@ namespace MyFirstMod
             s.Portfolio = PricedViews(_portfolioBonds);
             s.Issued = UnpricedViews(_debtBook.Bonds);
             s.Redeemed = UnpricedViews(_debtBook.Redeemed);
+
+            s.ShortRate = _shortRate;
+            s.CyclePhase = _cyclePhase;
+            s.Explanation = RatingExplainer.Explain(_creditMetrics, s.HasArrears);
+            s.Ladder = _ladder;
+            s.Issuers = new IssuerView[_issuers.Count];
+            for (int i = 0; i < _issuers.Count; i++) s.Issuers[i] = IssuerView.From(_issuers[i]);
+            s.Alerts = new Alert[_alertCount];
+            int firstAlert = (_alertNext - _alertCount + ALERT_HISTORY) % ALERT_HISTORY;
+            for (int i = 0; i < _alertCount; i++)
+                s.Alerts[i] = _alertRing[(firstAlert + i) % ALERT_HISTORY];
+            s.SpreadForFullCover = new float[IssueTemplates.Count];
+            for (int t = 0; t < IssueTemplates.Count; t++)
+                s.SpreadForFullCover[t] = AuctionPricing.SpreadForFullCover(_requiredYield,
+                    s.TemplateYieldAdjustment[t], AuctionFairYield(IssueTemplates.TermPeriods(t)), _demandScore);
 
             s.Swaps = new SwapView[_activeSwaps.Count];
             for (int i = 0; i < _activeSwaps.Count; i++) s.Swaps[i] = SwapView.From(_activeSwaps[i]);
@@ -1131,7 +1171,54 @@ namespace MyFirstMod
                 GenerateQuarterlyReportInternal();
             }
 
+            // WO-37/WO-38: project the debt ladder on the current operating flow
+            // and warn while a shortfall is still periods away.
+            _ladder = BuildLadder();
+            int first = MaturityLadder.FirstShortfall(_ladder);
+            _alertPolicy.Condition(AlertKind.ShortfallAhead, first > 0 && first <= MaturityLadder.WarningLead,
+                string.Format("Debt service due in {0} month(s) exceeds projected cash. Raise cash or pay down now.", first));
+
+            Alert alert = _alertPolicy.EndPeriod(_periodCounter);
+            if (alert != null)
+            {
+                _alertRing[_alertNext] = alert;
+                _alertNext = (_alertNext + 1) % ALERT_HISTORY;
+                if (_alertCount < ALERT_HISTORY) _alertCount++;
+            }
+
             _dirty = true;
+        }
+
+        private LadderMonth[] BuildLadder()
+        {
+            return MaturityLadder.Build(UnpricedViews(_debtBook.Bonds), (float)_tickCash / INTERNAL_UNIT_SCALE,
+                _avgIncomePerPeriod - _avgExpensePerPeriod, MaturityLadder.DefaultMonths,
+                MaturityLadder.WarningLead, BondPricing.PeriodsPerYear);
+        }
+
+        private void TrackRateMove()
+        {
+            int n = _shortRateHistory.Length;
+            _shortRateHistory[_shortRateSamples % n] = _shortRate;
+            _shortRateSamples++;
+            if (_shortRateSamples <= BIG_RATE_MOVE_WINDOW) return;
+            float then = _shortRateHistory[(_shortRateSamples - 1 - BIG_RATE_MOVE_WINDOW) % n];
+            float move = _shortRate - then;
+            bool big = Math.Abs(move) >= BIG_RATE_MOVE;
+            _alertPolicy.Condition(AlertKind.BigRateMove, big, string.Format(
+                "Interest rates {0} {1:F0}bp in {2} months; borrowing costs follow.",
+                move > 0f ? "rose" : "fell", Math.Abs(move) * 10000f, BIG_RATE_MOVE_WINDOW));
+        }
+
+        private void ClearAlertState()
+        {
+            _alertPolicy.Reset();
+            Array.Clear(_alertRing, 0, _alertRing.Length);
+            _alertCount = 0;
+            _alertNext = 0;
+            _ratingSeen = false;
+            _shortRateSamples = 0;
+            _ladder = new LadderMonth[0];
         }
 
         private void ServiceIssuedBondsInternal()
@@ -1143,13 +1230,21 @@ namespace MyFirstMod
                 DEFAULT_LOCKOUT_PERIODS, BondPricing.PeriodsPerYear,
                 out missed, out newDefaults);
 
+            bool shortPaid = false;
             if (cashPaid > 0f)
             {
                 long wanted = (long)(cashPaid * INTERNAL_UNIT_SCALE);
                 long actual = SpendCashUpTo(wanted);
                 if (actual < wanted)
+                {
                     _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
+                    shortPaid = true;
+                }
             }
+            if (missed > 0 || shortPaid)
+                _alertPolicy.Raise(AlertKind.CouponShortfall, string.Format(
+                    "Missed debt service: {0:N0} now in arrears. Clear it before the grace period ends.",
+                    _debtBook.TotalArrears));
 
             if (newDefaults > 0)
             {
@@ -1479,9 +1574,7 @@ namespace MyFirstMod
 
         private float AuctionFairYield(int periods)
         {
-            float years = (float)periods / BondPricing.PeriodsPerYear;
-            float spot = _yieldCurve.Lambda > 0.0001f ? _yieldCurve.SpotRate(years) : _marketFloatingRate;
-            return spot;
+            return AuctionPricing.FairYield(_yieldCurve, _marketFloatingRate, periods, BondPricing.PeriodsPerYear);
         }
 
         private float BondDurationYears(Bond b)
@@ -1567,6 +1660,7 @@ namespace MyFirstMod
             {
                 MarketIssuer m = _issuers[i];
                 bool defaulted;
+                m.PreviousRating = m.Rating;
                 m.Rating = IssuerModel.MigrateAnnual(m.Rating, m.HomeRating, _hazardMultiplier, _rng, out defaulted);
 
                 if (defaulted)
@@ -1735,8 +1829,10 @@ namespace MyFirstMod
             _monthsOfReserves = 0f;
             _creditModelNoticePending = false;
             EconomyReader.Reset();
-            _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
-            _cosmeticRng = new System.Random();
+            int? seed = SeedForNextReset;
+            SeedForNextReset = null;
+            _rng = new DeterministicRandom(seed.HasValue ? seed.Value : unchecked((int)DateTime.Now.Ticks));
+            _cosmeticRng = seed.HasValue ? new System.Random(seed.Value) : new System.Random();
             _issuers.Clear();
             InitIssuersInternal();
             _annualCounter = 0;
@@ -1807,6 +1903,7 @@ namespace MyFirstMod
             _quarterNumber = 0;
             _quarterDefaults = 0;
             _reportHistory.Clear();
+            ClearAlertState();
 
             // P0-1: no RestoreState call here. Restore is orchestrated solely by
             // OnUpdateMoneyAmount so reset and restore can never call each other.
@@ -1885,8 +1982,7 @@ namespace MyFirstMod
             if (IssuedFaceTotal() + face > _absorptionCapacity)
                 return Fail(string.Format("the market cannot absorb another {0:N0}", face));
 
-            float offeredYield = _requiredYield + RevenueYieldAdjustment(revSrc) + yieldSpread;
-            if (offeredYield < 0.001f) offeredYield = 0.001f;
+            float offeredYield = AuctionPricing.OfferedYield(_requiredYield, RevenueYieldAdjustment(revSrc), yieldSpread);
             float fairYield = AuctionFairYield(periods);
             AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
             if (!ar.Filled)
@@ -1894,6 +1990,8 @@ namespace MyFirstMod
                 CommandResult failed = Fail(string.Format(
                     "auction failed: bid-to-cover {0:F2}x is below {1:F2}x", ar.Cover, PrimaryAuction.MinCover));
                 failed.Detail = ar.Cover;
+                _alertPolicy.Raise(AlertKind.FailedAuction, string.Format(
+                    "Bond auction failed: investors bid {0:F2}x cover. Offer a higher yield.", ar.Cover));
                 return failed;
             }
 
@@ -1945,6 +2043,8 @@ namespace MyFirstMod
                 CommandResult failed = Fail(string.Format(
                     "auction failed: bid-to-cover {0:F2}x is below {1:F2}x", ar.Cover, PrimaryAuction.MinCover));
                 failed.Detail = ar.Cover;
+                _alertPolicy.Raise(AlertKind.FailedAuction, string.Format(
+                    "Bond auction failed: investors bid {0:F2}x cover. Offer a higher yield.", ar.Cover));
                 return failed;
             }
 
@@ -2392,6 +2492,8 @@ namespace MyFirstMod
             _lastGameMonth = -1;
             _periodMetricsInitialized = false;
             _g2DiagSamples = 0; _metricRuns = 0;
+            ClearAlertState();
+            _ladder = BuildLadder();
         }
 
         private static void CopyInto(float[] dest, float[] src)

@@ -42,6 +42,11 @@
     <Compile Include="..\MyFirstMod\Engine\CommandQueue.cs" Link="Linked\CommandQueue.cs" />
     <Compile Include="..\MyFirstMod\Engine\EngineCommand.cs" Link="Linked\EngineCommand.cs" />
     <Compile Include="..\MyFirstMod\Engine\IssueTemplates.cs" Link="Linked\IssueTemplates.cs" />
+    <Compile Include="..\MyFirstMod\Engine\MaturityLadder.cs" Link="Linked\MaturityLadder.cs" />
+    <Compile Include="..\MyFirstMod\Engine\AlertPolicy.cs" Link="Linked\AlertPolicy.cs" />
+    <Compile Include="..\MyFirstMod\Credit\RatingExplainer.cs" Link="Linked\RatingExplainer.cs" />
+    <Compile Include="..\MyFirstMod\Market\AuctionPricing.cs" Link="Linked\AuctionPricing.cs" />
+    <Compile Include="..\MyFirstMod\Market\IssuancePreview.cs" Link="Linked\IssuancePreview.cs" />
   </ItemGroup>
 
   <ItemGroup>
