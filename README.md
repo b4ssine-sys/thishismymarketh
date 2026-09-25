@@ -13,10 +13,10 @@ A comprehensive municipal bond market simulation for **Cities: Skylines 1**. Iss
 - **Interest Rate Swaps** -- Pay-fixed / receive-fixed swaps for hedging floating-rate exposure, with auto-hedge and over-hedge penalty mechanics.
 - **Citizen Trading** -- Citizens buy and sell bonds based on demand scoring, absorption capacity, and population-driven market pressure.
 - **Quarterly Reports** -- Comprehensive financial health reports covering revenue, expenses, NOI, DSCR, employment, confidence, and credit outlook.
-- **8-Tab UI** -- Market, Portfolio, Debt, Hedging, Positions, Activity, Report, and Settings tabs with scrollable lists and real-time updates.
+- **Four workspaces** -- Treasury, Borrow, Invest and Risk, with an activity feed along the bottom. The rating explains itself, every deal is previewed before it runs, a 36-month ladder warns of shortfalls, and alerts reach the game's Chirper.
 - **Localization** -- All UI strings routed through a centralized `Loc.Get()` string table for translation readiness.
 - **Deterministic PRNG** -- xorshift128 random number generator with serializable state, preventing save-scumming of stochastic outcomes.
-- **Save/Load** -- Sectioned binary format (v9) with FNV-1a checksums, automatic migration from legacy formats (v1-8).
+- **Save/Load** -- Sectioned binary format (v12) with FNV-1a checksums, automatic migration from legacy formats (v1-11).
 
 ## Installation
 
@@ -58,11 +58,26 @@ repository secrets: `CS_MANAGED_ZIP_URL` (a zip of `Assembly-CSharp.dll`,
 
 ## Usage
 
-### Buying Bonds
-Open the **Market** tab to browse available bonds from 6 distinct municipal issuers (Water District, Power Grid, School Board, Health System, Transit Authority, Port Authority). Each bond shows its credit rating, coupon rate, maturity, and bid-ask spread. Click **Buy** to purchase individual bonds, or use the bulk buttons (10x 1M, 10x 10M, Buy 1B) for larger positions.
+Open the window with the toolbar icon or **Shift+B**. The first time, a three-card
+briefing walks through the treasury, borrowing, and a first move. Every figure has
+a tooltip. Every action is an order that runs on the next simulation tick, so
+nothing happens while the game is paused. The title bar shows each order's outcome.
 
-### Issuing Debt
-Switch to the **Debt** tab to issue bonds backed by your city's credit. Seven templates are available:
+### Treasury
+The rating badge and the three things that decide it: debt service coverage (DSCR),
+debt burden and months of reserves. Each has a bar with a green tick where the next
+notch up begins and an amber tick where the rating would drop, plus a line such as
+*"+0.18 DSCR or +1.2 months of reserves to reach AA"*. Also here: cash runway, the
+next three payments due, one recommendation with a button that acts on it, and the
+latest quarterly report.
+
+### Borrow
+The **issuance ticket**: pick a bond type, then set the yield you offer with the
+slider or the 5bp buttons. The ticket updates live with the expected bid-to-cover,
+the fill, the proceeds after the 75bp underwriting fee, the annual coupon cost, and
+the city's coverage and rating after the deal. It opens at the clearing price (cover
+1.0x). A deal priced too tight shows low cover and fails. **Clear** returns to the
+clearing price.
 
 | Template | Face Value | Term | Type |
 |---|---|---|---|
@@ -74,18 +89,28 @@ Switch to the **Debt** tab to issue bonds backed by your city's credit. Seven te
 | Infrastructure Bond | 400,000 | 7yr | General Obligation |
 | Capital Bond | 750,000 | 10yr | General Obligation |
 
-Revenue bonds offer a yield discount when their backing service generates positive net revenue, but carry higher yields if the service is losing money.
+Revenue bonds stay switched off until Gate B validates the per-service revenue read.
+Beside the ticket, the **maturity ladder** shows 36 months of coupon and principal
+due. A month whose projected cash falls short turns amber two months ahead. Below it
+are the outstanding bonds, with Repay and Pay down 25%/50%.
 
-### Hedging
-The **Hedging** tab lets you manage interest rate swaps. Use **Auto-Hedge** to automatically match your floating-rate debt exposure with pay-fixed swaps. Over-hedging incurs a rate penalty.
+### Invest
+Cards for the six market issuers, showing rating, last move and spread. The market's
+offerings can be bought at the ask. Your holdings show unrealized P&L and can be
+sold at the bid, and there are bulk lots (10 x 1M, 10 x 10M, 1B) that pay price
+impact.
 
-### Settings
-Adjust three simulation parameters in the **Settings** tab:
-- **Default Hazard Multiplier** -- Historical (x1), Standard (x25), or Volatile (x60)
-- **Rate Volatility** -- Calm (x0.5), Normal (x1.0), or Turbulent (x2.0)
-- **Citizen Bond Trading** -- Enable or disable citizen participation in the bond market
+### Risk
+The rate-exposure gauge (hedged share of debt, with the over-hedge zone), the market
+regime (short rate, 2- and 10-year spot, curve shape, where the cycle is heading),
+the city's swaps (Auto-hedge, Sell 25%/50%, Exit all) and settings: issuer default
+frequency, rate volatility, citizen trading, revenue bonds, text size, and replaying
+the briefing.
 
-Settings persist with your city save.
+### Alerts
+At most one alert per in-game month, highest priority first: a missed coupon, a
+shortfall projected within two months, a downgrade, a failed auction, a big rate
+move. Alerts post to the Chirper, so you hear about them with the window closed.
 
 ## Architecture
 
@@ -95,7 +120,9 @@ The mod separates pure financial logic from game-dependent code for testability:
 MyFirstMod/
   BondMarket.cs          -- Domain models (Bond, BondView, SwapView, enums)
   BondMarketEngine.cs    -- Simulation engine (EconomyExtensionBase)
-  BondMarketPanel.cs     -- ColossalFramework.UI panel (8 tabs)
+  UI/                    -- Window, four workspaces, briefing, Chirper bridge
+  Presentation/          -- Pure wording, feed and recommendation logic
+  Engine/                -- Command queue, orders, templates, ladder, alerts
   DebtBook.cs            -- Pure debt lifecycle manager
   CimDemandEngine.cs     -- Citizen demand scoring
   StateSerializer.cs     -- Binary save/load with checksums

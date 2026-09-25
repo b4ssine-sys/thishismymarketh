@@ -47,49 +47,66 @@ A municipal bond market simulation for Cities: Skylines 1 that introduces debt i
 
 ## Architecture Overview
 
-The mod is built across 21 source files organized by concern:
+The mod is built across 46 source files organized by concern:
 
 ```
 MyFirstMod/
-  BondMarket.cs           Domain models, enums, view DTOs (pure)
-  BondMarketEngine.cs     Simulation engine (EconomyExtensionBase)
-  BondMarketPanel.cs      UI panel, 8 tabs (UIPanel, main thread)
-  DebtBook.cs             Issued debt lifecycle, servicing, repayment (pure)
-  CimDemandEngine.cs      Citizen demand scoring and trading (pure)
-  StateSerializer.cs      Binary save/load with FNV-1a checksums (pure)
-  Localization.cs         String table scaffolding
-  Loading.cs              Lifecycle (LoadingExtensionBase)
-  SaveDataExtension.cs    Save data bridge (SerializableDataExtensionBase)
-  Mod.cs                  IUserMod entry point
-  ResidentialBuildingLog.cs  Building event observer
-
-  Credit/
-    CreditModel.cs        Annualized credit metrics (pure)
-    RatingEngine.cs       Rating grid with liquidity notch (pure)
-    IssuerModel.cs        Market issuer archetypes and migration (pure)
-
-  Market/
-    RateProcess.cs        Mean-reverting short rate (pure)
-    DeterministicRandom.cs  Serializable xorshift128 PRNG (pure)
-    PrimaryAuction.cs     Uniform-price auction (pure)
-    Friction.cs           Bid-ask spread and price impact (pure)
-
-  Pricing/
-    YieldCurve.cs         Nelson-Siegel term structure (pure)
-    SwapPricing.cs        Swap valuation off the curve (pure)
-
-  Sim/
-    EconomyReader.cs      Reflection binding to game ledger
+  BondMarket.cs                     Domain models, views (BondView, SwapView), EngineSnapshot, BondPricing
+  BondMarketEngine.cs               Simulation engine: tick, orders, cash, metrics, servicing, trading, snapshot, save/load
+  CimDemandEngine.cs                Citizen demand, trading volumes, pressure, absorption capacity
+  Credit/CreditModel.cs             Annualized credit metrics; FromAnnual shared with previews
+  Credit/IssuerModel.cs             Issuer archetypes, migration, default hazard, IssuerView
+  Credit/RatingEngine.cs            Rating grid with liquidity notch
+  Credit/RatingExplainer.cs         WO-35: distance to the next notch up and down
+  DebtBook.cs                       Issued debt lifecycle, pro-rata servicing, repayment, placement, invariants
+  Diagnostics/SelfCheck.cs          WO-34: gathers and writes the self-check line
+  Diagnostics/StartupReport.cs      WO-34: the self-check line format
+  Engine/AlertPolicy.cs             WO-38: one alert per month, by priority
+  Engine/CommandQueue.cs            WO-40: lock-free order queue
+  Engine/EngineCommand.cs           WO-40: orders and their results
+  Engine/IssueTemplates.cs          The issuance menu
+  Engine/MaturityLadder.cs          WO-37: 36-month payment ladder and shortfall projection
+  Loading.cs                        Level load/unload: creates the window and toolbar button, self-check
+  Localization.cs                   String table
+  Market/AuctionPricing.cs          Fair and offered yield, clearing spread (engine and ticket)
+  Market/DeterministicRandom.cs     Serializable xorshift128 PRNG
+  Market/Friction.cs                Bid-ask spread, price impact, depth, underwriting fee
+  Market/IssuancePreview.cs         WO-36: what a deal does before it runs
+  Market/PrimaryAuction.cs          Uniform-price auction
+  Market/RateProcess.cs             Mean-reverting short rate on a business cycle
+  Mod.cs                            IUserMod entry point, version
+  Presentation/Advisor.cs           Treasury recommendation
+  Presentation/Wording.cs           Plain-language labels and the activity feed
+  Pricing/SwapPricing.cs            Swap valuation off the curve
+  Pricing/YieldCurve.cs             Nelson-Siegel term structure
+  ResidentialBuildingLog.cs         Building event observer
+  SaveDataExtension.cs              Save/load bridge
+  Sim/CashSettlement.cs             What the economy callback returns
+  Sim/EconomyReader.cs              Reflection binding to the game ledger
+  Sim/TreasuryProbe.cs              Reflection read of the live treasury
+  StateSerializer.cs                Sectioned binary format v12, FNV-1a checksums, legacy migration, atomic load
+  UI/BondMarketWindow.cs            The window: title, workspace tabs, feed, memory
+  UI/BorrowView.cs                  Borrow workspace: ticket, ladder, outstanding bonds
+  UI/BriefingView.cs                WO-39: first-run briefing
+  UI/ChirperBridge.cs               WO-38: alerts to the Chirper
+  UI/InvestView.cs                  Invest workspace: issuer cards, offerings, holdings
+  UI/RiskView.cs                    Risk workspace: gauge, regime, swaps, settings
+  UI/Theme.cs                       Colour-blind-safe palette
+  UI/ToggleButton.cs                Toolbar button; delivers alerts
+  UI/TreasuryView.cs                Treasury workspace
+  UI/UiPrefs.cs                     Per-player UI memory
+  UI/Widgets.cs                     Labels, bars, buttons; BoundLabel (WO-42)
+  UI/WorkspaceView.cs               Workspace base: redraw only on change
 ```
 
-The engine runs on the simulation thread via `OnUpdateMoneyAmount`. The UI runs on Unity's main thread. A `lock(_lock)` synchronizes all shared state. The engine exposes snapshot methods that copy data into immutable `BondView`/`SwapView` DTOs under the lock, so the UI never holds references into mutable simulation state.
+The engine runs on the simulation thread via `OnUpdateMoneyAmount`. The UI runs on Unity's main thread. They share no mutable state: the UI places orders on a lock-free queue and reads immutable snapshots the engine publishes (see [Threading Model](#threading-model)).
 
 **Lifecycle flow:**
 1. `Loading.OnLevelLoaded` sets `BondMarketEngine.NeedsReset = true` and creates the UI
 2. On the next simulation tick, the engine detects `NeedsReset`, clears all state, and begins tracking cash flow
 3. After the first tick, the engine generates the initial market bond offerings
 4. Each period (one game month), the engine ages bonds, services debt, settles swaps, runs citizen trading, migrates issuer credit, and generates quarterly reports
-5. `Loading.OnLevelUnloading` destroys the UI
+5. `Loading.OnLevelUnloading` destroys the UI and clears the runtime bindings
 
 ---
 
@@ -419,25 +436,36 @@ The rolling cash flow window must reflect only the city's organic revenue and ex
 
 ## UI Architecture
 
-The panel (`BondMarketPanel`) is an 800x520 `UIPanel` with eight tabs:
+The window (`UI/BondMarketWindow.cs`, 860x566) has four workspaces with an activity
+feed along the bottom (Directive 03 section 3.1). It reads only the engine's
+published `EngineSnapshot` and places orders with `BondMarketEngine.Submit`
+(WO-40).
 
-1. **Market** - Browse and buy bonds from external issuers. Bulk buy buttons (10x 1M, 10x 10M, 1B). Shows issuer rating tags and spread in basis points.
-2. **Portfolio** - Holdings with unrealized P/L, days to maturity. Sell All button.
-3. **Debt** - Issued bonds (with lifecycle state, arrears, bid-to-cover estimate) above issuance templates. Pay 25%/50% early repayment. Shows "WEAK" or "BtC X.Xx" for auction demand.
-4. **Hedging** - Active swaps, settlement details, hedge ratio. Auto-Hedge and Exit All buttons.
-5. **Positions** - Consolidated view of all positions with lifecycle state tags.
-6. **Activity** - Citizen trading transaction log with buy/sell volumes and market pressure.
-7. **Report** - Quarterly credit reports with outlook narrative.
-8. **Settings** - Default hazard multiplier (Historical/Standard/Volatile), rate volatility scale (Calm/Normal/Turbulent), citizen trading toggle. Keyboard shortcut Shift+B.
+| Workspace | Replaces | Shows first |
+|---|---|---|
+| Treasury | Report, summary line | Rating badge with DSCR, burden and reserves bars and the distance to the next notch up and down (WO-35); cash runway; next three payments; one recommendation (`Presentation/Advisor.cs`) |
+| Borrow | Debt | Issuance ticket with a live preview (WO-36, `Market/IssuancePreview.cs`); 36-month maturity ladder (WO-37); outstanding bonds |
+| Invest | Market, Portfolio, Positions | Issuer cards with rating trend; offerings; holdings with unrealized P&L |
+| Risk | Hedging, Settings | Rate-exposure gauge; market regime; swaps; settings |
 
-Layout:
-- **Title bar** (40px): draggable via `UIDragHandle`, close button
-- **Summary** (56px): context-sensitive financial metrics per tab
-- **Tab bar** (30px): 8 tabs + context action buttons
-- **Bond list** (6 rows x 36px): scrollable, three columns (info, price, action button)
-- **Footer** (30px): aggregate statistics
-
-The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. A 36x36 toggle button at (60, 6) opens/closes the panel.
+- **Preview equals result.** The ticket and the engine share `AuctionPricing` (fair
+  and offered yield), `PrimaryAuction`, `Friction.UnderwritingFee` and
+  `CreditModel.FromAnnual`. The engine harness checks that a previewed deal fills
+  exactly as shown.
+- **Redraw only what changed (WO-42).** A workspace redraws only when the snapshot
+  version or its own controls changed. `BoundLabel` rewrites a label only when its
+  value changed, formatting through one shared `StringBuilder`. An idle city
+  publishes no snapshot, so the window writes no labels. The harness counts the
+  writes to prove it.
+- **Alerts (WO-38).** The engine raises candidates where they happen, and
+  `Engine/AlertPolicy.cs` delivers at most one per in-game month. The toolbar button,
+  which is always on screen, posts new alerts to the Chirper through
+  `UI/ChirperBridge.cs`. The Chirper is bound at runtime; if it can't be found, the
+  alert goes to Debug Output and the feed.
+- **Player memory (WO-39).** Window position, last workspace, text size and
+  "briefing seen" are kept in Unity `PlayerPrefs` (`UI/UiPrefs.cs`), so they follow
+  the player across cities. Ratings use the Okabe-Ito colour-blind-safe palette and
+  always print their letters. Every figure has a tooltip.
 
 ---
 
@@ -445,31 +473,56 @@ The panel auto-refreshes every 4 seconds when visible. Scroll state is per-tab. 
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `BondMarket.cs` | 403 | Domain models: Bond, BondView, SwapView, InterestRateSwap, CimTransaction, QuarterlyReport, EngineSnapshot, BondPricing, enums |
-| `BondMarketEngine.cs` | 2605 | Simulation engine: EconomyExtensionBase, cash tracking, metrics, aging, servicing, trading, snapshots, save/load |
-| `BondMarketPanel.cs` | 1912 | UI: 8-tab panel, row rendering, event handlers, summary/footer, toggle button |
-| `DebtBook.cs` | 476 | Issued debt lifecycle, pro-rata servicing, repayment, placement, invariant validation |
-| `CimDemandEngine.cs` | 211 | Citizen demand scoring, trading volumes, market pressure, absorption capacity |
-| `StateSerializer.cs` | 637 | Sectioned binary format v12, FNV-1a checksums, legacy migration (v1-8), atomic deserialization |
-| `Credit/CreditModel.cs` | 84 | Annualized credit metrics from per-tick flows and DebtBook |
-| `Credit/RatingEngine.cs` | 40 | Rating grid evaluation with liquidity notch |
-| `Credit/IssuerModel.cs` | 167 | Issuer archetypes, home ratings, recovery rates, Markov migration, default hazard |
-| `Market/RateProcess.cs` | 49 | Vasicek mean-reverting short rate with business cycle |
-| `Market/DeterministicRandom.cs` | 84 | Serializable xorshift128 PRNG deriving from System.Random |
-| `Market/PrimaryAuction.cs` | 67 | Uniform-price auction: bid-to-cover, evaluate, estimate |
+| `BondMarket.cs` | 543 | Domain models, views (BondView, SwapView), EngineSnapshot, BondPricing |
+| `BondMarketEngine.cs` | 2506 | Simulation engine: tick, orders, cash, metrics, servicing, trading, snapshot, save/load |
+| `CimDemandEngine.cs` | 211 | Citizen demand, trading volumes, pressure, absorption capacity |
+| `Credit/CreditModel.cs` | 83 | Annualized credit metrics; FromAnnual shared with previews |
+| `Credit/IssuerModel.cs` | 192 | Issuer archetypes, migration, default hazard, IssuerView |
+| `Credit/RatingEngine.cs` | 43 | Rating grid with liquidity notch |
+| `Credit/RatingExplainer.cs` | 214 | WO-35: distance to the next notch up and down |
+| `DebtBook.cs` | 476 | Issued debt lifecycle, pro-rata servicing, repayment, placement, invariants |
+| `Diagnostics/SelfCheck.cs` | 48 | WO-34: gathers and writes the self-check line |
+| `Diagnostics/StartupReport.cs` | 26 | WO-34: the self-check line format |
+| `Engine/AlertPolicy.cs` | 92 | WO-38: one alert per month, by priority |
+| `Engine/CommandQueue.cs` | 57 | WO-40: lock-free order queue |
+| `Engine/EngineCommand.cs` | 104 | WO-40: orders and their results |
+| `Engine/IssueTemplates.cs` | 54 | The issuance menu |
+| `Engine/MaturityLadder.cs` | 64 | WO-37: 36-month payment ladder and shortfall projection |
+| `Loading.cs` | 77 | Level load/unload: creates the window and toolbar button, self-check |
+| `Localization.cs` | 109 | String table |
+| `Market/AuctionPricing.cs` | 38 | Fair and offered yield, clearing spread (engine and ticket) |
+| `Market/DeterministicRandom.cs` | 84 | Serializable xorshift128 PRNG |
 | `Market/Friction.cs` | 69 | Bid-ask spread, price impact, depth, underwriting fee |
-| `Pricing/YieldCurve.cs` | 53 | Nelson-Siegel term structure: spot rate, discount factor |
-| `Pricing/SwapPricing.cs` | 49 | Single-curve swap valuation: annuity, par rate, mark-to-market |
-| `Sim/EconomyReader.cs` | 159 | Reflection binding to EconomyManager.GetIncomeAndExpenses |
-| `ResidentialBuildingLog.cs` | 194 | BuildingExtensionBase observer |
-| `Localization.cs` | 55 | String table for UI labels and settings |
-| `Loading.cs` | 56 | LoadingExtensionBase: create/destroy UI on level load/unload |
-| `SaveDataExtension.cs` | 44 | SerializableDataExtensionBase bridge |
-| `Mod.cs` | 37 | IUserMod entry point, version 1.0.0 |
+| `Market/IssuancePreview.cs` | 65 | WO-36: what a deal does before it runs |
+| `Market/PrimaryAuction.cs` | 67 | Uniform-price auction |
+| `Market/RateProcess.cs` | 49 | Mean-reverting short rate on a business cycle |
+| `Mod.cs` | 37 | IUserMod entry point, version |
+| `Presentation/Advisor.cs` | 75 | Treasury recommendation |
+| `Presentation/Wording.cs` | 89 | Plain-language labels and the activity feed |
+| `Pricing/SwapPricing.cs` | 49 | Swap valuation off the curve |
+| `Pricing/YieldCurve.cs` | 53 | Nelson-Siegel term structure |
+| `ResidentialBuildingLog.cs` | 194 | Building event observer |
+| `SaveDataExtension.cs` | 44 | Save/load bridge |
+| `Sim/CashSettlement.cs` | 17 | What the economy callback returns |
+| `Sim/EconomyReader.cs` | 199 | Reflection binding to the game ledger |
+| `Sim/TreasuryProbe.cs` | 78 | Reflection read of the live treasury |
+| `StateSerializer.cs` | 638 | Sectioned binary format v12, FNV-1a checksums, legacy migration, atomic load |
+| `UI/BondMarketWindow.cs` | 272 | The window: title, workspace tabs, feed, memory |
+| `UI/BorrowView.cs` | 325 | Borrow workspace: ticket, ladder, outstanding bonds |
+| `UI/BriefingView.cs` | 81 | WO-39: first-run briefing |
+| `UI/ChirperBridge.cs` | 95 | WO-38: alerts to the Chirper |
+| `UI/InvestView.cs` | 198 | Invest workspace: issuer cards, offerings, holdings |
+| `UI/RiskView.cs` | 192 | Risk workspace: gauge, regime, swaps, settings |
+| `UI/Theme.cs` | 51 | Colour-blind-safe palette |
+| `UI/ToggleButton.cs` | 50 | Toolbar button; delivers alerts |
+| `UI/TreasuryView.cs` | 191 | Treasury workspace |
+| `UI/UiPrefs.cs` | 63 | Per-player UI memory |
+| `UI/Widgets.cs` | 192 | Labels, bars, buttons; BoundLabel (WO-42) |
+| `UI/WorkspaceView.cs` | 60 | Workspace base: redraw only on change |
 
-**Total: 21 files, ~7,520 lines.**
+**Total: 46 files, 8,514 lines.**
 
-Pure files (no game dependencies): BondMarket.cs, DebtBook.cs, CimDemandEngine.cs, StateSerializer.cs, Credit/*, Market/*, Pricing/*. These compile and test under net8.0 xUnit.
+Pure files (no game dependencies) compile into the unit-test project; everything else compiles against the stub shims, and the engine harness (`Tests.Engine/`) runs the whole engine and UI against them.
 
 ---
 
