@@ -47,6 +47,8 @@
     <Compile Include="..\MyFirstMod\Credit\RatingExplainer.cs" Link="Linked\RatingExplainer.cs" />
     <Compile Include="..\MyFirstMod\Market\AuctionPricing.cs" Link="Linked\AuctionPricing.cs" />
     <Compile Include="..\MyFirstMod\Market\IssuancePreview.cs" Link="Linked\IssuancePreview.cs" />
+    <Compile Include="..\MyFirstMod\Presentation\Advisor.cs" Link="Linked\Advisor.cs" />
+    <Compile Include="..\MyFirstMod\Presentation\Wording.cs" Link="Linked\Wording.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,7 +22,10 @@ never skipped silently.
       Expect `cash=live-field`: the engine can read the treasury, so money it
       moves inside the economy callback survives. `cash=unbound` makes step 2
       the deciding test.
-- [ ] The toolbar icon (top-left) and Shift+B both open the panel.
+- [ ] The toolbar icon (top-left) and Shift+B both open the window. The first
+      opening shows the three-card briefing; its last button opens the ticket.
+- [ ] Each of the four workspaces (Treasury, Borrow, Invest, Risk) draws, and
+      hovering a figure shows its tooltip. **Record:** anything missing or overlapping.
 - [ ] A debt-free new city is **not** rated D, and the Emergency Note can be
       issued (RC-1 / WO-18). **Record:** rating shown.
 
@@ -39,6 +42,18 @@ change the treasury by the stated amount **once**: not zero times, not twice.
 - [ ] Pay 25%. **Record:** treasury before/after and the amount reported.
 - [ ] Let one month pass with the bond outstanding.
       **Record:** the coupon paid and the treasury change.
+
+## 2b. The ticket, the ladder and alerts
+
+- [ ] On the ticket, drag the yield 200bp below the clearing price. The preview
+      shows cover under 0.75x. Issue: the order comes back "Not done: auction failed".
+- [ ] Press Clear and issue. **Record:** the preview's fill and proceeds, and the
+      treasury change. They must agree.
+- [ ] The failed auction arrives as a Chirper message within a month, with the
+      window closed. **Record:** yes/no. If no, the Debug Output line
+      "Chirper unavailable" gives the reason.
+- [ ] Move the window, switch to Risk, close and reopen: it reopens where it was,
+      on Risk. Change the text size: the window rebuilds larger.
 
 ## 3. G-2: pledged-service revenue
 

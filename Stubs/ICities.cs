@@ -13,6 +13,13 @@ namespace ICities
     {
     }
 
+    public interface IChirperMessage
+    {
+        uint senderID { get; }
+        string senderName { get; }
+        string text { get; }
+    }
+
     public interface IBuilding
     {
     }

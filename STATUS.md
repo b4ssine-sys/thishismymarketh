@@ -13,18 +13,24 @@ Trunk: `master`.
 | Cash settlement in the economy callback | Claude Code | Merged to `master` | 5 unit tests; confirmed in game by Gate B step 2 |
 | Gate B | **Unassigned: needs the modding machine** | Not started | `validation/GATE-B-CHECKLIST.md` ready |
 | First Workshop build | **Unassigned: needs Steam publisher** | Blocked on WO-33 secret and Gate B | Release workflow produces the Workshop folder |
-| WO-40 Command queue | Claude Code | Done on `claude/sharp-shannon-zs2kn3`; merges after CI | `_lock` deleted; engine harness: 15 tests incl. partial cash moves, orders from 8 threads, off-thread saves |
+| WO-40 Command queue | Claude Code | Merged to `master` (PR #5) | `_lock` deleted; engine harness: partial cash moves, orders from 8 threads, off-thread saves |
 | **Auction pricing defect** | **MD decision** | Found 25 Sep by the engine harness | A well-reserved AAA city fails its Emergency Note auction (cover 0.00x); a thin-budget AA city clears (4.00x). Pinned by a skipped harness test. Blocks Gate B step 1 |
-| Horizon 1 (WO-35 … WO-39) | Claude Code | Not started | Waits for WO-40 |
-| Horizon 2 (WO-41 … WO-45) | Claude Code | Not started | Waits for Horizon 1 |
+| WO-35 Rating explains itself | Claude Code | Logic merged (PR #6); screen in this PR | Grid test: every rating shows distance up and down, each gap verified |
+| WO-36 Issuance ticket | Claude Code | Logic merged (PR #6); screen in this PR | Harness: 200bp tight previews low cover and fails; preview equals the deal |
+| WO-37 Maturity ladder | Claude Code | Logic merged (PR #6); screen in this PR | Harness: warning two periods before the first missed payment |
+| WO-38 Chirper alerts | Claude Code | Logic merged (PR #6); delivery in this PR | Harness: every type fires, one per month. In-game Chirper delivery is a Gate B check |
+| WO-39 Quality of life | Claude Code | In this PR | Position, last workspace, text size, colour-blind palette, tooltips, briefing. In-game look is a Gate B check |
+| Four workspaces | Claude Code | In this PR | UI smoke test renders every workspace through a city's life; idle window writes no labels |
+| Horizon 1 target: first bond in under 2 minutes | **Needs a new player** | Not measured | A timed first-play session; cannot be done by engineering alone |
+| Horizon 2 (WO-41 … WO-45) | Claude Code | Next | WO-42 idle-redraw is already met by the new UI |
 | Horizon 3 | None | Held | Feature freeze until 1.0 |
 
 ## Daily status
 
 **2026-09-25**
-- Merged: nothing new yet; WO-40 (command queue, `_lock` deleted, engine harness) is ready and goes to `master` once CI is green.
-- Blocked: auction pricing defect needs an MD decision (it touches pricing, reserved for Gate C); default branch, branch retirement and the release secret still need a repo admin.
-- Tomorrow: merge WO-40; start Horizon 1 with the WO-36 issuance ticket, which is where the pricing decision lands.
+- Merged: WO-40 command queue (PR #5), Horizon 1 logic (PR #6); the four-workspace UI goes next once CI is green.
+- Blocked: auction pricing defect needs an MD decision (the ticket works around it by letting the player pay the concession); default branch, branch retirement and the release secret need a repo admin; Gate B needs the modding machine.
+- Tomorrow: Horizon 2, starting with WO-41 (discount-factor cache) and WO-44 (performance budget in CI).
 
 **2026-09-24**
 - Merged: RC-1 … RC-4, WO-33, WO-34, the whole-repo game-style compile check and the cash-settlement fix to `master` (PR #3 and its follow-up).

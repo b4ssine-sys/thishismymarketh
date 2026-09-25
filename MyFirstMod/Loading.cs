@@ -7,7 +7,7 @@ namespace MyFirstMod
 {
     public class Loading : LoadingExtensionBase
     {
-        private BondMarketPanel _panel;
+        private BondMarketWindow _panel;
         private BondToggleButton _toggleButton;
 
         public override void OnLevelLoaded(LoadMode mode)
@@ -34,7 +34,7 @@ namespace MyFirstMod
             try
             {
                 UIView view = UIView.GetAView();
-                _panel = (BondMarketPanel)view.AddUIComponent(typeof(BondMarketPanel));
+                _panel = (BondMarketWindow)view.AddUIComponent(typeof(BondMarketWindow));
                 _toggleButton = (BondToggleButton)view.AddUIComponent(typeof(BondToggleButton));
                 uiCreated = _panel != null && _toggleButton != null;
             }
@@ -58,6 +58,7 @@ namespace MyFirstMod
             ResidentialBuildingLog.Reset();
             EconomyReader.Reset();
             TreasuryProbe.Reset();
+            ChirperBridge.Reset();
             BondMarketEngine.Instance = null;
 
             if (_toggleButton != null)

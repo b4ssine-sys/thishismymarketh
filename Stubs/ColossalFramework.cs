@@ -179,6 +179,7 @@ namespace ColossalFramework.UI
         public float width;
         public float height;
         public string tooltip;
+        public UnityEngine.Color32 color;
         public bool isVisible;
         public bool clipChildren;
         public bool canFocus;
@@ -210,8 +211,31 @@ namespace ColossalFramework.UI
     public class UIPanel : UIComponent
     {
         public string backgroundSprite;
-        public UnityEngine.Color32 color;
         public UIComponent autoLayout;
+    }
+
+    public delegate void PropertyChangedEventHandler<T>(UIComponent component, T value);
+
+    public class UISlider : UIComponent
+    {
+        public float minValue;
+        public float maxValue;
+        public float stepSize;
+        public float value;
+        public string backgroundSprite;
+        public UIComponent thumbObject;
+        public event PropertyChangedEventHandler<float> eventValueChanged;
+        public void RaiseValueChanged() { if (eventValueChanged != null) eventValueChanged(this, value); }
+    }
+
+    public class UISprite : UIComponent
+    {
+        public string spriteName;
+    }
+
+    public class UITextureSprite : UIComponent
+    {
+        public UnityEngine.Texture texture;
     }
 
     public class UILabel : UIComponent

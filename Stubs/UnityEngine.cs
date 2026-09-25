@@ -57,6 +57,12 @@ namespace UnityEngine
         RightShift = 303
     }
 
+    public static class Mathf
+    {
+        public static float Clamp(float value, float min, float max) { return value < min ? min : (value > max ? max : value); }
+        public static int Clamp(int value, int min, int max) { return value < min ? min : (value > max ? max : value); }
+    }
+
     public static class Time
     {
         public static float deltaTime { get { return 0f; } }
@@ -77,6 +83,36 @@ namespace UnityEngine
 
     public class GameObject : Object
     {
+    }
+
+    public static class PlayerPrefs
+    {
+        public static int GetInt(string key, int defaultValue) { return defaultValue; }
+        public static void SetInt(string key, int value) { }
+        public static float GetFloat(string key, float defaultValue) { return defaultValue; }
+        public static void SetFloat(string key, float value) { }
+        public static void Save() { }
+    }
+
+    public enum FilterMode { Point = 0, Bilinear = 1, Trilinear = 2 }
+    public enum TextureWrapMode { Repeat = 0, Clamp = 1 }
+
+    public class Texture : Object
+    {
+        public FilterMode filterMode;
+        public TextureWrapMode wrapMode;
+        public virtual int width { get { return 0; } }
+        public virtual int height { get { return 0; } }
+    }
+
+    public class Texture2D : Texture
+    {
+        private readonly int _w, _h;
+        public Texture2D(int width, int height) { _w = width; _h = height; }
+        public override int width { get { return _w; } }
+        public override int height { get { return _h; } }
+        public void SetPixels32(Color32[] colors) { }
+        public void Apply() { }
     }
 }
 
