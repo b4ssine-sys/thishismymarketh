@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Reflection.Emit;
 using ColossalFramework;
 
 namespace MyFirstMod
@@ -19,12 +20,19 @@ namespace MyFirstMod
     {
         private const string FieldName = "m_cashAmount";
 
+        private delegate long CashReader(object economyManager);
+
         private static volatile bool _resolved;
         private static volatile FieldInfo _field;
+        // WO-44: a compiled field read, so the per-tick treasury read allocates
+        // nothing (FieldInfo.GetValue boxes). Falls back to reflection if the
+        // runtime cannot emit.
+        private static volatile CashReader _reader;
 
         public static void Reset()
         {
             _field = null;
+            _reader = null;
             _resolved = false;
         }
 
@@ -48,12 +56,33 @@ namespace MyFirstMod
                 if (!_resolved) Resolve(em.GetType());
                 FieldInfo f = _field;
                 if (f == null) return false;
-                cash = Convert.ToInt64(f.GetValue(em));
+                CashReader reader = _reader;
+                cash = reader != null ? reader(em) : Convert.ToInt64(f.GetValue(em));
                 return true;
             }
             catch
             {
                 return false;
+            }
+        }
+
+        private static CashReader Compile(FieldInfo field)
+        {
+            try
+            {
+                DynamicMethod m = new DynamicMethod("ReadTreasury", typeof(long), new Type[] { typeof(object) },
+                    typeof(TreasuryProbe).Module, true);
+                ILGenerator il = m.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, field.DeclaringType);
+                il.Emit(OpCodes.Ldfld, field);
+                if (field.FieldType == typeof(int)) il.Emit(OpCodes.Conv_I8);
+                il.Emit(OpCodes.Ret);
+                return (CashReader)m.CreateDelegate(typeof(CashReader));
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -68,6 +97,7 @@ namespace MyFirstMod
                     if (f != null && (f.FieldType == typeof(long) || f.FieldType == typeof(int)))
                         _field = f;
                 }
+                if (_field != null) _reader = Compile(_field);
             }
             catch
             {

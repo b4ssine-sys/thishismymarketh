@@ -102,6 +102,14 @@ namespace MyFirstMod.EngineTests
             return null;
         }
 
+        // Ticks until the engine has just run a period boundary, so the next
+        // TicksPerMonth - 1 ticks are ordinary ones.
+        public void AlignToPeriodStart()
+        {
+            int period = Snap.PeriodCounter;
+            for (int i = 0; i < TicksPerMonth + 1 && Snap.PeriodCounter == period; i++) Tick();
+        }
+
         // A booted city: metrics initialised and a few months of history, ending
         // just after a month boundary so the next tick is an ordinary one.
         public GameHarness Boot(int months = 3)

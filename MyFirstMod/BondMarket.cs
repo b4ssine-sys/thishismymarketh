@@ -301,6 +301,7 @@ namespace MyFirstMod
         public float CityBorrowingRate;
         public float RequiredYield;
         public YieldCurve Curve;
+        public CurveTable CurveTable;       // WO-41: the period's curve, pre-evaluated
         public float PortfolioValue;
         public int DefaultPenalty;
         public int TotalDefaults;
@@ -389,7 +390,7 @@ namespace MyFirstMod
         // Fair yield for a new issue of this tenor: the curve's spot rate.
         public float AuctionFairYield(int periods)
         {
-            return AuctionPricing.FairYield(Curve, BenchmarkRate, periods, BondPricing.PeriodsPerYear);
+            return AuctionPricing.FairYield(CurveTable, BenchmarkRate, periods);
         }
 
         // The offered yield the engine uses for a template when the player adds

@@ -126,6 +126,11 @@ namespace MyFirstMod
         // calls from another thread retry until it captures a whole tick.
         private int _tickSequence;
         private int _simThreadId = -1;
+
+        // WO-44: always-on timing; one PERF line to Debug Output per in-game year.
+        public readonly EnginePerf Perf = new EnginePerf();
+        private bool _tickWasBoundary;
+        private int _perfLogPeriods;
         // Phase 5 (G-1): deterministic, serializable PRNG so stochastic outcomes
         // (issuer migration/default) survive reload and can't be save-scummed.
         private DeterministicRandom _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
@@ -221,6 +226,7 @@ namespace MyFirstMod
         private float _shortRate = 0.04f;
         private float _cyclePhase;
         private YieldCurve _yieldCurve;
+        private CurveTable _curveTable; // WO-41: rebuilt with the curve, once per period
         private const float RATE_KAPPA = 0.15f;             // mean-reversion speed (per year)
         private const float RATE_BASE_THETA = 0.04f;        // long-run mean of the short rate
         private const float RATE_CYCLE_AMPLITUDE = 0.015f;  // business-cycle swing in theta
@@ -286,12 +292,14 @@ namespace MyFirstMod
             Instance = this;
             _simThreadId = Thread.CurrentThread.ManagedThreadId;
             Interlocked.Increment(ref _tickSequence); // odd: tick in progress
+            long started = EnginePerf.Now();
             try
             {
                 return Tick(internalMoneyAmount);
             }
             finally
             {
+                Perf.Record(started, EnginePerf.Now(), _tickWasBoundary);
                 Interlocked.Increment(ref _tickSequence); // even: tick complete
             }
         }
@@ -361,15 +369,24 @@ namespace MyFirstMod
                 if (periodBoundary) { _tickCounter = 0; _ticksThisPeriod = 0; }
             }
 
+            _tickWasBoundary = periodBoundary;
+            if (periodBoundary && ++_perfLogPeriods >= BondPricing.PeriodsPerYear)
+            {
+                _perfLogPeriods = 0;
+                Debug.Log(Perf.Line());
+            }
+
             // P2-2: the heavy metrics block runs ONCE per period, not every tick.
             if (periodBoundary)
                 RecalculateMetricsInternal(_tickCash);
 
-            if (_marketBonds.Count < MIN_MARKET_BONDS)
-                RegenerateBondsInternal();
-
             if (periodBoundary)
                 AgeBondsInternal();
+
+            // After ageing, so bonds that matured this period are replaced in the
+            // same tick and the next ordinary tick has nothing to publish.
+            if (_marketBonds.Count < MIN_MARKET_BONDS)
+                RegenerateBondsInternal();
 
             // Idle ticks publish nothing and allocate nothing.
             if (_dirty)
@@ -644,7 +661,7 @@ namespace MyFirstMod
             TrackRateMove();
 
             float longLevel = _shortRate + RATE_TERM_PREMIUM + _revenueVolatility * 0.01f;
-            _yieldCurve = YieldCurve.FromShortRate(_shortRate, longLevel, RATE_CURVATURE, RATE_LAMBDA);
+            SetCurve(YieldCurve.FromShortRate(_shortRate, longLevel, RATE_CURVATURE, RATE_LAMBDA));
             _marketFloatingRate = _shortRate;
             _benchmarkRate = _marketFloatingRate;
 
@@ -784,6 +801,7 @@ namespace MyFirstMod
             s.CityBorrowingRate = _cityBorrowingRate;
             s.RequiredYield = _requiredYield;
             s.Curve = _yieldCurve;
+            s.CurveTable = _curveTable;
             s.PortfolioValue = _portfolioValue;
             s.DefaultPenalty = _defaultPenalty;
             s.TotalDefaults = _totalDefaults;
@@ -1564,17 +1582,24 @@ namespace MyFirstMod
         private float IssuerYieldFor(Bond b)
         {
             float spread = IssuerModel.IssuerSpread(b.IssuerRating);
-            float years = (float)b.RemainingPeriods / BondPricing.PeriodsPerYear;
-            float baseRate = _yieldCurve.Lambda > 0.0001f ? _yieldCurve.SpotRate(years) : _marketFloatingRate;
+            float baseRate = _curveTable != null ? _curveTable.Spot(b.RemainingPeriods) : _marketFloatingRate;
             float y = baseRate + spread;
             if (y < 0.005f) y = 0.005f;
             if (y > 0.60f) y = 0.60f;
             return y;
         }
 
+        // WO-41: the only place the curve is evaluated; everything else reads the
+        // table. Called when the curve changes (once per period, and on load/reset).
+        private void SetCurve(YieldCurve curve)
+        {
+            _yieldCurve = curve;
+            _curveTable = CurveTable.Build(curve);
+        }
+
         private float AuctionFairYield(int periods)
         {
-            return AuctionPricing.FairYield(_yieldCurve, _marketFloatingRate, periods, BondPricing.PeriodsPerYear);
+            return AuctionPricing.FairYield(_curveTable, _marketFloatingRate, periods);
         }
 
         private float BondDurationYears(Bond b)
@@ -1858,7 +1883,7 @@ namespace MyFirstMod
             _cityBorrowingRate = 0f;
             _shortRate = RATE_BASE_THETA;
             _cyclePhase = 0f;
-            _yieldCurve = YieldCurve.FromShortRate(RATE_BASE_THETA, RATE_BASE_THETA + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA);
+            SetCurve(YieldCurve.FromShortRate(RATE_BASE_THETA, RATE_BASE_THETA + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA));
             _requiredYield = 0f;
             _portfolioValue = 0f;
             _prevRequiredYield = 0f;
@@ -2157,8 +2182,8 @@ namespace MyFirstMod
         {
             // P1-6: mark to market off the term structure (PV float - PV fixed),
             // not the old linear (floating - fixed) x years approximation.
-            return SwapPricing.SwapValue(_yieldCurve, swap.NotionalAmount, swap.FixedRate,
-                swap.RemainingPeriods, BondPricing.PeriodsPerYear, swap.PayFixed);
+            return SwapPricing.SwapValue(_curveTable, swap.NotionalAmount, swap.FixedRate,
+                swap.RemainingPeriods, swap.PayFixed);
         }
 
         private bool SettleSwapCash(float mtmValue)
@@ -2271,7 +2296,7 @@ namespace MyFirstMod
 
             // P1-6: a swap's fixed leg is the par swap rate off the risk-free curve,
             // not the city's credit-adjusted borrowing yield.
-            float parRate = SwapPricing.ParSwapRate(_yieldCurve, avgPeriods, BondPricing.PeriodsPerYear);
+            float parRate = SwapPricing.ParSwapRate(_curveTable, avgPeriods);
 
             _nextSwapId++;
             _activeSwaps.Add(new InterestRateSwap("SW" + _nextSwapId.ToString(), unhedged, parRate, avgPeriods, true));
@@ -2446,7 +2471,7 @@ namespace MyFirstMod
             _totalCitizenProceeds = s.TotalCitizenProceeds;
             _shortRate = s.ShortRate;
             _cyclePhase = s.CyclePhase;
-            _yieldCurve = YieldCurve.FromShortRate(_shortRate, _shortRate + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA);
+            SetCurve(YieldCurve.FromShortRate(_shortRate, _shortRate + RATE_TERM_PREMIUM, RATE_CURVATURE, RATE_LAMBDA));
 
             CopyInto(_cashFlowHistory, s.CashFlowHistory);
             CopyInto(_pressureHistory, s.PressureHistory);
