@@ -358,6 +358,15 @@ namespace MyFirstMod
         // Yield adjustment per issuance template from its pledged revenue (0 for GO).
         public float[] TemplateYieldAdjustment = new float[IssueTemplates.Count];
 
+        public float ShortRate;
+        public float CyclePhase;             // business-cycle phase, radians
+        public RatingExplanation Explanation = new RatingExplanation(); // WO-35
+        public LadderMonth[] Ladder = new LadderMonth[0];               // WO-37
+        public IssuerView[] Issuers = new IssuerView[0];
+        public Alert[] Alerts = new Alert[0];                           // WO-38
+        // Per template: the player spread that gives a bid-to-cover of 1 (WO-36).
+        public float[] SpreadForFullCover = new float[IssueTemplates.Count];
+
         public BondView[] Market = new BondView[0];
         public BondView[] Portfolio = new BondView[0];
         public BondView[] Issued = new BondView[0];
@@ -380,8 +389,7 @@ namespace MyFirstMod
         // Fair yield for a new issue of this tenor: the curve's spot rate.
         public float AuctionFairYield(int periods)
         {
-            float years = (float)periods / BondPricing.PeriodsPerYear;
-            return Curve.Lambda > 0.0001f ? Curve.SpotRate(years) : BenchmarkRate;
+            return AuctionPricing.FairYield(Curve, BenchmarkRate, periods, BondPricing.PeriodsPerYear);
         }
 
         // The offered yield the engine uses for a template when the player adds
@@ -398,6 +406,25 @@ namespace MyFirstMod
         }
 
         public string CalculateRecommendedHedge() { return RecommendedHedge; }
+
+        // WO-36: preview a template at the player's spread, exactly as the engine
+        // would run it on the next tick.
+        public IssuancePreviewResult PreviewIssue(int templateIndex, float playerSpread)
+        {
+            IssuanceInputs x = new IssuanceInputs();
+            x.Face = IssueTemplates.Face(templateIndex);
+            x.Periods = IssueTemplates.TermPeriods(templateIndex);
+            float adj = templateIndex < TemplateYieldAdjustment.Length ? TemplateYieldAdjustment[templateIndex] : 0f;
+            x.OfferedYield = AuctionPricing.OfferedYield(RequiredYield, adj, playerSpread);
+            x.FairYield = AuctionFairYield(x.Periods);
+            x.DemandScore = DemandScore;
+            x.RemainingCapacity = RemainingCapacity;
+            x.CashBalance = CashBalance;
+            x.Metrics = Metrics;
+            x.HasArrears = HasArrears;
+            x.PeriodsPerYear = BondPricing.PeriodsPerYear;
+            return IssuancePreview.Run(x);
+        }
 
         public void GetMarketSnapshot(System.Collections.Generic.List<BondView> outBonds, System.Collections.Generic.List<float> outPrices)
         {

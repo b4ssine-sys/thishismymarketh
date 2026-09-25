@@ -27,7 +27,7 @@ namespace MyFirstMod.EngineTests
 
         // Internal units: 100 per display unit, as in the game.
         public GameHarness(long startCashDisplay = 500000, int population = 50000,
-            long incomePerMonthDisplay = 60000, long expensePerMonthDisplay = 45000)
+            long incomePerMonthDisplay = 60000, long expensePerMonthDisplay = 45000, int seed = 12345)
         {
             Singleton<EconomyManager>.instance = Economy;
             Singleton<SimulationManager>.instance = Sim;
@@ -38,6 +38,7 @@ namespace MyFirstMod.EngineTests
             BondMarketEngine.Instance = null;
             BondMarketEngine.PendingSaveData = null;
             BondMarketEngine.NeedsReset = true;
+            BondMarketEngine.SeedForNextReset = seed;
 
             Sim.m_currentGameTime = new DateTime(2030, 1, 1);
             Districts.m_districts.m_buffer = new District[1];

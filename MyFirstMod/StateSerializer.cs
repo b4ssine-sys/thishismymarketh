@@ -353,6 +353,7 @@ namespace MyFirstMod
                 m.Archetype = (IssuerArchetype)sr.ReadInt32();
                 m.HomeRating = (CreditRating)sr.ReadInt32();
                 m.Rating = (CreditRating)sr.ReadInt32();
+                m.PreviousRating = m.Rating;
                 m.Defaulted = sr.ReadBoolean();
                 list.Add(m);
             }
