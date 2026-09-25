@@ -273,8 +273,21 @@ namespace MyFirstMod
         public float CitizenProceeds;
     }
 
+    // WO-27/WO-40: everything the UI may read, published by the simulation thread
+    // as a new immutable object whenever state changes. The UI never touches
+    // engine state; it reads the latest snapshot and places orders on the queue.
+    // Arrays are fresh per snapshot and never written after publication.
     public class EngineSnapshot
     {
+        public int MaxIssuedBonds { get { return 5; } }
+        public int MaxActiveSwaps { get { return 5; } }
+
+        public int Version;                 // bumps on every publish (WO-42 dirty check)
+        public int LastProcessedSequence;   // highest command sequence carried out
+        public int CommandsExecuted;        // orders carried out since the engine was created
+        public int PeriodCounter;
+        public float CashBalance;           // treasury confirmed at the last tick (display units)
+
         public float GrossIncome;
         public float TotalExpenses;
         public float DebtBurden;
@@ -282,8 +295,12 @@ namespace MyFirstMod
         public float MonthsOfReserves;
         public float NOI;
         public CreditRating Rating;
+        public CreditMetrics Metrics;
+        public bool HasArrears;
         public float BenchmarkRate;
+        public float CityBorrowingRate;
         public float RequiredYield;
+        public YieldCurve Curve;
         public float PortfolioValue;
         public int DefaultPenalty;
         public int TotalDefaults;
@@ -326,9 +343,105 @@ namespace MyFirstMod
         public float TotalCouponsPaid;
         public float TotalHedgedNotional;
         public float OverHedgeRatio;
-        public string CreditStatusLabel;
-        public string DemandLabelText;
-        public string PressureLabelText;
+        public string CreditStatusLabel = "";
+        public string DemandLabelText = "";
+        public string PressureLabelText = "";
+        public string RecommendedHedge = "";
+
+        public bool CanIssueBonds;
+        public bool AnyUnpaidSwapSettlement;
+        public float HazardMultiplier = IssuerModel.HAZARD_STANDARD;
+        public float RateVolatilityScale = 1f;
+        public bool CitizenTradingEnabled = true;
+        public bool RevenueBondsEnabled;
+        public bool CreditModelNoticePending;
+        // Yield adjustment per issuance template from its pledged revenue (0 for GO).
+        public float[] TemplateYieldAdjustment = new float[IssueTemplates.Count];
+
+        public BondView[] Market = new BondView[0];
+        public BondView[] Portfolio = new BondView[0];
+        public BondView[] Issued = new BondView[0];
+        public BondView[] Redeemed = new BondView[0];
+        public SwapView[] Swaps = new SwapView[0];
+        public QuarterlyReport[] Reports = new QuarterlyReport[0];
+        public CimTransaction[] Transactions = new CimTransaction[0];
+        public CommandResult[] RecentResults = new CommandResult[0];
+
+        // ---- pure helpers over the published data ----
+
+        public int IssueTemplateCount { get { return IssueTemplates.Count; } }
+        public int AvailableTemplateCount { get { return IssueTemplates.AvailableCount(RevenueBondsEnabled); } }
+        public bool IsTemplateAvailable(int index) { return IssueTemplates.IsAvailable(index, RevenueBondsEnabled); }
+        public string GetTemplateName(int index) { return IssueTemplates.Name(index); }
+        public float GetTemplateFace(int index) { return IssueTemplates.Face(index); }
+        public int GetTemplatePeriods(int index) { return IssueTemplates.TermPeriods(index); }
+        public RevenueSource GetTemplateRevenue(int index) { return IssueTemplates.Source(index); }
+
+        // Fair yield for a new issue of this tenor: the curve's spot rate.
+        public float AuctionFairYield(int periods)
+        {
+            float years = (float)periods / BondPricing.PeriodsPerYear;
+            return Curve.Lambda > 0.0001f ? Curve.SpotRate(years) : BenchmarkRate;
+        }
+
+        // The offered yield the engine uses for a template when the player adds
+        // no spread of their own.
+        public float TemplateOfferedYield(int index)
+        {
+            float adj = index >= 0 && index < TemplateYieldAdjustment.Length ? TemplateYieldAdjustment[index] : 0f;
+            return RequiredYield + adj;
+        }
+
+        public float EstimateAuctionCover(int periods)
+        {
+            return PrimaryAuction.EstimateCover(RequiredYield, AuctionFairYield(periods), DemandScore);
+        }
+
+        public string CalculateRecommendedHedge() { return RecommendedHedge; }
+
+        public void GetMarketSnapshot(System.Collections.Generic.List<BondView> outBonds, System.Collections.Generic.List<float> outPrices)
+        {
+            CopyViews(Market, outBonds, outPrices);
+        }
+
+        public void GetPortfolioSnapshot(System.Collections.Generic.List<BondView> outBonds, System.Collections.Generic.List<float> outPrices)
+        {
+            CopyViews(Portfolio, outBonds, outPrices);
+        }
+
+        public void GetIssuedBondsSnapshot(System.Collections.Generic.List<BondView> outBonds)
+        {
+            CopyViews(Issued, outBonds, null);
+        }
+
+        public void GetActiveSwapsSnapshot(System.Collections.Generic.List<SwapView> outSwaps)
+        {
+            outSwaps.Clear();
+            for (int i = 0; i < Swaps.Length; i++) outSwaps.Add(Swaps[i]);
+        }
+
+        public void GetReportSnapshot(System.Collections.Generic.List<QuarterlyReport> dest)
+        {
+            dest.Clear();
+            for (int i = 0; i < Reports.Length; i++) dest.Add(Reports[i]);
+        }
+
+        public void GetTransactionLogSnapshot(System.Collections.Generic.List<CimTransaction> dest)
+        {
+            dest.Clear();
+            for (int i = 0; i < Transactions.Length; i++) dest.Add(Transactions[i]);
+        }
+
+        private static void CopyViews(BondView[] src, System.Collections.Generic.List<BondView> outBonds, System.Collections.Generic.List<float> outPrices)
+        {
+            outBonds.Clear();
+            if (outPrices != null) outPrices.Clear();
+            for (int i = 0; i < src.Length; i++)
+            {
+                outBonds.Add(src[i]);
+                if (outPrices != null) outPrices.Add(src[i].Price);
+            }
+        }
     }
 
     public static class BondPricing

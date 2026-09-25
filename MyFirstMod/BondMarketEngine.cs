@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using ICities;
 using ColossalFramework;
 using UnityEngine;
@@ -9,9 +10,17 @@ namespace MyFirstMod
 {
     public class BondMarketEngine : EconomyExtensionBase
     {
-        public static BondMarketEngine Instance;
-        public static bool NeedsReset;
-        public static byte[] PendingSaveData;
+        public static volatile BondMarketEngine Instance;
+        public static volatile bool NeedsReset;
+
+        // Handed over by SaveDataExtension.OnLoadData and taken exactly once by
+        // the simulation thread.
+        private static byte[] _pendingSaveData;
+        public static byte[] PendingSaveData
+        {
+            get { return Interlocked.CompareExchange(ref _pendingSaveData, null, null); }
+            set { Interlocked.Exchange(ref _pendingSaveData, value); }
+        }
 
         private const int WINDOW_SIZE = 60;
         public const int TICKS_PER_PERIOD = 15;
@@ -38,9 +47,10 @@ namespace MyFirstMod
         private bool _prevMoneySet;
 
         // P0-6: authoritative cash cursor. Seeded from the balance the game hands
-        // us each tick (and from LastCashAmount at the start of each UI action),
-        // then decremented/incremented by every mod cash op, so multiple ops in
-        // one tick do not all read the same pre-tick balance.
+        // us each tick, then decremented/incremented by every mod cash op, so
+        // multiple ops in one tick do not all read the same pre-tick balance.
+        // WO-40: player orders run inside the tick too, so nothing reads the
+        // game's balance outside it.
         private long _tickCash;
         // P0-7: net cash the mod itself moved since the last cash-flow sample
         // (using the amounts the game actually moved, not the amounts requested).
@@ -60,6 +70,7 @@ namespace MyFirstMod
         private long _prevLedgerExpense;
         private bool _ledgerBaselineSet;
         private float _monthsOfReserves;
+        private CreditMetrics _creditMetrics;
         private bool _creditModelNoticePending; // one-time Phase 2 migration banner flag
         private bool _gameDataAvailable;        // P2-4: whether the game exposed usable demographics this pass
         private bool _periodMetricsInitialized; // P2-2: has the per-period metrics block run at least once
@@ -77,8 +88,25 @@ namespace MyFirstMod
         private int _periodCounter; // monotonic period index driving the lifecycle
         private readonly float[] _placementBefore = new float[MAX_ISSUED_BONDS]; // reused per-period (plan section 4)
         private readonly System.Text.StringBuilder _detailBuilder = new System.Text.StringBuilder(64); // P2-3: reused
-        private readonly object _lock = new object();
+        // WO-40: the UI and the simulation share no mutable state. The UI reads the
+        // latest immutable snapshot and places orders on this queue; the
+        // simulation thread carries them out at the start of its next tick.
+        private readonly CommandQueue<EngineCommand> _commands = new CommandQueue<EngineCommand>();
+        private readonly List<EngineCommand> _drainBuffer = new List<EngineCommand>(16);
+        private int _submitSequence;
+        private int _lastProcessedSequence;
+        private int _commandsExecuted;
+        private const int RESULT_HISTORY = 8;
+        private readonly CommandResult[] _resultRing = new CommandResult[RESULT_HISTORY];
+        private int _resultCount;
+        private int _resultNext;
         private volatile EngineSnapshot _snapshot = new EngineSnapshot();
+        private int _snapshotVersion;
+        private bool _dirty = true;
+        // Even while no tick is running, odd during one. Lets a save that the game
+        // calls from another thread retry until it captures a whole tick.
+        private int _tickSequence;
+        private int _simThreadId = -1;
         // Phase 5 (G-1): deterministic, serializable PRNG so stochastic outcomes
         // (issuer migration/default) survive reload and can't be save-scummed.
         private DeterministicRandom _rng = new DeterministicRandom(unchecked((int)DateTime.Now.Ticks));
@@ -183,354 +211,262 @@ namespace MyFirstMod
         private const float RATE_LAMBDA = 2.0f;             // NS decay (years)
         private const float CYCLE_PHASE_PER_PERIOD = 0.05f; // ~126 periods (~10.5 yr) per cycle
 
-        private static readonly string[] ISSUE_NAMES = new string[]
-        {
-            "Emergency Note", "Municipal Note", "Water Revenue Bond",
-            "Electric Revenue Bond", "Transit Revenue Bond",
-            "Infrastructure Bond", "Capital Bond"
-        };
-        private static readonly float[] ISSUE_FACES = new float[]
-        {
-            25000f, 75000f, 150000f, 200000f, 300000f, 400000f, 750000f
-        };
-        private static readonly int[] ISSUE_PERIODS = new int[]
-        {
-            24, 36, 48, 60, 72, 84, 120
-        };
-        private static readonly RevenueSource[] ISSUE_REVENUE = new RevenueSource[]
-        {
-            RevenueSource.None, RevenueSource.None, RevenueSource.Water,
-            RevenueSource.Electricity, RevenueSource.PublicTransport,
-            RevenueSource.None, RevenueSource.None
-        };
-
         // Issuer identities live in InitIssuersInternal() (Phase 5); the market
         // draws a face and term for each generated bond from these menus.
         private static readonly float[] MARKET_FACES = new float[] { 10000f, 25000f, 50000f, 75000f, 100000f, 250000f };
         private static readonly int[] MARKET_PERIODS = new int[] { 4, 6, 8, 10, 12, 16 };
 
+        // ---- the UI's whole view of the engine (WO-40) ----
+
+        // The latest published state. Immutable; safe to read from any thread.
         public EngineSnapshot Snapshot { get { return _snapshot; } }
 
-        public float GrossIncome { get { return _grossIncome; } }
-        public float TotalExpenses { get { return _totalExpenses; } }
-        public float DebtBurden { get { return _debtBurden; } }
-        public float DSCR { get { return _dscr; } }
-        public float MonthsOfReserves { get { return _monthsOfReserves; } }
-        // One-time Phase 2 migration banner: true after loading a pre-Phase-2 save;
-        // the UI reads it once and calls AckCreditModelNotice() to clear it.
-        public bool CreditModelNoticePending { get { return _creditModelNoticePending; } }
-        public void AckCreditModelNotice() { _creditModelNoticePending = false; }
-        public float NOI { get { return _noi; } }
-        public CreditRating Rating { get { return _rating; } }
-        public float BenchmarkRate { get { return _benchmarkRate; } }
-        public float RequiredYield { get { return _requiredYield; } }
-        public float PortfolioValue { get { return _portfolioValue; } }
-        public int DefaultPenalty { get { return _defaultPenalty; } }
-        public int TotalDefaults { get { return _totalDefaults; } }
-        public float RealizedPL { get { return (float)_realizedPL; } }
-        public int TicksInCurrentPeriod { get { return _tickCounter; } }
-
-        public int IssuedCount { get { lock (_lock) { return _issuedBonds.Count; } } }
-        public int MaxIssuedBonds { get { return MAX_ISSUED_BONDS; } }
-        public int IssueTemplateCount { get { return ISSUE_NAMES.Length; } }
-
-        public int PortfolioCount { get { lock (_lock) { return _portfolioBonds.Count; } } }
-        public int MarketCount { get { lock (_lock) { return _marketBonds.Count; } } }
-
-        public float RevenueVolatility { get { return _revenueVolatility; } }
-        public float SwapPL { get { return (float)_swapPL; } }
-        public int SwapCount { get { lock (_lock) { return _activeSwaps.Count; } } }
-        public int MaxActiveSwaps { get { return MAX_ACTIVE_SWAPS; } }
-
-        public float DemandScore { get { return _demandScore; } }
-        public float DefaultProbability { get { return _defaultProbability; } }
-        public float AbsorptionCapacity { get { return _absorptionCapacity; } }
-        public float RemainingCapacity
+        // Places an order on the queue and returns its sequence number. The
+        // simulation thread carries it out at the start of its next tick; the
+        // result appears in Snapshot.RecentResults and LastProcessedSequence
+        // reaches the returned number. Safe to call from any thread.
+        public int Submit(EngineCommand command)
         {
-            get
-            {
-                lock (_lock)
-                {
-                    float currentFace = 0f;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                        currentFace += _issuedBonds[i].FaceValue;
-                    float remaining = _absorptionCapacity - currentFace;
-                    return remaining > 0f ? remaining : 0f;
-                }
-            }
-        }
-        public int Population { get { return _population; } }
-        public float Happiness { get { return _happiness; } }
-        public float EmploymentRate { get { return _employmentRate; } }
-        public float PopulationGrowth { get { return _populationGrowth; } }
-        public float CitizenConfidence { get { return _citizenConfidence; } }
-        public float BondAppeal { get { return _bondAppeal; } }
-        public float FinancialHealth { get { return _financialHealth; } }
-        public string DemandLabelText { get { return CimDemandEngine.DemandLabel(_demandScore); } }
-        public float CitizenBuyVolume { get { return _citizenBuyVolume; } }
-        public float CitizenSellVolume { get { return _citizenSellVolume; } }
-        public float MarketPressure { get { return _smoothedPressure; } }
-        public string PressureLabelText { get { return CimDemandEngine.PressureLabel(_smoothedPressure); } }
-        public float CitizenProceedsThisPeriod { get { return _citizenProceedsThisPeriod; } }
-        public float TotalCitizenProceeds { get { return (float)_totalCitizenProceeds; } }
-        public float Health { get { return _health; } }
-        public float Education { get { return _education; } }
-        public float LandValue { get { return _landValue; } }
-        public float CrimeRate { get { return _crimeRate; } }
-        public float CashReserves { get { return _cashReserves; } }
-        public float CityVitals { get { return _cityVitals; } }
-        public float Momentum { get { return CimDemandEngine.CalculateMomentumMultiplier(_currentMarketState, _previousMarketState, 1.5f); } }
-        public int TransactionLogCount { get { return _transactionLog.Count; } }
-        public int ReportCount { get { lock (_lock) { return _reportHistory.Count; } } }
-        public int CurrentQuarter { get { return _quarterNumber; } }
-
-        public float HazardMultiplier { get { return _hazardMultiplier; } set { _hazardMultiplier = value; } }
-        public float RateVolatilityScale { get { return _rateVolatilityScale; } set { _rateVolatilityScale = value; } }
-        public bool CitizenTradingEnabled { get { return _citizenTradingEnabled; } set { _citizenTradingEnabled = value; } }
-        public bool RevenueBondsEnabled { get { return _revenueBondsEnabled; } set { _revenueBondsEnabled = value; } }
-
-        public void GetReportSnapshot(List<QuarterlyReport> dest)
-        {
-            dest.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _reportHistory.Count; i++)
-                    dest.Add(_reportHistory[i]);
-            }
+            if (command == null) return 0;
+            command.Sequence = Interlocked.Increment(ref _submitSequence);
+            _commands.Enqueue(command);
+            return command.Sequence;
         }
 
-        public void GetTransactionLogSnapshot(List<CimTransaction> dest)
+        private string CreditStatusLabelInternal()
         {
-            dest.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _transactionLog.Count; i++)
-                {
-                    CimTransaction src = _transactionLog[i];
-                    CimTransaction copy = new CimTransaction();
-                    copy.Sequence = src.Sequence;
-                    copy.BuyVolume = src.BuyVolume;
-                    copy.SellVolume = src.SellVolume;
-                    copy.Pressure = src.Pressure;
-                    copy.Detail = src.Detail;
-                    dest.Add(copy);
-                }
-            }
+            if (_defaultPenalty >= 12) return "IN DEFAULT - YIELD CRITICAL";
+            if (_defaultPenalty >= 6) return "DISTRESSED - YIELD SPIKED";
+            if (_defaultPenalty >= 3) return "UNDER PRESSURE";
+            if (_defaultPenalty > 0) return "RECOVERING";
+            return "GOOD STANDING";
         }
 
-        public float TotalHedgedNotional
+        private float IssuedFaceTotal()
         {
-            get
-            {
-                lock (_lock)
-                {
-                    float total = 0f;
-                    for (int i = 0; i < _activeSwaps.Count; i++)
-                        total += _activeSwaps[i].NotionalAmount;
-                    return total;
-                }
-            }
+            float total = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                total += _issuedBonds[i].FaceValue;
+            return total;
         }
 
-        public float TotalDebtFace
+        // Null when issuance is open; otherwise the reason it is closed.
+        private string IssueBlockReason()
         {
-            get
-            {
-                lock (_lock)
-                {
-                    float total = 0f;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                        total += _issuedBonds[i].SubscribedFace;
-                    return total;
-                }
-            }
-        }
-
-        public float OverHedgeRatio
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    return CalculateOverHedgeRatioInternal();
-                }
-            }
-        }
-
-        public bool CanIssueBonds
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return false;
-                    if (_rating == CreditRating.D) return false;
-                    if (_debtBook.IssuanceSuspended) return false;            // Schema v5: defaulted or in arrears
-                    if (!_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS)) return false; // lock-out window
-                    if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return false;
-
-                    if (_absorptionCapacity > 0f)
-                    {
-                        float currentFace = 0f;
-                        for (int i = 0; i < _issuedBonds.Count; i++)
-                            currentFace += _issuedBonds[i].FaceValue;
-                        if (_absorptionCapacity - currentFace < 1000f) return false;
-                    }
-
-                    return true;
-                }
-            }
-        }
-
-        public float TotalDebtOwed
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    float total = 0f;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                    {
-                        Bond ib = _issuedBonds[i];
-                        float remainingCoupons = (ib.SubscribedFace * ib.CouponRate / BondPricing.PeriodsPerYear) * ib.RemainingPeriods;
-                        total += ib.SubscribedFace + remainingCoupons + ib.Arrears;
-                    }
-                    return total;
-                }
-            }
-        }
-
-        public float TotalCouponsPaid
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    float total = 0f;
-                    for (int i = 0; i < _issuedBonds.Count; i++)
-                        total += _issuedBonds[i].InterestPaid;
-                    return total;
-                }
-            }
-        }
-
-        public string CreditStatusLabel
-        {
-            get
-            {
-                if (_defaultPenalty >= 12) return "IN DEFAULT - YIELD CRITICAL";
-                if (_defaultPenalty >= 6) return "DISTRESSED - YIELD SPIKED";
-                if (_defaultPenalty >= 3) return "UNDER PRESSURE";
-                if (_defaultPenalty > 0) return "RECOVERING";
-                return "GOOD STANDING";
-            }
-        }
-
-        public string GetTemplateName(int index) { return ISSUE_NAMES[index]; }
-        public float GetTemplateFace(int index) { return ISSUE_FACES[index]; }
-        public int GetTemplatePeriods(int index) { return ISSUE_PERIODS[index]; }
-        public RevenueSource GetTemplateRevenue(int index) { return ISSUE_REVENUE[index]; }
-        public bool IsTemplateAvailable(int index)
-        {
-            if (index < 0 || index >= ISSUE_REVENUE.Length) return false;
-            if (ISSUE_REVENUE[index] != RevenueSource.None && !_revenueBondsEnabled) return false;
-            return true;
-        }
-        public int AvailableTemplateCount
-        {
-            get
-            {
-                int n = 0;
-                for (int i = 0; i < ISSUE_REVENUE.Length; i++)
-                    if (IsTemplateAvailable(i)) n++;
-                return n;
-            }
+            if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return "all bond slots are in use";
+            if (_rating == CreditRating.D) return "the city is rated D";
+            if (_debtBook.IssuanceSuspended) return "a bond is in default or arrears";
+            if (!_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS)) return "the post-default lock-out has not elapsed";
+            if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return "investor demand is too low";
+            if (_absorptionCapacity > 0f && _absorptionCapacity - IssuedFaceTotal() < 1000f) return "the market cannot absorb more city debt";
+            return null;
         }
 
         public override long OnUpdateMoneyAmount(long internalMoneyAmount)
         {
             Instance = this;
-
-            lock (_lock)
+            _simThreadId = Thread.CurrentThread.ManagedThreadId;
+            Interlocked.Increment(ref _tickSequence); // odd: tick in progress
+            try
             {
-                long liveBefore;
-                bool liveBeforeOk = TreasuryProbe.TryRead(out liveBefore);
+                return Tick(internalMoneyAmount);
+            }
+            finally
+            {
+                Interlocked.Increment(ref _tickSequence); // even: tick complete
+            }
+        }
 
-                if (PendingSaveData != null)
-                {
-                    NeedsReset = false;
-                    byte[] data = PendingSaveData;
-                    PendingSaveData = null;
-                    if (!RestoreState(data))
-                        ResetStateInternal();
-                }
-                else if (NeedsReset)
-                {
-                    NeedsReset = false;
+        private long Tick(long internalMoneyAmount)
+        {
+            long liveBefore;
+            bool liveBeforeOk = TreasuryProbe.TryRead(out liveBefore);
+
+            byte[] pending = Interlocked.Exchange(ref _pendingSaveData, null);
+            if (pending != null)
+            {
+                NeedsReset = false;
+                DiscardQueuedOrders();
+                if (!RestoreState(pending))
                     ResetStateInternal();
+                _dirty = true;
+            }
+            else if (NeedsReset)
+            {
+                NeedsReset = false;
+                DiscardQueuedOrders();
+                ResetStateInternal();
+                _dirty = true;
+            }
+
+            // P0-6: seed the cash cursor from the authoritative balance the game
+            // just handed us. Every mod cash op this tick, player orders included,
+            // settles against this cursor.
+            _tickCash = internalMoneyAmount;
+
+            UpdateCashFlowHistory(internalMoneyAmount);
+
+            // Real numbers and a stocked market before the first order runs.
+            if (!_periodMetricsInitialized)
+            {
+                _periodMetricsInitialized = true;
+                RecalculateMetricsInternal(_tickCash);
+            }
+            if (!_initialized)
+            {
+                _initialized = true;
+                GenerateInitialBondsInternal();
+            }
+
+            // WO-40: player orders, against the balance the game just confirmed.
+            ExecutePendingCommands();
+
+            _tickCounter++;
+            _ticksThisPeriod++;
+            _totalTicks++;
+            bool periodBoundary = false;
+            try
+            {
+                int month = Singleton<SimulationManager>.instance.m_currentGameTime.Month;
+                if (_lastGameMonth < 0) _lastGameMonth = month;
+                if (month != _lastGameMonth)
+                {
+                    periodBoundary = true;
+                    _lastGameMonth = month;
+                    _ticksThisPeriod = 0;
                 }
+            }
+            catch
+            {
+                periodBoundary = _tickCounter >= TICKS_PER_PERIOD;
+                if (periodBoundary) { _tickCounter = 0; _ticksThisPeriod = 0; }
+            }
 
-                // P0-6: seed the cash cursor from the authoritative balance the
-                // game just handed us. Every mod cash op this tick settles against
-                // this cursor, not the stale LastCashAmount.
-                _tickCash = internalMoneyAmount;
+            // P2-2: the heavy metrics block runs ONCE per period, not every tick.
+            if (periodBoundary)
+                RecalculateMetricsInternal(_tickCash);
 
-                UpdateCashFlowHistory(internalMoneyAmount);
+            if (_marketBonds.Count < MIN_MARKET_BONDS)
+                RegenerateBondsInternal();
 
-                _tickCounter++;
-                _ticksThisPeriod++;
-                _totalTicks++;
-                bool periodBoundary = false;
+            if (periodBoundary)
+                AgeBondsInternal();
+
+            // Idle ticks publish nothing and allocate nothing.
+            if (_dirty)
+                PublishSnapshot();
+
+            // Coupons, maturities, placement proceeds, swap settlements and player
+            // orders moved cash during this callback; make the return value carry
+            // them in case the game assigns it to the treasury.
+            long liveAfter = 0L;
+            bool liveOk = liveBeforeOk && TreasuryProbe.TryRead(out liveAfter);
+            return CashSettlement.ReturnValue(internalMoneyAmount, liveOk, liveBefore, liveAfter);
+        }
+
+        private void ExecutePendingCommands()
+        {
+            if (_commands.DrainTo(_drainBuffer) == 0) return;
+
+            for (int i = 0; i < _drainBuffer.Count; i++)
+            {
+                EngineCommand cmd = _drainBuffer[i];
+                long cashBefore = _tickCash;
+                CommandResult r;
                 try
                 {
-                    int month = Singleton<SimulationManager>.instance.m_currentGameTime.Month;
-                    if (_lastGameMonth < 0) _lastGameMonth = month;
-                    if (month != _lastGameMonth)
-                    {
-                        periodBoundary = true;
-                        _lastGameMonth = month;
-                        _ticksThisPeriod = 0;
-                    }
+                    r = Execute(cmd);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    periodBoundary = _tickCounter >= TICKS_PER_PERIOD;
-                    if (periodBoundary) { _tickCounter = 0; _ticksThisPeriod = 0; }
+                    r = Fail("internal error: " + ex.Message);
+                    Debug.Log("[MyFirstMod] Command " + cmd.Kind + " failed: " + ex);
                 }
+                r.Sequence = cmd.Sequence;
+                r.Kind = cmd.Kind;
+                r.Amount = (float)(_tickCash - cashBefore) / INTERNAL_UNIT_SCALE;
+                RecordResult(r);
+                _commandsExecuted++;
+                if (cmd.Sequence > _lastProcessedSequence) _lastProcessedSequence = cmd.Sequence;
+            }
+            _drainBuffer.Clear();
+            _dirty = true;
+        }
 
-                // P2-2: the heavy metrics block (portfolio revaluation, credit model,
-                // rate pipeline, demand chain, demographic sampling) runs ONCE per
-                // period, not every tick - a ~15x reduction in per-tick engine work.
-                // Run it once up front so the UI shows real numbers before the first
-                // period elapses.
-                if (periodBoundary || !_periodMetricsInitialized)
-                {
-                    _periodMetricsInitialized = true;
-                    RecalculateMetricsInternal(internalMoneyAmount);
-                }
+        // Orders placed in the previous city never run in the next one.
+        private void DiscardQueuedOrders()
+        {
+            _commands.DrainTo(_drainBuffer);
+            for (int i = 0; i < _drainBuffer.Count; i++)
+                if (_drainBuffer[i].Sequence > _lastProcessedSequence)
+                    _lastProcessedSequence = _drainBuffer[i].Sequence;
+            _drainBuffer.Clear();
+            Array.Clear(_resultRing, 0, _resultRing.Length);
+            _resultCount = 0;
+            _resultNext = 0;
+        }
 
-                if (!_initialized)
-                {
-                    _initialized = true;
-                    GenerateInitialBondsInternal();
-                }
+        private void RecordResult(CommandResult r)
+        {
+            _resultRing[_resultNext] = r;
+            _resultNext = (_resultNext + 1) % RESULT_HISTORY;
+            if (_resultCount < RESULT_HISTORY) _resultCount++;
+        }
 
-                if (_marketBonds.Count < MIN_MARKET_BONDS)
-                {
-                    RegenerateBondsInternal();
-                }
+        private static CommandResult Ok(int count, string message)
+        {
+            CommandResult r = new CommandResult();
+            r.Success = true;
+            r.Count = count;
+            r.Message = message;
+            return r;
+        }
 
-                if (periodBoundary)
-                {
-                    AgeBondsInternal();
-                }
+        private static CommandResult Fail(string message)
+        {
+            CommandResult r = new CommandResult();
+            r.Success = false;
+            r.Message = message;
+            return r;
+        }
 
-                // Coupons, maturities, placement proceeds and swap settlements
-                // moved cash during this callback; make the return value carry
-                // them in case the game assigns it to the treasury.
-                long liveAfter = 0L;
-                bool liveOk = liveBeforeOk && TreasuryProbe.TryRead(out liveAfter);
-                return CashSettlement.ReturnValue(internalMoneyAmount, liveOk, liveBefore, liveAfter);
+        private CommandResult Execute(EngineCommand c)
+        {
+            switch (c.Kind)
+            {
+                case CommandKind.BuyBond: return ExecBuyBond(c.Id);
+                case CommandKind.SellBond: return ExecSellBond(c.Id);
+                case CommandKind.SellAllBonds: return ExecSellAllBonds();
+                case CommandKind.IssueBond: return ExecIssueBond(c.Index, c.Value2);
+                case CommandKind.IssueBondPercent: return ExecIssueBondPercent(c.Value);
+                case CommandKind.PayDebtPercent: return ExecPayDebtPercent(c.Value);
+                case CommandKind.RepayBond: return ExecRepayBond(c.Id);
+                case CommandKind.BuyBulk1B: return ExecBuyBulk(1, 1000000000f, "Institutional Sovereign Note");
+                case CommandKind.BuyBulk10x1M: return ExecBuyBulk(10, 1000000f, "Corporate Tranche Note");
+                case CommandKind.BuyBulk10x10M: return ExecBuyBulk(10, 10000000f, "10M Treasury Bond");
+                case CommandKind.EnterSwap: return ExecEnterSwap(c.Value, c.Value2, c.Index, c.Flag);
+                case CommandKind.TerminateSwap: return ExecTerminateSwap(c.Id);
+                case CommandKind.TerminateAllSwaps: return ExecTerminateAllSwaps();
+                case CommandKind.SellSwapTranche: return ExecSellSwapTranche(c.Id, c.Value);
+                case CommandKind.SellAllSwapsTranche: return ExecSellAllSwapsTranche(c.Value);
+                case CommandKind.AutoHedge: return ExecAutoHedge();
+                case CommandKind.SetHazardMultiplier:
+                    _hazardMultiplier = c.Value;
+                    return Ok(0, "Default hazard updated");
+                case CommandKind.SetRateVolatility:
+                    _rateVolatilityScale = c.Value;
+                    return Ok(0, "Rate volatility updated");
+                case CommandKind.SetCitizenTrading:
+                    _citizenTradingEnabled = c.Flag;
+                    return Ok(0, c.Flag ? "Citizen trading on" : "Citizen trading off");
+                case CommandKind.SetRevenueBonds:
+                    _revenueBondsEnabled = c.Flag;
+                    return Ok(0, c.Flag ? "Revenue bonds on" : "Revenue bonds off");
+                case CommandKind.AckCreditNotice:
+                    _creditModelNoticePending = false;
+                    return Ok(0, null);
+                default:
+                    return Fail("unknown order");
             }
         }
 
@@ -632,6 +568,7 @@ namespace MyFirstMod
                 _avgIncomePerPeriod, _avgExpensePerPeriod, _debtBook, cashDisplay,
                 BondPricing.PeriodsPerYear);
 
+            _creditMetrics = cm;
             _grossIncome = cm.AnnualOperatingRevenue;
             _totalExpenses = cm.AnnualOperatingExpense;
             _noi = cm.AnnualNOI;
@@ -778,7 +715,7 @@ namespace MyFirstMod
             _absorptionCapacity = CimDemandEngine.CalculateAbsorptionCapacity(
                 _population, _landValue, _education, _employmentRate, _demandScore);
 
-            PublishSnapshot();
+            _dirty = true;
         }
 
         private float CalculateOverHedgeRatioInternal()
@@ -798,9 +735,17 @@ namespace MyFirstMod
             return (hedgedNotional - totalDebtFace) / totalDebtFace;
         }
 
+        // WO-27/WO-40: build a complete, immutable picture for the UI. Runs on the
+        // simulation thread, only on ticks where something changed.
         private void PublishSnapshot()
         {
             var s = new EngineSnapshot();
+            s.Version = ++_snapshotVersion;
+            s.LastProcessedSequence = _lastProcessedSequence;
+            s.CommandsExecuted = _commandsExecuted;
+            s.PeriodCounter = _periodCounter;
+            s.CashBalance = (float)_tickCash / INTERNAL_UNIT_SCALE;
+
             s.GrossIncome = _grossIncome;
             s.TotalExpenses = _totalExpenses;
             s.DebtBurden = _debtBurden;
@@ -808,8 +753,12 @@ namespace MyFirstMod
             s.MonthsOfReserves = _monthsOfReserves;
             s.NOI = _noi;
             s.Rating = _rating;
+            s.Metrics = _creditMetrics;
+            s.HasArrears = _debtBook.AnyDefaulted || _debtBook.TotalArrears > 0.01f;
             s.BenchmarkRate = _benchmarkRate;
+            s.CityBorrowingRate = _cityBorrowingRate;
             s.RequiredYield = _requiredYield;
+            s.Curve = _yieldCurve;
             s.PortfolioValue = _portfolioValue;
             s.DefaultPenalty = _defaultPenalty;
             s.TotalDefaults = _totalDefaults;
@@ -825,10 +774,7 @@ namespace MyFirstMod
             s.DefaultProbability = _defaultProbability;
             s.AbsorptionCapacity = _absorptionCapacity;
 
-            float currentFace = 0f;
-            for (int i = 0; i < _issuedBonds.Count; i++)
-                currentFace += _issuedBonds[i].FaceValue;
-            float remCap = _absorptionCapacity - currentFace;
+            float remCap = _absorptionCapacity - IssuedFaceTotal();
             s.RemainingCapacity = remCap > 0f ? remCap : 0f;
 
             s.Population = _population;
@@ -870,15 +816,75 @@ namespace MyFirstMod
             s.TotalCouponsPaid = couponsPaidTotal;
 
             float hedged = 0f;
+            bool unpaid = false;
             for (int i = 0; i < _activeSwaps.Count; i++)
+            {
                 hedged += _activeSwaps[i].NotionalAmount;
+                if (_activeSwaps[i].UnpaidSettlement > 0f) unpaid = true;
+            }
             s.TotalHedgedNotional = hedged;
+            s.AnyUnpaidSwapSettlement = unpaid;
             s.OverHedgeRatio = CalculateOverHedgeRatioInternal();
-            s.CreditStatusLabel = CreditStatusLabel;
+            s.CreditStatusLabel = CreditStatusLabelInternal();
             s.DemandLabelText = CimDemandEngine.DemandLabel(_demandScore);
             s.PressureLabelText = CimDemandEngine.PressureLabel(_smoothedPressure);
+            s.RecommendedHedge = RecommendedHedgeInternal();
+
+            s.CanIssueBonds = IssueBlockReason() == null;
+            s.HazardMultiplier = _hazardMultiplier;
+            s.RateVolatilityScale = _rateVolatilityScale;
+            s.CitizenTradingEnabled = _citizenTradingEnabled;
+            s.RevenueBondsEnabled = _revenueBondsEnabled;
+            s.CreditModelNoticePending = _creditModelNoticePending;
+            for (int t = 0; t < IssueTemplates.Count; t++)
+                s.TemplateYieldAdjustment[t] = RevenueYieldAdjustment(IssueTemplates.Source(t));
+
+            s.Market = PricedViews(_marketBonds);
+            s.Portfolio = PricedViews(_portfolioBonds);
+            s.Issued = UnpricedViews(_debtBook.Bonds);
+            s.Redeemed = UnpricedViews(_debtBook.Redeemed);
+
+            s.Swaps = new SwapView[_activeSwaps.Count];
+            for (int i = 0; i < _activeSwaps.Count; i++) s.Swaps[i] = SwapView.From(_activeSwaps[i]);
+
+            s.Reports = _reportHistory.ToArray(); // reports are never mutated after creation
+
+            s.Transactions = new CimTransaction[_transactionLog.Count];
+            for (int i = 0; i < _transactionLog.Count; i++)
+            {
+                CimTransaction src = _transactionLog[i];
+                CimTransaction copy = new CimTransaction();
+                copy.Sequence = src.Sequence;
+                copy.BuyVolume = src.BuyVolume;
+                copy.SellVolume = src.SellVolume;
+                copy.Pressure = src.Pressure;
+                copy.Detail = src.Detail;
+                s.Transactions[i] = copy;
+            }
+
+            s.RecentResults = new CommandResult[_resultCount];
+            int first = (_resultNext - _resultCount + RESULT_HISTORY) % RESULT_HISTORY;
+            for (int i = 0; i < _resultCount; i++)
+                s.RecentResults[i] = _resultRing[(first + i) % RESULT_HISTORY];
 
             _snapshot = s;
+            _dirty = false;
+        }
+
+        private BondView[] PricedViews(List<Bond> bonds)
+        {
+            BondView[] views = new BondView[bonds.Count];
+            for (int i = 0; i < bonds.Count; i++)
+                views[i] = BondView.From(bonds[i], BondPricing.PresentValue(bonds[i], IssuerYieldFor(bonds[i])));
+            return views;
+        }
+
+        private static BondView[] UnpricedViews(List<Bond> bonds)
+        {
+            BondView[] views = new BondView[bonds.Count];
+            for (int i = 0; i < bonds.Count; i++)
+                views[i] = BondView.From(bonds[i], 0f);
+            return views;
         }
 
         private void ReadCityDemographicsInternal(float cashDisplay)
@@ -1125,7 +1131,7 @@ namespace MyFirstMod
                 GenerateQuarterlyReportInternal();
             }
 
-            PublishSnapshot();
+            _dirty = true;
         }
 
         private void ServiceIssuedBondsInternal()
@@ -1307,7 +1313,7 @@ namespace MyFirstMod
             QuarterlyReport rp = new QuarterlyReport();
             rp.Quarter = _quarterNumber;
             rp.Rating = _rating;
-            rp.CreditStatus = CreditStatusLabel;
+            rp.CreditStatus = CreditStatusLabelInternal();
             rp.DSCR = _dscr;
             rp.DebtBurden = _debtBurden;
             rp.GrossIncome = _grossIncome;
@@ -1409,6 +1415,7 @@ namespace MyFirstMod
                 AssignIssuer(_marketBonds[i], _rng);
                 _marketBonds[i].CouponRate = IssuerYieldFor(_marketBonds[i]); // price near par at issuer credit
             }
+            _dirty = true;
         }
 
         private void RegenerateBondsInternal()
@@ -1426,6 +1433,7 @@ namespace MyFirstMod
                 b.CouponRate = IssuerYieldFor(b); // P1-2: coupon reflects the ISSUER's credit
                 _marketBonds.Add(b);
             }
+            _dirty = true;
         }
 
         // Phase 5 (P1-2): the six market issuers, each with its own migrating credit.
@@ -1474,14 +1482,6 @@ namespace MyFirstMod
             float years = (float)periods / BondPricing.PeriodsPerYear;
             float spot = _yieldCurve.Lambda > 0.0001f ? _yieldCurve.SpotRate(years) : _marketFloatingRate;
             return spot;
-        }
-
-        public float EstimateAuctionCover(int periods)
-        {
-            lock (_lock)
-            {
-                return PrimaryAuction.EstimateCover(_requiredYield, AuctionFairYield(periods), _demandScore);
-            }
         }
 
         private float BondDurationYears(Bond b)
@@ -1624,16 +1624,6 @@ namespace MyFirstMod
                 MarketIssuer m = FindIssuer(_portfolioBonds[i].IssuerName);
                 if (m != null) _portfolioBonds[i].IssuerRating = m.Rating;
             }
-        }
-
-        // P0-6: re-seed the cash cursor from the game at the start of a UI action,
-        // which can fire seconds after the last tick. Within a tick the cursor is
-        // already seeded from the authoritative balance, so this is only for the
-        // out-of-tick UI entry points.
-        private void SeedTickCashFromGame()
-        {
-            EconomyManager em = Singleton<EconomyManager>.instance;
-            _tickCash = em != null ? em.LastCashAmount : 0L;
         }
 
         // P0-6/P0-7: spend up to `desired` from the treasury, never more than the
@@ -1822,359 +1812,245 @@ namespace MyFirstMod
             // OnUpdateMoneyAmount so reset and restore can never call each other.
         }
 
-        // P0-8: snapshots emit immutable BondView/SwapView copies, never live
-        // references into simulation state.
-        public void GetMarketSnapshot(List<BondView> outBonds, List<float> outPrices)
+        // ---- player orders (WO-40). Simulation thread only, called from
+        // ExecutePendingCommands; every cash move settles against _tickCash. ----
+
+        // P0-8: buy by stable Id; the bond may have aged out since the UI saw it.
+        private CommandResult ExecBuyBond(string bondId)
         {
-            outBonds.Clear();
-            outPrices.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _marketBonds.Count; i++)
-                {
-                    // P1-2: price off the issuer's credit, not the city's.
-                    float price = BondPricing.PresentValue(_marketBonds[i], IssuerYieldFor(_marketBonds[i]));
-                    outBonds.Add(BondView.From(_marketBonds[i], price));
-                    outPrices.Add(price);
-                }
-            }
+            if (string.IsNullOrEmpty(bondId)) return Fail("no bond selected");
+            int marketIndex = IndexOfById(_marketBonds, bondId);
+            if (marketIndex < 0) return Fail("that bond is no longer offered");
+
+            Bond bond = _marketBonds[marketIndex];
+            float price = BuyExecPrice(bond); // P1-8: pay the ask (mid + half-spread)
+            long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
+            if (!TrySpendCash(priceInternal))
+                return Fail(string.Format("not enough cash to pay {0:N0}", price));
+
+            bond.PurchasePrice = price;
+            _portfolioBonds.Add(bond);
+            _marketBonds.RemoveAt(marketIndex);
+            return Ok(1, "Bought " + bond.Name);
         }
 
-        public void GetPortfolioSnapshot(List<BondView> outBonds, List<float> outPrices)
+        private CommandResult ExecSellBond(string bondId)
         {
-            outBonds.Clear();
-            outPrices.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _portfolioBonds.Count; i++)
-                {
-                    float price = BondPricing.PresentValue(_portfolioBonds[i], IssuerYieldFor(_portfolioBonds[i]));
-                    outBonds.Add(BondView.From(_portfolioBonds[i], price));
-                    outPrices.Add(price);
-                }
-            }
+            if (string.IsNullOrEmpty(bondId)) return Fail("no bond selected");
+            int portfolioIndex = IndexOfById(_portfolioBonds, bondId);
+            if (portfolioIndex < 0) return Fail("that holding is gone");
+
+            Bond bond = _portfolioBonds[portfolioIndex];
+            float price = SellExecPrice(bond); // P1-8: receive the bid (mid - half-spread)
+            AddCashToCity((long)(price * INTERNAL_UNIT_SCALE));
+            _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
+            _portfolioBonds.RemoveAt(portfolioIndex);
+            return Ok(1, "Sold " + bond.Name);
         }
 
-        // P0-8: buy by stable Id. Returns false if the market bond is gone (aged
-        // out / already bought) since the UI snapshot was taken.
-        public bool BuyBond(string bondId)
+        private CommandResult ExecSellAllBonds()
         {
-            if (string.IsNullOrEmpty(bondId)) return false;
-            lock (_lock)
+            int count = _portfolioBonds.Count;
+            if (count == 0) return Fail("no holdings to sell");
+            for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
             {
-                SeedTickCashFromGame();
-                int marketIndex = IndexOfById(_marketBonds, bondId);
-                if (marketIndex < 0)
-                    return false;
-
-                Bond bond = _marketBonds[marketIndex];
-                float price = BuyExecPrice(bond); // P1-8: pay the ask (mid + half-spread)
-                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-
-                if (!TrySpendCash(priceInternal))
-                    return false;
-
-                bond.PurchasePrice = price;
-                _portfolioBonds.Add(bond);
-                _marketBonds.RemoveAt(marketIndex);
-                return true;
-            }
-        }
-
-        // P0-8: sell by stable Id. Returns false if the holding is gone since the
-        // UI snapshot was taken.
-        public bool SellBond(string bondId)
-        {
-            if (string.IsNullOrEmpty(bondId)) return false;
-            lock (_lock)
-            {
-                int portfolioIndex = IndexOfById(_portfolioBonds, bondId);
-                if (portfolioIndex < 0)
-                    return false;
-
-                SeedTickCashFromGame();
-                Bond bond = _portfolioBonds[portfolioIndex];
-                float price = SellExecPrice(bond); // P1-8: receive the bid (mid - half-spread)
-                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-
-                AddCashToCity(priceInternal);
+                Bond bond = _portfolioBonds[i];
+                float price = SellExecPrice(bond);
+                AddCashToCity((long)(price * INTERNAL_UNIT_SCALE));
                 _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
-                _portfolioBonds.RemoveAt(portfolioIndex);
-                return true;
+                _portfolioBonds.RemoveAt(i);
             }
+            return Ok(count, string.Format("Sold {0} holdings", count));
         }
 
-        public int SellAllBonds()
+        // yieldSpread is the player's offer above (or below) the required yield
+        // (WO-36). A deal priced too tight fails or under-fills (Directive 01).
+        private CommandResult ExecIssueBond(int templateIndex, float yieldSpread)
         {
-            lock (_lock)
+            if (!IssueTemplates.IsValid(templateIndex)) return Fail("unknown bond template");
+            if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return Fail("all bond slots are in use");
+            if (_rating == CreditRating.D) return Fail("the city is rated D");
+            if (_debtBook.IssuanceSuspended ||
+                !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS)) // Schema v5 lock-out
+                return Fail("issuance is suspended after a default");
+            if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return Fail("investor demand is too low");
+
+            string name = IssueTemplates.Name(templateIndex);
+            float face = IssueTemplates.Face(templateIndex);
+            int periods = IssueTemplates.TermPeriods(templateIndex);
+            RevenueSource revSrc = IssueTemplates.Source(templateIndex);
+
+            if (revSrc != RevenueSource.None && !_revenueBondsEnabled)
+                return Fail("revenue bonds are switched off");
+            if (IssuedFaceTotal() + face > _absorptionCapacity)
+                return Fail(string.Format("the market cannot absorb another {0:N0}", face));
+
+            float offeredYield = _requiredYield + RevenueYieldAdjustment(revSrc) + yieldSpread;
+            if (offeredYield < 0.001f) offeredYield = 0.001f;
+            float fairYield = AuctionFairYield(periods);
+            AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
+            if (!ar.Filled)
             {
-                int count = _portfolioBonds.Count;
-                for (int i = _portfolioBonds.Count - 1; i >= 0; i--)
-                {
-                    Bond bond = _portfolioBonds[i];
-                    float price = SellExecPrice(bond);
-                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-                    AddCashToCity(priceInternal);
-                    _realizedPL += (price + bond.CouponsReceived) - bond.PurchasePrice;
-                    _portfolioBonds.RemoveAt(i);
-                }
-                return count;
+                CommandResult failed = Fail(string.Format(
+                    "auction failed: bid-to-cover {0:F2}x is below {1:F2}x", ar.Cover, PrimaryAuction.MinCover));
+                failed.Detail = ar.Cover;
+                return failed;
             }
+
+            _nextBondId++;
+            Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, ar.ClearingYield, periods);
+            ib.PlacedFraction = ar.FilledFraction;
+            ib.OutstandingPrincipal = face * ar.FilledFraction;
+            ib.IssuePeriod = _periodCounter;
+            ib.Revenue = revSrc;
+            _debtBook.Add(ib);
+
+            if (ib.OutstandingPrincipal > 0f)
+            {
+                float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
+                if (proceeds > 0f)
+                    AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
+            }
+
+            CommandResult r = Ok(1, string.Format("{0}: {1:F0}% placed at {2:F2}%, cover {3:F2}x",
+                name, ar.FilledFraction * 100f, ar.ClearingYield * 100f, ar.Cover));
+            r.Detail = ar.Cover;
+            return r;
         }
 
-        public bool IssueBond(int optionIndex)
+        private CommandResult ExecIssueBondPercent(float percent)
         {
-            lock (_lock)
+            if (_issuedBonds.Count >= MAX_ISSUED_BONDS) return Fail("all bond slots are in use");
+            if (_rating == CreditRating.D) return Fail("the city is rated D");
+            if (_debtBook.IssuanceSuspended ||
+                !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS))
+                return Fail("issuance is suspended after a default");
+            if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND) return Fail("investor demand is too low");
+
+            float bankBalance = (float)_tickCash / INTERNAL_UNIT_SCALE; // confirmed this tick
+            if (bankBalance <= 0f) return Fail("the treasury is empty");
+
+            float face = bankBalance * percent;
+            if (face < 1000f) face = 1000f;
+
+            float remainingCapacity = _absorptionCapacity - IssuedFaceTotal();
+            if (remainingCapacity < 1000f) return Fail("the market cannot absorb more city debt");
+            if (face > remainingCapacity) face = remainingCapacity;
+
+            int periods = IssueTemplates.PercentIssuePeriods;
+            float offeredYield = _requiredYield;
+            AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, AuctionFairYield(periods), _demandScore);
+            if (!ar.Filled)
             {
-                if (optionIndex < 0 || optionIndex >= ISSUE_NAMES.Length)
-                    return false;
-                if (_issuedBonds.Count >= MAX_ISSUED_BONDS)
-                    return false;
-                if (_rating == CreditRating.D)
-                    return false;
-                if (_debtBook.IssuanceSuspended ||
-                    !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS)) // Schema v5 lock-out
-                    return false;
-                if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
-                    return false;
-
-                SeedTickCashFromGame();
-
-                string name = ISSUE_NAMES[optionIndex];
-                float face = ISSUE_FACES[optionIndex];
-                int periods = ISSUE_PERIODS[optionIndex];
-                RevenueSource revSrc = ISSUE_REVENUE[optionIndex];
-
-                if (revSrc != RevenueSource.None && !_revenueBondsEnabled)
-                    return false;
-
-                float currentFace = 0f;
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                    currentFace += _issuedBonds[i].FaceValue;
-                if (currentFace + face > _absorptionCapacity)
-                    return false;
-
-                float offeredYield = _requiredYield + RevenueYieldAdjustment(revSrc);
-                float fairYield = AuctionFairYield(periods);
-                AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
-                if (!ar.Filled)
-                    return false;
-
-                float couponRate = ar.ClearingYield;
-
-                _nextBondId++;
-                Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.PlacedFraction = ar.FilledFraction;
-                ib.OutstandingPrincipal = face * ar.FilledFraction;
-                ib.IssuePeriod = _periodCounter;
-                ib.Revenue = revSrc;
-                _debtBook.Add(ib);
-
-                if (ib.OutstandingPrincipal > 0f)
-                {
-                    float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
-                    if (proceeds > 0f)
-                        AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
-                }
-                return true;
+                CommandResult failed = Fail(string.Format(
+                    "auction failed: bid-to-cover {0:F2}x is below {1:F2}x", ar.Cover, PrimaryAuction.MinCover));
+                failed.Detail = ar.Cover;
+                return failed;
             }
+
+            _nextBondId++;
+            string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
+            Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, ar.ClearingYield, periods);
+            ib.PlacedFraction = ar.FilledFraction;
+            ib.OutstandingPrincipal = face * ar.FilledFraction;
+            ib.IssuePeriod = _periodCounter;
+            _debtBook.Add(ib);
+
+            if (ib.OutstandingPrincipal > 0f)
+            {
+                float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
+                if (proceeds > 0f)
+                    AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
+            }
+
+            CommandResult r = Ok(1, string.Format("{0}: {1:N0} face, {2:F0}% placed", name, face, ar.FilledFraction * 100f));
+            r.Detail = ar.Cover;
+            return r;
         }
 
-        public bool IssueBondPercent(float percent)
+        private CommandResult ExecPayDebtPercent(float percent)
         {
-            lock (_lock)
+            if (_debtBook.Count == 0) return Fail("no debt outstanding");
+
+            float available = (float)_tickCash / INTERNAL_UNIT_SCALE;
+            float budget = _debtBook.TotalDebtOwed * percent;
+            if (budget > available) budget = available;
+            if (budget <= 0f) return Fail("the treasury is empty");
+
+            int retired;
+            bool partial;
+            float spent = _debtBook.RepayByBudget(
+                _periodCounter, budget, DEFAULT_LOCKOUT_PERIODS, out retired, out partial);
+
+            if (spent > 0f)
             {
-                if (_issuedBonds.Count >= MAX_ISSUED_BONDS)
-                    return false;
-                if (_rating == CreditRating.D)
-                    return false;
-                if (_debtBook.IssuanceSuspended ||
-                    !_debtBook.RatingRecoveryAllowed(_periodCounter, DEFAULT_LOCKOUT_PERIODS))
-                    return false;
-                if (_demandScore < CimDemandEngine.MIN_ISSUABLE_DEMAND)
-                    return false;
-
-                SeedTickCashFromGame();
-
-                EconomyManager em = Singleton<EconomyManager>.instance;
-                if (em == null) return false;
-
-                float bankBalance = (float)em.LastCashAmount / INTERNAL_UNIT_SCALE;
-                if (bankBalance <= 0f) return false;
-
-                float face = bankBalance * percent;
-                if (face < 1000f) face = 1000f;
-
-                float currentFace = 0f;
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                    currentFace += _issuedBonds[i].FaceValue;
-
-                float remainingCapacity = _absorptionCapacity - currentFace;
-                if (remainingCapacity < 1000f)
-                    return false;
-                if (face > remainingCapacity)
-                    face = remainingCapacity;
-
-                int periods = 60;
-                float offeredYield = _requiredYield;
-                float fairYield = AuctionFairYield(periods);
-                AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
-                if (!ar.Filled)
-                    return false;
-
-                float couponRate = ar.ClearingYield;
-
-                _nextBondId++;
-                string name = string.Format("{0:F0}% Bank Bond", percent * 100f);
-                Bond ib = new Bond("IB" + _nextBondId.ToString(), name, face, couponRate, periods);
-                ib.PlacedFraction = ar.FilledFraction;
-                ib.OutstandingPrincipal = face * ar.FilledFraction;
-                ib.IssuePeriod = _periodCounter;
-                _debtBook.Add(ib);
-
-                if (ib.OutstandingPrincipal > 0f)
-                {
-                    float proceeds = ib.OutstandingPrincipal - Friction.UnderwritingFee(ib.OutstandingPrincipal);
-                    if (proceeds > 0f)
-                        AddCashToCity((long)(proceeds * INTERNAL_UNIT_SCALE), EconomyManager.Resource.LoanAmount);
-                }
-                return true;
+                long wanted = (long)(spent * INTERNAL_UNIT_SCALE);
+                long actual = SpendCashUpTo(wanted);
+                if (actual < wanted)
+                    _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
             }
+
+            if (retired > 0) return Ok(retired, string.Format("Retired {0} bond(s)", retired));
+            if (partial) return Ok(0, "Paid down the smallest bond");
+            return Fail("nothing could be repaid");
         }
 
-        public PayDebtResult PayDebtPercent(float percent)
+        // P0-2: retiring a bond must clear its outstanding principal AND any
+        // arrears, or a defaulted bond could be removed for free.
+        private CommandResult ExecRepayBond(string bondId)
         {
-            lock (_lock)
-            {
-                var result = new PayDebtResult();
-                if (_debtBook.Count == 0)
-                    return result;
+            if (string.IsNullOrEmpty(bondId)) return Fail("no bond selected");
+            Bond ib = _debtBook.FindActive(bondId);
+            if (ib == null) return Fail("that bond is no longer outstanding");
 
-                SeedTickCashFromGame();
+            float owed = ib.OutstandingPrincipal + ib.Arrears;
+            if (!TrySpendCash((long)(owed * INTERNAL_UNIT_SCALE)))
+                return Fail(string.Format("not enough cash to repay {0:N0}", owed));
 
-                float available = (float)_tickCash / INTERNAL_UNIT_SCALE;
-                float budget = _debtBook.TotalDebtOwed * percent;
-                if (budget > available) budget = available;
-
-                int retired;
-                bool partial;
-                float spent = _debtBook.RepayByBudget(
-                    _periodCounter, budget, DEFAULT_LOCKOUT_PERIODS, out retired, out partial);
-
-                if (spent > 0f)
-                {
-                    long wanted = (long)(spent * INTERNAL_UNIT_SCALE);
-                    long actual = SpendCashUpTo(wanted);
-                    if (actual < wanted)
-                        _debtBook.PushbackShortfall((float)(wanted - actual) / INTERNAL_UNIT_SCALE);
-                    spent = (float)actual / INTERNAL_UNIT_SCALE;
-                }
-
-                result.Retired = retired;
-                result.PartialPaydown = partial && retired == 0;
-                result.AmountSpent = spent;
-                return result;
-            }
+            _debtBook.RemoveBond(bondId);
+            return Ok(1, "Repaid " + ib.Name);
         }
 
-        public bool Buy1BBond()
+        // P1-8/E-1: bulk lots pay half-spread AND square-root price impact, and
+        // stop when market depth or cash runs out.
+        private CommandResult ExecBuyBulk(int lots, float face, string name)
         {
-            lock (_lock)
+            float depthRemaining = TotalMarketDepth();
+            int bought = 0;
+            for (int i = 0; i < lots; i++)
             {
-                SeedTickCashFromGame();
-                float face = 1000000000f;
-                if (face > TotalMarketDepth()) return false;
-                int periods = 60;
+                if (face > depthRemaining) break;
 
-                Bond b = MakeBond("Institutional Sovereign Note", face, 0.05f, periods);
-                AssignIssuer(b, _cosmeticRng);
+                Bond b = MakeBond(name, face, 0.05f, 60);
+                AssignIssuer(b, _cosmeticRng); // player orders never advance the sim stream (WO-28)
                 float price = BulkBuyExecPrice(b);
-                long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
+                if (!TrySpendCash((long)(price * INTERNAL_UNIT_SCALE))) break;
 
-                if (!TrySpendCash(priceInternal))
-                    return false;
-
+                depthRemaining -= face;
                 b.PurchasePrice = price;
                 _portfolioBonds.Add(b);
-                return true;
+                bought++;
             }
+            if (bought == 0) return Fail("not enough cash or market depth");
+            return Ok(bought, string.Format("Bought {0} x {1:N0}", bought, face));
         }
 
-        public int Buy10x1MBonds()
+        private bool AnyUnpaidSwapSettlement()
         {
-            lock (_lock)
-            {
-                SeedTickCashFromGame();
-                float depthRemaining = TotalMarketDepth();
-                int bought = 0;
-
-                for (int i = 0; i < 10; i++)
-                {
-                    float face = 1000000f;
-                    if (face > depthRemaining) break;
-
-                    Bond b = MakeBond("Corporate Tranche Note", face, 0.05f, 60);
-                    AssignIssuer(b, _cosmeticRng);
-                    float price = BulkBuyExecPrice(b);
-                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-
-                    if (!TrySpendCash(priceInternal)) break;
-
-                    depthRemaining -= face;
-                    b.PurchasePrice = price;
-                    _portfolioBonds.Add(b);
-                    bought++;
-                }
-                return bought;
-            }
+            for (int j = 0; j < _activeSwaps.Count; j++)
+                if (_activeSwaps[j].UnpaidSettlement > 0f) return true;
+            return false;
         }
 
-        public int Buy10x10MBonds()
+        private CommandResult ExecEnterSwap(float notional, float fixedRate, int periods, bool payFixed)
         {
-            lock (_lock)
-            {
-                SeedTickCashFromGame();
-                float depthRemaining = TotalMarketDepth();
-                int bought = 0;
+            if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS) return Fail("all swap slots are in use");
+            if (AnyUnpaidSwapSettlement()) return Fail("a swap settlement is unpaid");
+            if (notional <= 0f || periods <= 0) return Fail("invalid swap terms");
 
-                for (int i = 0; i < 10; i++)
-                {
-                    float face = 10000000f;
-                    if (face > depthRemaining) break;
-
-                    Bond b = MakeBond("10M Treasury Bond", face, 0.05f, 60);
-                    AssignIssuer(b, _cosmeticRng);
-                    float price = BulkBuyExecPrice(b);
-                    long priceInternal = (long)(price * INTERNAL_UNIT_SCALE);
-
-                    if (!TrySpendCash(priceInternal)) break;
-
-                    depthRemaining -= face;
-                    b.PurchasePrice = price;
-                    _portfolioBonds.Add(b);
-                    bought++;
-                }
-                return bought;
-            }
-        }
-
-        public bool EnterSwap(float notional, float fixedRate, int periods, bool payFixed)
-        {
-            lock (_lock)
-            {
-                if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
-                    return false;
-                for (int j = 0; j < _activeSwaps.Count; j++)
-                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
-                if (notional <= 0f || periods <= 0)
-                    return false;
-
-                _nextSwapId++;
-                InterestRateSwap swap = new InterestRateSwap(
-                    "SW" + _nextSwapId.ToString(), notional, fixedRate, periods, payFixed);
-                _activeSwaps.Add(swap);
-                return true;
-            }
+            _nextSwapId++;
+            _activeSwaps.Add(new InterestRateSwap("SW" + _nextSwapId.ToString(), notional, fixedRate, periods, payFixed));
+            return Ok(1, "Swap entered");
         }
 
         private float CalculateSwapMTM(InterestRateSwap swap)
@@ -2203,236 +2079,136 @@ namespace MyFirstMod
             return true;
         }
 
-        // P0-8: terminate by stable Id. Returns false if the swap is gone
-        // (matured/removed) since the UI snapshot was taken.
-        public bool TerminateSwap(string swapId)
+        // P0-8: terminate by stable Id.
+        private CommandResult ExecTerminateSwap(string swapId)
         {
-            if (string.IsNullOrEmpty(swapId)) return false;
-            lock (_lock)
+            if (string.IsNullOrEmpty(swapId)) return Fail("no swap selected");
+            int index = IndexOfSwapById(_activeSwaps, swapId);
+            if (index < 0) return Fail("that swap is gone");
+
+            if (!SettleSwapCash(CalculateSwapMTM(_activeSwaps[index])))
+                return Fail("not enough cash to settle the swap");
+            _activeSwaps.RemoveAt(index);
+            return Ok(1, "Swap " + swapId + " closed");
+        }
+
+        private CommandResult ExecTerminateAllSwaps()
+        {
+            if (_activeSwaps.Count == 0) return Fail("no swaps to close");
+            int count = 0;
+            for (int i = _activeSwaps.Count - 1; i >= 0; i--)
             {
-                int index = IndexOfSwapById(_activeSwaps, swapId);
-                if (index < 0)
-                    return false;
+                if (SettleSwapCash(CalculateSwapMTM(_activeSwaps[i])))
+                {
+                    _activeSwaps.RemoveAt(i);
+                    count++;
+                }
+            }
+            if (count == 0) return Fail("not enough cash to settle any swap");
+            return Ok(count, string.Format("Closed {0} swap(s)", count));
+        }
 
-                SeedTickCashFromGame();
-                float mtm = CalculateSwapMTM(_activeSwaps[index]);
-                if (!SettleSwapCash(mtm))
-                    return false;
-
+        // Settle one swap's tranche; true if it settled. Closes the swap when the
+        // tranche is the whole of it or would leave under 1,000 of notional.
+        private bool SettleTranche(int index, float fraction)
+        {
+            InterestRateSwap swap = _activeSwaps[index];
+            float fullMTM = CalculateSwapMTM(swap);
+            if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
+            {
+                if (!SettleSwapCash(fullMTM)) return false;
                 _activeSwaps.RemoveAt(index);
                 return true;
             }
+            if (!SettleSwapCash(fullMTM * fraction)) return false;
+            swap.NotionalAmount *= (1f - fraction); // P1-6: realised P/L is immutable
+            return true;
         }
 
-        public int TerminateAllSwaps()
+        private CommandResult ExecSellSwapTranche(string swapId, float fraction)
         {
-            lock (_lock)
-            {
-                SeedTickCashFromGame();
-                int count = 0;
-                for (int i = _activeSwaps.Count - 1; i >= 0; i--)
-                {
-                    float mtm = CalculateSwapMTM(_activeSwaps[i]);
-                    if (SettleSwapCash(mtm))
-                    {
-                        _activeSwaps.RemoveAt(i);
-                        count++;
-                    }
-                }
-                return count;
-            }
+            if (fraction <= 0f || fraction > 1f) return Fail("invalid tranche");
+            int index = IndexOfSwapById(_activeSwaps, swapId);
+            if (index < 0) return Fail("that swap is gone");
+            if (!SettleTranche(index, fraction)) return Fail("not enough cash to settle the tranche");
+            return Ok(1, string.Format("Sold {0:F0}% of {1}", fraction * 100f, swapId));
         }
 
-        public bool SellSwapTranche(string swapId, float fraction)
+        private CommandResult ExecSellAllSwapsTranche(float fraction)
         {
-            lock (_lock)
-            {
-                int index = -1;
-                for (int i = 0; i < _activeSwaps.Count; i++)
-                {
-                    if (_activeSwaps[i].Id == swapId) { index = i; break; }
-                }
-                if (index < 0)
-                    return false;
-                if (fraction <= 0f || fraction > 1f)
-                    return false;
-
-                SeedTickCashFromGame();
-                InterestRateSwap swap = _activeSwaps[index];
-                float fullMTM = CalculateSwapMTM(swap);
-                float settleMTM = fullMTM * fraction;
-
-                if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
-                {
-                    if (!SettleSwapCash(fullMTM))
-                        return false;
-                    _activeSwaps.RemoveAt(index);
-                    return true;
-                }
-
-                if (!SettleSwapCash(settleMTM))
-                    return false;
-
-                swap.NotionalAmount *= (1f - fraction);
-                return true;
-            }
+            if (fraction <= 0f || fraction > 1f) return Fail("invalid tranche");
+            if (_activeSwaps.Count == 0) return Fail("no swaps to sell");
+            int affected = 0;
+            for (int i = _activeSwaps.Count - 1; i >= 0; i--)
+                if (SettleTranche(i, fraction)) affected++;
+            if (affected == 0) return Fail("not enough cash to settle any tranche");
+            return Ok(affected, string.Format("Sold {0:F0}% of {1} swap(s)", fraction * 100f, affected));
         }
 
-        public int SellAllSwapsTranche(float fraction)
+        private CommandResult ExecAutoHedge()
         {
-            lock (_lock)
+            if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS) return Fail("all swap slots are in use");
+            if (AnyUnpaidSwapSettlement()) return Fail("a swap settlement is unpaid");
+            if (_issuedBonds.Count == 0) return Fail("no debt to hedge");
+
+            float totalDebtFace = 0f;
+            float weightedPeriods = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
             {
-                if (fraction <= 0f || fraction > 1f)
-                    return 0;
-
-                SeedTickCashFromGame();
-                int affected = 0;
-                for (int i = _activeSwaps.Count - 1; i >= 0; i--)
-                {
-                    InterestRateSwap swap = _activeSwaps[i];
-                    float fullMTM = CalculateSwapMTM(swap);
-
-                    if (fraction >= 1f || swap.NotionalAmount * (1f - fraction) < 1000f)
-                    {
-                        if (!SettleSwapCash(fullMTM))
-                            continue;
-                        _activeSwaps.RemoveAt(i);
-                    }
-                    else
-                    {
-                        float settleMTM = fullMTM * fraction;
-                        if (!SettleSwapCash(settleMTM))
-                            continue;
-                        // P1-6: scale notional only; realised P/L is immutable.
-                        swap.NotionalAmount *= (1f - fraction);
-                    }
-                    affected++;
-                }
-                return affected;
+                totalDebtFace += _issuedBonds[i].SubscribedFace;
+                weightedPeriods += _issuedBonds[i].SubscribedFace * _issuedBonds[i].RemainingPeriods;
             }
+
+            float hedgedNotional = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+            float unhedged = totalDebtFace - hedgedNotional;
+            if (unhedged <= 0f) return Fail("debt is already fully hedged");
+
+            int avgPeriods = totalDebtFace > 0f ? (int)(weightedPeriods / totalDebtFace) : 60;
+            if (avgPeriods < 6) avgPeriods = 6;
+
+            // P1-6: a swap's fixed leg is the par swap rate off the risk-free curve,
+            // not the city's credit-adjusted borrowing yield.
+            float parRate = SwapPricing.ParSwapRate(_yieldCurve, avgPeriods, BondPricing.PeriodsPerYear);
+
+            _nextSwapId++;
+            _activeSwaps.Add(new InterestRateSwap("SW" + _nextSwapId.ToString(), unhedged, parRate, avgPeriods, true));
+            return Ok(1, string.Format("Hedged {0:N0} at {1:F2}% fixed", unhedged, parRate * 100f));
         }
 
-        public bool AutoHedge()
+        private string RecommendedHedgeInternal()
         {
-            lock (_lock)
+            float totalDebtFace = 0f;
+            for (int i = 0; i < _issuedBonds.Count; i++)
+                totalDebtFace += _issuedBonds[i].SubscribedFace;
+
+            float hedgedNotional = 0f;
+            for (int i = 0; i < _activeSwaps.Count; i++)
+                hedgedNotional += _activeSwaps[i].NotionalAmount;
+
+            float overHedgeR = CalculateOverHedgeRatioInternal();
+            if (overHedgeR > 0f)
             {
-                if (_activeSwaps.Count >= MAX_ACTIVE_SWAPS)
-                    return false;
-                for (int j = 0; j < _activeSwaps.Count; j++)
-                    if (_activeSwaps[j].UnpaidSettlement > 0f) return false;
-                if (_issuedBonds.Count == 0)
-                    return false;
-
-                float totalDebtFace = 0f;
-                float weightedPeriods = 0f;
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                {
-                    totalDebtFace += _issuedBonds[i].SubscribedFace;
-                    weightedPeriods += _issuedBonds[i].SubscribedFace * _issuedBonds[i].RemainingPeriods;
-                }
-
-                float hedgedNotional = 0f;
-                for (int i = 0; i < _activeSwaps.Count; i++)
-                    hedgedNotional += _activeSwaps[i].NotionalAmount;
-
-                float unhedged = totalDebtFace - hedgedNotional;
-                if (unhedged <= 0f)
-                    return false;
-
-                int avgPeriods = totalDebtFace > 0f
-                    ? (int)(weightedPeriods / totalDebtFace)
-                    : 60;
-                if (avgPeriods < 6) avgPeriods = 6;
-
-                // P1-6: a swap's fixed leg is the par swap rate off the risk-free
-                // curve, not the city's credit-adjusted borrowing yield.
-                float parRate = SwapPricing.ParSwapRate(_yieldCurve, avgPeriods, BondPricing.PeriodsPerYear);
-
-                _nextSwapId++;
-                InterestRateSwap swap = new InterestRateSwap(
-                    "SW" + _nextSwapId.ToString(), unhedged, parRate, avgPeriods, true);
-                _activeSwaps.Add(swap);
-                return true;
+                float penalty = overHedgeR * 4f;
+                if (penalty > 10f) penalty = 10f;
+                return string.Format("OVER-HEDGED {0:F0}%  Rate +{1:F1}%", overHedgeR * 100f, penalty);
             }
-        }
 
-        public string CalculateRecommendedHedge()
-        {
-            lock (_lock)
-            {
-                float totalDebtFace = 0f;
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                    totalDebtFace += _issuedBonds[i].SubscribedFace;
+            if (_issuedBonds.Count == 0 && _activeSwaps.Count == 0)
+                return "No debt to hedge";
 
-                float hedgedNotional = 0f;
-                for (int i = 0; i < _activeSwaps.Count; i++)
-                    hedgedNotional += _activeSwaps[i].NotionalAmount;
+            float unhedged = totalDebtFace - hedgedNotional;
+            float hedgeRatio = totalDebtFace > 0f ? hedgedNotional / totalDebtFace : 0f;
 
-                float overHedgeR = CalculateOverHedgeRatioInternal();
-                if (overHedgeR > 0f)
-                {
-                    float penalty = overHedgeR * 4f;
-                    if (penalty > 10f) penalty = 10f;
-                    return string.Format("OVER-HEDGED {0:F0}%  Rate +{1:F1}%", overHedgeR * 100f, penalty);
-                }
-
-                if (_issuedBonds.Count == 0 && _activeSwaps.Count == 0)
-                    return "No debt to hedge";
-
-                float unhedged = totalDebtFace - hedgedNotional;
-                float hedgeRatio = totalDebtFace > 0f ? hedgedNotional / totalDebtFace : 0f;
-
-                if (hedgeRatio >= 1.0f)
-                    return "Fully hedged";
-                if (_revenueVolatility > 0.5f && hedgeRatio < 0.5f)
-                    return string.Format("HIGH RISK: Hedge {0:N0} ({1:F0}% exposed)", unhedged, (1f - hedgeRatio) * 100f);
-                if (unhedged > 0f)
-                    return string.Format("Recommend: Hedge {0:N0} unhedged", unhedged);
-                return "Position balanced";
-            }
-        }
-
-        public void GetActiveSwapsSnapshot(List<SwapView> outSwaps)
-        {
-            outSwaps.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _activeSwaps.Count; i++)
-                    outSwaps.Add(SwapView.From(_activeSwaps[i]));
-            }
-        }
-
-        public void GetIssuedBondsSnapshot(List<BondView> outBonds)
-        {
-            outBonds.Clear();
-            lock (_lock)
-            {
-                for (int i = 0; i < _issuedBonds.Count; i++)
-                    outBonds.Add(BondView.From(_issuedBonds[i], 0f));
-            }
-        }
-
-        // P0-8: retire by stable Id. Returns false if the bond is already gone
-        // (matured/removed) since the UI snapshot was taken.
-        public bool RepaySingleBond(string bondId)
-        {
-            if (string.IsNullOrEmpty(bondId)) return false;
-            lock (_lock)
-            {
-                Bond ib = _debtBook.FindActive(bondId);
-                if (ib == null) return false;
-
-                SeedTickCashFromGame();
-                // P0-2: retiring a bond must clear its outstanding principal AND
-                // any default arrears, or a defaulted bond (principal already
-                // rolled into arrears) could be removed for free.
-                long owedInternal = (long)((ib.OutstandingPrincipal + ib.Arrears) * INTERNAL_UNIT_SCALE);
-                if (!TrySpendCash(owedInternal))
-                    return false;
-
-                _debtBook.RemoveBond(bondId);
-                return true;
-            }
+            if (hedgeRatio >= 1.0f)
+                return "Fully hedged";
+            if (_revenueVolatility > 0.5f && hedgeRatio < 0.5f)
+                return string.Format("HIGH RISK: Hedge {0:N0} ({1:F0}% exposed)", unhedged, (1f - hedgeRatio) * 100f);
+            if (unhedged > 0f)
+                return string.Format("Recommend: Hedge {0:N0} unhedged", unhedged);
+            return "Position balanced";
         }
 
         private static int IndexOfById(List<Bond> list, string id)
@@ -2449,23 +2225,38 @@ namespace MyFirstMod
             return -1;
         }
 
+        // Called by SaveDataExtension.OnSaveData. On the simulation thread (or
+        // before the first tick) the state is quiescent and is captured directly.
+        // From any other thread the capture is retried until no tick ran during it,
+        // so a save never records half a tick. No lock is shared with the UI.
         public byte[] SerializeState()
         {
-            lock (_lock)
+            bool onSimThread = _simThreadId < 0 || Thread.CurrentThread.ManagedThreadId == _simThreadId;
+            if (onSimThread)
+                return SerializeOnce();
+
+            for (int attempt = 0; attempt < 500; attempt++)
             {
-                try
-                {
-                    // Schema v5 (spec section 6): pack fields into a pure snapshot
-                    // and let StateSerializer produce the sectioned, checksummed v7
-                    // stream.
-                    BondMarketState state = CaptureState();
-                    return StateSerializer.Serialize(state);
-                }
-                catch (Exception ex)
-                {
-                    Debug.Log("[MyFirstMod] SerializeState failed: " + ex.Message);
-                    return null;
-                }
+                int before = Interlocked.CompareExchange(ref _tickSequence, 0, 0);
+                if ((before & 1) == 1) { Thread.Sleep(1); continue; }
+                byte[] data = SerializeOnce();
+                int after = Interlocked.CompareExchange(ref _tickSequence, 0, 0);
+                if (data != null && before == after) return data;
+            }
+            Debug.Log("[MyFirstMod] SerializeState: could not capture a quiet tick; saving the latest attempt.");
+            return SerializeOnce();
+        }
+
+        private byte[] SerializeOnce()
+        {
+            try
+            {
+                return StateSerializer.Serialize(CaptureState());
+            }
+            catch (Exception ex)
+            {
+                Debug.Log("[MyFirstMod] SerializeState failed: " + ex.Message);
+                return null;
             }
         }
 
