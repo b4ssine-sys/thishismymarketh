@@ -115,6 +115,10 @@ namespace MyFirstMod
         private const int BIG_RATE_MOVE_WINDOW = 3;        // periods
         private const float BIG_RATE_MOVE = 0.0075f;       // 75bp over the window
         private LadderMonth[] _ladder = new LadderMonth[0];
+        private const int RATING_HISTORY = 60; // WO-43: five years of periods
+        private readonly CreditRating[] _ratingHistory = new CreditRating[RATING_HISTORY];
+        private int _ratingHistoryCount;
+        private int _ratingHistoryNext;
         private const int RESULT_HISTORY = 8;
         private readonly CommandResult[] _resultRing = new CommandResult[RESULT_HISTORY];
         private int _resultCount;
@@ -625,6 +629,9 @@ namespace MyFirstMod
                     BondPricing.RatingLabel(_lastRatingSeen), BondPricing.RatingLabel(_rating)));
             _lastRatingSeen = _rating;
             _ratingSeen = true;
+            _ratingHistory[_ratingHistoryNext] = _rating;
+            _ratingHistoryNext = (_ratingHistoryNext + 1) % RATING_HISTORY;
+            if (_ratingHistoryCount < RATING_HISTORY) _ratingHistoryCount++;
 
             // Gate G-2: one-shot diagnostic to the Debug Output. Fires on the second
             // metrics pass (once the ledger baseline is set, so a real cumulative diff
@@ -893,6 +900,10 @@ namespace MyFirstMod
             s.Ladder = _ladder;
             s.Issuers = new IssuerView[_issuers.Count];
             for (int i = 0; i < _issuers.Count; i++) s.Issuers[i] = IssuerView.From(_issuers[i]);
+            s.RatingHistory = new CreditRating[_ratingHistoryCount];
+            int firstRating = (_ratingHistoryNext - _ratingHistoryCount + RATING_HISTORY) % RATING_HISTORY;
+            for (int i = 0; i < _ratingHistoryCount; i++)
+                s.RatingHistory[i] = _ratingHistory[(firstRating + i) % RATING_HISTORY];
             s.Alerts = new Alert[_alertCount];
             int firstAlert = (_alertNext - _alertCount + ALERT_HISTORY) % ALERT_HISTORY;
             for (int i = 0; i < _alertCount; i++)
@@ -1237,6 +1248,8 @@ namespace MyFirstMod
             _ratingSeen = false;
             _shortRateSamples = 0;
             _ladder = new LadderMonth[0];
+            _ratingHistoryCount = 0;
+            _ratingHistoryNext = 0;
         }
 
         private void ServiceIssuedBondsInternal()

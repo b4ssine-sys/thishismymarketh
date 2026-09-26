@@ -17,6 +17,9 @@ namespace MyFirstMod
         private UIButton _adviceButton;
         private Advice _currentAdvice;
         private readonly BoundLabel[] _report = new BoundLabel[4];
+        private ChartSprite _ratingChart;
+        private readonly float[] _chartValues = new float[60];
+        private int _chartPeriod = -1;
 
         private static readonly string[] ReportTips =
         {
@@ -66,6 +69,11 @@ namespace MyFirstMod
             _upText.Color(Theme.Good, 1);
             _downText = Widgets.Figure(Root, 0f, y + 44f, 400f, 40f, 0.8f, "What would cost the rating one notch.");
             _downText.Color(Theme.Warn, 1);
+
+            Widgets.Label(Root, 0f, 356f, 400f, 16f, 0.65f, "Rating over the last five years (dotted line: BBB, investment grade)",
+                null).textColor = Theme.Muted;
+            _ratingChart = new ChartSprite(Root, 0f, 374f, 400, 48,
+                "The city's rating each month for the last five years. Higher is better.");
 
             UIPanel cashCard = Widgets.Card(Root, 420f, 0f, 416f, 66f);
             _cash = Widgets.Figure(cashCard, 10f, 4f, 396f, 28f, 1.1f,
@@ -126,6 +134,7 @@ namespace MyFirstMod
                 e.ReservesDown.Possible ? e.ReservesDown.Target / ReservesScale : -1f);
             _upText.Text(e.UpText);
             _downText.Text(e.DownText);
+            if (s.PeriodCounter != _chartPeriod) DrawRatingChart(s);
 
             _cash.Number("Treasury: ", s.CashBalance, 0, "");
             _runway.Text("Runway: " + Wording.Runway(s.CashBalance, s.NOI / BondPricing.PeriodsPerYear));
@@ -165,6 +174,20 @@ namespace MyFirstMod
                     rp.Population, rp.EmploymentRate * 100f, rp.CitizenConfidence * 100f));
                 _report[3].Text(rp.Outlook);
             }
+        }
+
+        // WO-43: redrawn into its texture once per period.
+        private void DrawRatingChart(EngineSnapshot s)
+        {
+            _chartPeriod = s.PeriodCounter;
+            ChartSprite c = _ratingChart;
+            ChartRaster.Clear(c.Pixels, ChartSprite.Pack(Theme.BarTrack));
+            const float top = 7f; // AAA plots highest
+            ChartRaster.Gridline(c.Pixels, c.Width, c.Height, top - (int)CreditRating.BBB, 0f, top, ChartSprite.Pack(Theme.Muted));
+            int n = s.RatingHistory.Length < _chartValues.Length ? s.RatingHistory.Length : _chartValues.Length;
+            for (int i = 0; i < n; i++) _chartValues[i] = top - (int)s.RatingHistory[s.RatingHistory.Length - n + i];
+            ChartRaster.Steps(c.Pixels, c.Width, c.Height, _chartValues, n, 0f, top, ChartSprite.Pack(Theme.Accent));
+            c.Upload();
         }
 
         // Amber when within a small margin of the threshold that holds the rating.

@@ -50,6 +50,7 @@
     <Compile Include="..\MyFirstMod\Market\IssuancePreview.cs" Link="Linked\IssuancePreview.cs" />
     <Compile Include="..\MyFirstMod\Presentation\Advisor.cs" Link="Linked\Advisor.cs" />
     <Compile Include="..\MyFirstMod\Presentation\Wording.cs" Link="Linked\Wording.cs" />
+    <Compile Include="..\MyFirstMod\Presentation\ChartRaster.cs" Link="Linked\ChartRaster.cs" />
   </ItemGroup>
 
   <ItemGroup>

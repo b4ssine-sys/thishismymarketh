@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WO-45 headless city simulator. Runs the real, unmodified engine without the
+    game, on the stub game types and the Tests.Engine harness, for many seeded
+    cities over many in-game years, and writes a calibration report.
+      dotnet run -c Release (project Tools/HeadlessSim), args: -cities 1000 -years 50 -out calibration
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>MyFirstMod.HeadlessSim</RootNamespace>
+    <DefineConstants>$(DefineConstants);GAME_STUBS;BOND_MARKET_ENGINE_TESTS;BOND_MARKET_HEADLESS</DefineConstants>
+    <NoWarn>0649;0067;0169;0414;CS0618</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\MyFirstMod\**\*.cs" Exclude="..\..\MyFirstMod\bin\**;..\..\MyFirstMod\obj\**" LinkBase="Mod" />
+    <Compile Include="..\..\Stubs\*.cs" LinkBase="Stubs" />
+    <Compile Include="..\..\Tests.Engine\Harness\*.cs" LinkBase="Harness" />
+    <Compile Include="*.cs" />
+  </ItemGroup>
+
+</Project>

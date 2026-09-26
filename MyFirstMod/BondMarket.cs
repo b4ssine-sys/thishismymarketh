@@ -365,6 +365,7 @@ namespace MyFirstMod
         public LadderMonth[] Ladder = new LadderMonth[0];               // WO-37
         public IssuerView[] Issuers = new IssuerView[0];
         public Alert[] Alerts = new Alert[0];                           // WO-38
+        public CreditRating[] RatingHistory = new CreditRating[0];      // WO-43: oldest first
         // Per template: the player spread that gives a bid-to-cover of 1 (WO-36).
         public float[] SpreadForFullCover = new float[IssueTemplates.Count];
 
