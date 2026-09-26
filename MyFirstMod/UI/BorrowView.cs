@@ -147,10 +147,8 @@ namespace MyFirstMod
             _templateNote.Text(src == RevenueSource.None ? "General obligation: backed by all city revenue."
                 : "Revenue bond: backed by " + BondPricing.RevenueLabel(src) + " income.");
 
-            int periods = s.GetTemplatePeriods(_template);
-            float offered = s.TemplateOfferedYield(_template) + _spread;
-            if (offered < AuctionPricing.MinOfferedYield) offered = AuctionPricing.MinOfferedYield;
-            float fair = s.AuctionFairYield(periods);
+            float fair = s.TemplateFairYield(_template);
+            float offered = AuctionPricing.OfferedYield(fair, _spread);
             _yieldLabel.Text(string.Format("Offered yield {0:F2}%  (fair value {1:F2}%, {2:+0;-0}bp)",
                 offered * 100f, fair * 100f, (offered - fair) * 10000f));
 

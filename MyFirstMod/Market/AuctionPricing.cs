@@ -7,8 +7,9 @@ namespace MyFirstMod
     {
         public const float MinOfferedYield = 0.001f;
 
-        // Fair value investors measure a new issue against: the curve's spot rate
-        // at the issue's tenor, or the benchmark if no curve is available yet.
+        // The risk-free spot at the issue's tenor, or the benchmark if no curve
+        // is available yet. Investors price a city issue off this plus the city's
+        // own credit spread (IssueFairYield).
         public static float FairYield(YieldCurve curve, float benchmarkRate, int periods, int periodsPerYear)
         {
             float years = (float)periods / periodsPerYear;
@@ -21,24 +22,41 @@ namespace MyFirstMod
             return table != null ? table.Spot(periods) : benchmarkRate;
         }
 
-        // The yield the city offers: its required yield, the pledged-revenue
-        // adjustment, and the player's own spread (WO-36 ticket).
-        public static float OfferedYield(float requiredYield, float revenueAdjustment, float playerSpread)
+        // Fair value of a new city issue: what investors demand for this tenor
+        // from this city. Risk-free spot at the tenor, plus the city's credit
+        // spread (rating spread, fiscal and over-hedge loading, default spike),
+        // plus the pledged-revenue adjustment for a revenue bond.
+        //
+        // Both sides of the auction are measured on the same basis, so the
+        // concession is exactly the player's spread. Before this, fair value was
+        // the risk-free spot while the offer was the short-end required yield
+        // after wealth and demand discounts, so a well-reserved AAA city offered
+        // hundreds of bp under "fair" and its auctions failed at 0.00x cover.
+        public static float IssueFairYield(CurveTable table, float benchmarkRate, int periods,
+            float creditSpread, float revenueAdjustment)
         {
-            float y = requiredYield + revenueAdjustment + playerSpread;
+            float y = FairYield(table, benchmarkRate, periods) + creditSpread + revenueAdjustment;
+            return y < MinOfferedYield ? MinOfferedYield : y;
+        }
+
+        // The yield the city offers: fair value plus the player's own spread
+        // (WO-36 ticket). A zero spread is priced exactly at fair value.
+        public static float OfferedYield(float issueFairYield, float playerSpread)
+        {
+            float y = issueFairYield + playerSpread;
             return y < MinOfferedYield ? MinOfferedYield : y;
         }
 
         // The player spread that makes the book exactly covered (cover = 1).
-        // Returns float.NaN when no spread can (zero demand).
-        public static float SpreadForFullCover(float requiredYield, float revenueAdjustment,
-            float fairYield, float demandScore)
+        // Only demand sets it, because the offer and fair value share one basis.
+        // Negative when demand is above neutral: strong demand clears below fair
+        // value. Returns float.NaN when no spread can (zero demand).
+        public static float SpreadForFullCover(float demandScore)
         {
             if (demandScore <= 0f) return float.NaN;
             float d = demandScore > 1f ? 1f : demandScore;
-            float concessionBp = PrimaryAuction.ConcessionScaleBp * (float)System.Math.Log(1.0 / d);
-            float offered = fairYield + concessionBp / 10000f;
-            return offered - requiredYield - revenueAdjustment;
+            return PrimaryAuction.ConcessionScaleBp
+                * (float)System.Math.Log(PrimaryAuction.NeutralDemand / d) / 10000f;
         }
     }
 }

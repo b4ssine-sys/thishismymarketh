@@ -268,11 +268,12 @@ namespace MyFirstMod.EngineTests
             Assert.Equal(id, loaded.Snap.Issued[0].Id);
         }
 
-        // Known defect, pending a decision (STATUS.md): the auction's fair yield is
-        // the risk-free spot at the bond's tenor, while the offer is the city's
-        // short-end required yield, which a healthy treasury pulls lower still.
-        // A well-reserved AAA city therefore fails its Emergency Note auction.
-        [Fact(Skip = "Pending MD decision on auction fair yield; see STATUS.md")]
+        // Auction pricing fix (MD decision, 26 Sep): fair value is the curve spot
+        // at the tenor plus the city's own credit spread, and the offer is priced
+        // on the same basis. A well-reserved AAA city used to fail its Emergency
+        // Note auction at 0.00x cover because its offer sat hundreds of bp under
+        // a fair value that ignored its credit.
+        [Fact]
         public void EmergencyNote_ClearsForWellReservedAaaCity()
         {
             var h = new GameHarness(startCashDisplay: 500000).Boot();

@@ -67,8 +67,7 @@ namespace MyFirstMod.EngineTests
             Assert.InRange(issued.OutstandingPrincipal, preview.PlacedFace - 1f, preview.PlacedFace + 1f);
         }
 
-        // The ticket lets a well-reserved AAA city borrow: paying the concession
-        // the ticket shows clears the auction that fails at the default price.
+        // The ticket's clearing-price spread fills a well-reserved AAA city's book.
         [Fact]
         public void Ticket_ClearsForWellReservedAaaCity_AtTheShownSpread()
         {

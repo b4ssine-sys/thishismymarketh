@@ -106,8 +106,8 @@ namespace MyFirstMod
                 : "");
             _penalty.Color(Theme.Warn, 1);
 
-            float spot2 = s.AuctionFairYield(24), spot10 = s.AuctionFairYield(120);
-            _short.Text(string.Format("Short rate {0:F2}%  -  city borrows at {1:F2}%", s.ShortRate * 100f, s.RequiredYield * 100f));
+            float spot2 = s.CurveSpot(24), spot10 = s.CurveSpot(120);
+            _short.Text(string.Format("Short rate {0:F2}%  -  city borrows at {1:F2}% (2-yr note)", s.ShortRate * 100f, s.TemplateFairYield(IssueTemplates.EmergencyNote) * 100f));
             _curve.Text(string.Format("2 yr {0:F2}%  -  10 yr {1:F2}%  -  {2}", spot2 * 100f, spot10 * 100f,
                 Wording.CurveShape(s.ShortRate, spot10)));
             _cycle.Text(Wording.RateCycle(s.CyclePhase));

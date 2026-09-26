@@ -108,7 +108,7 @@ namespace MyFirstMod
             _ratingCaption.Text(e.HardFloorD ? "In default" : "Credit rating");
             _status.Text(s.CreditStatusLabel + (s.DefaultPenalty > 0
                 ? string.Format("\nDefault penalty: +{0:F2}% on yield", s.DefaultPenalty * 0.25f) : "")
-                + string.Format("\nCity borrows at {0:F2}%", s.RequiredYield * 100f));
+                + string.Format("\nCity borrows at {0:F2}% (2-yr note)", s.TemplateFairYield(IssueTemplates.EmergencyNote) * 100f));
 
             if (e.Unlevered)
             {
