@@ -108,6 +108,33 @@ namespace MyFirstMod.EngineTests
             Assert.Equal(before, BoundLabel.Writes);
         }
 
+        // WO-43 acceptance: charts update once per period. Ordinary ticks upload
+        // nothing; each period boundary uploads the visible chart exactly once.
+        [Theory]
+        [InlineData(BondMarketWindow.TreasuryIndex)]
+        [InlineData(BondMarketWindow.RiskIndex)]
+        public void Charts_UploadOncePerPeriod(int workspace)
+        {
+            var h = new GameHarness(startCashDisplay: 20000, population: 50000,
+                incomePerMonthDisplay: 60000, expensePerMonthDisplay: 58000).Boot();
+            var w = OpenWindow();
+            w.SelectWorkspace(workspace);
+            w.RedrawNow();
+            h.AlignToPeriodStart();
+            w.RedrawNow();
+
+            int before = ChartSprite.Uploads;
+            for (int i = 0; i < h.TicksPerMonth - 2; i++) { h.Tick(); w.RedrawNow(); }
+            Assert.Equal(before, ChartSprite.Uploads);
+
+            for (int period = 1; period <= 3; period++)
+            {
+                h.AlignToPeriodStart();
+                for (int r = 0; r < 5; r++) w.RedrawNow();
+                Assert.Equal(before + period, ChartSprite.Uploads);
+            }
+        }
+
         // A new snapshot rewrites only the figures whose values changed.
         [Fact]
         public void NewSnapshot_RewritesOnlyChangedFigures()

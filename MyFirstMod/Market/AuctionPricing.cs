@@ -15,6 +15,12 @@ namespace MyFirstMod
             return curve.Lambda > 0.0001f ? curve.SpotRate(years) : benchmarkRate;
         }
 
+        // WO-41: the same, read from the period's curve table.
+        public static float FairYield(CurveTable table, float benchmarkRate, int periods)
+        {
+            return table != null ? table.Spot(periods) : benchmarkRate;
+        }
+
         // The yield the city offers: its required yield, the pledged-revenue
         // adjustment, and the player's own spread (WO-36 ticket).
         public static float OfferedYield(float requiredYield, float revenueAdjustment, float playerSpread)

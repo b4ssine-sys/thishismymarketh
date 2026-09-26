@@ -32,6 +32,7 @@
     <Compile Include="..\MyFirstMod\Credit\RatingEngine.cs" Link="Linked\RatingEngine.cs" />
     <Compile Include="..\MyFirstMod\Pricing\YieldCurve.cs" Link="Linked\YieldCurve.cs" />
     <Compile Include="..\MyFirstMod\Pricing\SwapPricing.cs" Link="Linked\SwapPricing.cs" />
+    <Compile Include="..\MyFirstMod\Pricing\CurveTable.cs" Link="Linked\CurveTable.cs" />
     <Compile Include="..\MyFirstMod\Market\RateProcess.cs" Link="Linked\RateProcess.cs" />
     <Compile Include="..\MyFirstMod\Market\DeterministicRandom.cs" Link="Linked\DeterministicRandom.cs" />
     <Compile Include="..\MyFirstMod\Credit\IssuerModel.cs" Link="Linked\IssuerModel.cs" />
@@ -49,6 +50,7 @@
     <Compile Include="..\MyFirstMod\Market\IssuancePreview.cs" Link="Linked\IssuancePreview.cs" />
     <Compile Include="..\MyFirstMod\Presentation\Advisor.cs" Link="Linked\Advisor.cs" />
     <Compile Include="..\MyFirstMod\Presentation\Wording.cs" Link="Linked\Wording.cs" />
+    <Compile Include="..\MyFirstMod\Presentation\ChartRaster.cs" Link="Linked\ChartRaster.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -19,8 +19,13 @@ namespace MyFirstMod
         public float Curvature;  // beta2: mid-curve hump/dip
         public float Lambda;     // decay in years (> 0)
 
+        // Curve evaluations since start (WO-41 diagnostic: between period
+        // rebuilds nothing should evaluate the curve).
+        public static int Evaluations;
+
         public float SpotRate(float tenorYears)
         {
+            Evaluations++;
             float lambda = Lambda > 0.0001f ? Lambda : 1f;
             if (tenorYears <= 0f)
                 return Level + Slope; // short-end limit

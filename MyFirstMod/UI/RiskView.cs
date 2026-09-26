@@ -14,6 +14,9 @@ namespace MyFirstMod
         private Bar _gauge;
         private BoundLabel _gaugeText, _penalty;
         private BoundLabel _short, _curve, _cycle, _vol;
+        private ChartSprite _curveChart;
+        private readonly float[] _curveValues = new float[CurveTable.MaxMonths];
+        private int _chartPeriod = -1;
 
         private readonly BoundLabel[] _swapRows = new BoundLabel[SwapRows];
         private readonly UIButton[] _exitButtons = new UIButton[SwapRows];
@@ -41,10 +44,12 @@ namespace MyFirstMod
             UIPanel regime = Widgets.Card(Root, 426f, 0f, 410f, 96f);
             Widgets.Label(regime, 10f, 2f, 390f, 20f, 0.75f, "Market regime",
                 "The exogenous rate environment. Nothing the city does moves it.").textColor = Theme.Muted;
-            _short = Widgets.Figure(regime, 10f, 22f, 390f, 18f, 0.75f, "The short rate swaps settle against.");
-            _curve = Widgets.Figure(regime, 10f, 40f, 390f, 18f, 0.75f, "Spot yields at 2 and 10 years, and the curve's shape.");
-            _cycle = Widgets.Figure(regime, 10f, 58f, 390f, 18f, 0.75f, "Where the business cycle is taking rates.");
-            _vol = Widgets.Figure(regime, 10f, 76f, 390f, 18f, 0.75f, "Revenue volatility: how uneven the city's cash flow is.");
+            _short = Widgets.Figure(regime, 10f, 22f, 250f, 18f, 0.72f, "The short rate swaps settle against.");
+            _curve = Widgets.Figure(regime, 10f, 40f, 250f, 18f, 0.72f, "Spot yields at 2 and 10 years, and the curve's shape.");
+            _cycle = Widgets.Figure(regime, 10f, 58f, 250f, 18f, 0.72f, "Where the business cycle is taking rates.");
+            _vol = Widgets.Figure(regime, 10f, 76f, 250f, 18f, 0.72f, "Revenue volatility: how uneven the city's cash flow is.");
+            _curveChart = new ChartSprite(regime, 266f, 22f, 136, 68,
+                "The yield curve: spot yield by maturity, from one month (left) to ten years (right).");
 
             UIPanel swaps = Widgets.Card(Root, 0f, 104f, 836f, 186f);
             Widgets.Label(swaps, 10f, 2f, 500f, 20f, 0.75f, "Interest rate swaps",
@@ -107,6 +112,7 @@ namespace MyFirstMod
                 Wording.CurveShape(s.ShortRate, spot10)));
             _cycle.Text(Wording.RateCycle(s.CyclePhase));
             _vol.Percent("Revenue volatility: ", s.RevenueVolatility, 0);
+            if (s.PeriodCounter != _chartPeriod && s.CurveTable != null) DrawCurve(s);
 
             for (int i = 0; i < SwapRows; i++)
             {
@@ -139,6 +145,26 @@ namespace MyFirstMod
             _trading.Text("Citizen trading: " + (s.CitizenTradingEnabled ? "on" : "off"));
             _revenue.Text("Revenue bonds: " + (s.RevenueBondsEnabled ? "on" : "off"));
             _textSize.Number("Text size ", UiPrefs.TextScale * 100f, 0, "%");
+        }
+
+        // WO-43: redrawn into its texture once per period, when the curve moves.
+        private void DrawCurve(EngineSnapshot s)
+        {
+            _chartPeriod = s.PeriodCounter;
+            float min = float.MaxValue, max = float.MinValue;
+            for (int m = 1; m <= CurveTable.MaxMonths; m++)
+            {
+                float v = s.CurveTable.Spot(m);
+                _curveValues[m - 1] = v;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+            float pad = (max - min) * 0.15f + 0.0005f;
+            ChartSprite c = _curveChart;
+            ChartRaster.Clear(c.Pixels, ChartSprite.Pack(Theme.BarTrack));
+            ChartRaster.Line(c.Pixels, c.Width, c.Height, _curveValues, _curveValues.Length, min - pad, max + pad,
+                ChartSprite.Pack(Theme.Accent));
+            c.Upload();
         }
 
         private static string HazardName(float h)

@@ -301,6 +301,7 @@ namespace MyFirstMod
         public float CityBorrowingRate;
         public float RequiredYield;
         public YieldCurve Curve;
+        public CurveTable CurveTable;       // WO-41: the period's curve, pre-evaluated
         public float PortfolioValue;
         public int DefaultPenalty;
         public int TotalDefaults;
@@ -364,6 +365,7 @@ namespace MyFirstMod
         public LadderMonth[] Ladder = new LadderMonth[0];               // WO-37
         public IssuerView[] Issuers = new IssuerView[0];
         public Alert[] Alerts = new Alert[0];                           // WO-38
+        public CreditRating[] RatingHistory = new CreditRating[0];      // WO-43: oldest first
         // Per template: the player spread that gives a bid-to-cover of 1 (WO-36).
         public float[] SpreadForFullCover = new float[IssueTemplates.Count];
 
@@ -389,7 +391,7 @@ namespace MyFirstMod
         // Fair yield for a new issue of this tenor: the curve's spot rate.
         public float AuctionFairYield(int periods)
         {
-            return AuctionPricing.FairYield(Curve, BenchmarkRate, periods, BondPricing.PeriodsPerYear);
+            return AuctionPricing.FairYield(CurveTable, BenchmarkRate, periods);
         }
 
         // The offered yield the engine uses for a template when the player adds

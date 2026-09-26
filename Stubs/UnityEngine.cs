@@ -95,6 +95,7 @@ namespace UnityEngine
     }
 
     public enum FilterMode { Point = 0, Bilinear = 1, Trilinear = 2 }
+    public enum TextureFormat { ARGB32 = 5, RGBA32 = 4 }
     public enum TextureWrapMode { Repeat = 0, Clamp = 1 }
 
     public class Texture : Object
@@ -109,6 +110,7 @@ namespace UnityEngine
     {
         private readonly int _w, _h;
         public Texture2D(int width, int height) { _w = width; _h = height; }
+        public Texture2D(int width, int height, TextureFormat format, bool mipmap) { _w = width; _h = height; }
         public override int width { get { return _w; } }
         public override int height { get { return _h; } }
         public void SetPixels32(Color32[] colors) { }

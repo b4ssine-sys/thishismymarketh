@@ -33,6 +33,25 @@ namespace MyFirstMod
             return (1f - dfN) / a;
         }
 
+        // WO-41: the same valuations read from a monthly curve table (payments are
+        // monthly, periodsPerYear = 12).
+        public static float ParSwapRate(CurveTable table, int remainingPeriods)
+        {
+            float a = table.Annuity(remainingPeriods);
+            if (a <= 0f) return 0f;
+            return (1f - table.DiscountFactor(remainingPeriods)) / a;
+        }
+
+        public static float SwapValue(CurveTable table, float notional, float fixedRate,
+            int remainingPeriods, bool payFixed)
+        {
+            if (remainingPeriods <= 0) return 0f;
+            float a = table.Annuity(remainingPeriods);
+            float dfN = table.DiscountFactor(remainingPeriods);
+            float payFixedValue = notional * (1f - dfN) - notional * fixedRate * a;
+            return payFixed ? payFixedValue : -payFixedValue;
+        }
+
         // Mark-to-market of a swap. Positive = in the money for the position holder.
         public static float SwapValue(YieldCurve curve, float notional, float fixedRate,
             int remainingPeriods, int periodsPerYear, bool payFixed)
