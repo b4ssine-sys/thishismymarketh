@@ -161,7 +161,7 @@ namespace MyFirstMod.EngineTests
             Assert.True(Run(AlertKind.FailedAuction, 2), "failed auction");
 
             // Downgrade: borrow at a clearing price, then let the operating surplus
-            // shrink to almost nothing so debt service coverage collapses.
+            // shrink to almost nothing so debt service coverage falls.
             h.Engine.Submit(EngineCommand.IssueBond(Note, h.Snap.SpreadForFullCover[Note] + 0.001f));
             h.Months(1);
             Collect(h, alerts);

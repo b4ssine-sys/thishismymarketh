@@ -15,7 +15,7 @@ namespace MyFirstMod
     {
         public CreditRating Rating;
         public bool Unlevered;          // no debt service: DSCR and burden are not in play
-        public bool HardFloorD;         // rated D by the hard floor (arrears or coverage collapse)
+        public bool HardFloorD;         // rated D: a missed payment is in arrears
 
         public CreditRating UpRating;   // one notch better (same as Rating at AAA)
         public FactorGap DscrUp;
@@ -40,7 +40,7 @@ namespace MyFirstMod
     // the model.
     public static class RatingExplainer
     {
-        private static readonly float[] DscrSteps = { 0.2f, 0.90f, 1.05f, 1.25f, 1.50f, 2.00f, 2.50f };
+        private static readonly float[] DscrSteps = { 0.90f, 1.05f, 1.25f, 1.50f, 2.00f, 2.50f };
         private static readonly float[] BurdenSteps = { 0.08f, 0.12f, 0.18f, 0.25f, 0.32f, 0.40f };
         private static readonly float[] ReserveSteps = { 1.0f, 6.0f };
         // The grid's rows from B up to AAA: minimum DSCR and maximum burden.
@@ -187,6 +187,7 @@ namespace MyFirstMod
         private static string DownSentence(RatingExplanation e)
         {
             if (e.Rating == CreditRating.D) return "";
+            if (e.Rating == CreditRating.CCC) return "Drops to D only if a payment is missed.";
             string parts = Join(
                 e.DscrDown.Possible ? string.Format("DSCR falls {0:F2}", e.DscrDown.Delta) : null,
                 e.BurdenDown.Possible ? string.Format("debt burden rises {0:F1} pts", e.BurdenDown.Delta * 100f) : null,

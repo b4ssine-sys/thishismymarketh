@@ -114,6 +114,12 @@ namespace MyFirstMod.Tests
                     if (e.ReservesUp.Possible) { var p = m; p.MonthsOfReserves = e.ReservesUp.Target; Assert.True(RatingEngine.EvaluateRating(p, false) < e.Rating); }
                 }
 
+                if (e.Rating == CreditRating.CCC)
+                {
+                    // The ratios bottom out at CCC; only a missed payment reaches D.
+                    Assert.Equal("Drops to D only if a payment is missed.", e.DownText);
+                    continue;
+                }
                 Assert.True(e.DscrDown.Possible || e.BurdenDown.Possible || e.ReservesDown.Possible,
                     string.Format("no margin shown for {0} at dscr={1} burden={2} reserves={3}", e.Rating, d, b, r));
                 if (e.DscrDown.Possible) { var p = m; p.DSCR = e.DscrDown.Target - 0.001f; Assert.True(RatingEngine.EvaluateRating(p, false) > e.Rating); }
