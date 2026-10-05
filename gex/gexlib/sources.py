@@ -19,12 +19,12 @@ ALIASES = {
     "right": ["right", "option_type", "type", "call_put", "put_call", "cp_flag"],
     "open_interest": ["open_interest", "openinterest", "oi", "OpenInterest", "openInterest"],
     "iv": ["iv", "implied_volatility", "implied_volatility_1545", "impliedVolatility", "IV"],
-    "bid": ["bid", "bid_eod", "bid_1545", "close_bid"],
-    "ask": ["ask", "ask_eod", "ask_1545", "close_ask"],
+    "bid": ["bid", "bid_1545", "bid_eod", "close_bid"],
+    "ask": ["ask", "ask_1545", "ask_eod", "close_ask"],
     "spot": ["spot", "underlying_price", "underlying_last", "UNDERLYING_LAST",
              "active_underlying_price_1545", "stkPx"],
-    "underlying_bid": ["underlying_bid_eod", "underlying_bid_1545"],
-    "underlying_ask": ["underlying_ask_eod", "underlying_ask_1545"],
+    "underlying_bid": ["underlying_bid_1545", "underlying_bid_eod"],
+    "underlying_ask": ["underlying_ask_1545", "underlying_ask_eod"],
 }
 
 
@@ -45,6 +45,9 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     df["right"] = df["right"].astype(str).str.upper().str[0]
     if "spot" not in df and {"underlying_bid", "underlying_ask"} <= set(df.columns):
         df["spot"] = (df["underlying_bid"] + df["underlying_ask"]) / 2.0
+    if "spot" in df:
+        # DataShop files without a Cboe Global Indices subscription report 0 for index spots.
+        df["spot"] = pd.to_numeric(df["spot"], errors="coerce").where(lambda x: x > 0)
     if "iv" in df:
         df["iv"] = pd.to_numeric(df["iv"], errors="coerce")
         df.loc[df["iv"] <= 0, "iv"] = np.nan
@@ -62,7 +65,8 @@ def iter_csv_days(path: str, root: str | None = None):
     for f in files:
         df = normalize(pd.read_csv(f))
         if root is not None:
-            for col in ("root", "underlying_symbol", "symbol"):
+            # Match on the underlying first so SPX picks up both SPX and SPXW roots.
+            for col in ("underlying_symbol", "symbol", "root"):
                 if col in df.columns:
                     df = df[df[col].astype(str).str.upper().isin({root.upper(), "^" + root.upper()})]
                     break

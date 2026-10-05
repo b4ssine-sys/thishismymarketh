@@ -35,6 +35,12 @@ Runs are resumable, so dates already in `--out` are skipped. For index roots (SP
 
 To convert to futures, multiply the flip by that day's ES/SPY (or NQ/QQQ) close ratio.
 
+## Cboe DataShop notes (checked on the 2023-08-25 sample)
+- Use the **"Option EOD Summary" (UnderlyingOptionsEODCalcs)** file. One file covers every symbol you ordered, and `--root SPY` / `--root SPX` picks the underlying. SPX includes both the SPX and SPXW roots.
+- For index products (SPX, NDX), buy the **CGI** version. Without the Cboe Global Indices subscription, the index price columns are 0, and those days are skipped unless you pass `--spot-csv`. For ETFs (SPY, QQQ), the two versions give the same result within rounding.
+- Spot, IV and bid/ask are all read from the 15:45 columns, so they line up in time.
+- Contracts expiring on the quote date (0DTE) are dropped by default, because they are gone by the next session. Pass `--include-0dte` to keep them.
+
 ## Caveats
 - The rate is a coarse table of T-bill yields (`approx_rate`), and the dividend yield is fixed at 1.3%. Gamma at ≤45 DTE barely moves with either.
 - OI is end-of-day as published by the OCC, so each row reflects positioning going into the *next* session.

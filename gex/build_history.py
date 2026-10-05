@@ -42,7 +42,8 @@ def _append(out, rows):
 
 def _gex_row(chain, spot, d, args):
     res = compute_gex(chain, spot, d, r=approx_rate(d), q=args.div_yield,
-                      max_dte=args.max_dte, min_oi=args.min_oi)
+                      max_dte=args.max_dte, min_oi=args.min_oi,
+                      include_0dte=args.include_0dte)
     return res.as_dict()
 
 
@@ -57,7 +58,11 @@ def run_csv(args):
         spot = chain["spot"].dropna().median() if "spot" in chain else float("nan")
         if not spot == spot:  # NaN: need an external close
             if closes is None:
-                closes = sources.spot_closes(args.ticker, args.start, args.end, args.spot_csv)
+                try:
+                    closes = sources.spot_closes(args.ticker, args.start, args.end, args.spot_csv)
+                except Exception as e:
+                    print(f"could not load spot closes for {args.ticker}: {e}", file=sys.stderr)
+                    closes = pd.Series(dtype=float)
             if d not in closes.index:
                 print(f"{ds}: no spot price, skipped", file=sys.stderr)
                 continue
@@ -102,6 +107,8 @@ def main():
     p.add_argument("--start", default="2020-01-01")
     p.add_argument("--end", default=str(pd.Timestamp.today().date()))
     p.add_argument("--max-dte", type=int, default=45)
+    p.add_argument("--include-0dte", action="store_true",
+                   help="keep contracts expiring on the quote date (dropped by default)")
     p.add_argument("--min-oi", type=int, default=100)
     p.add_argument("--div-yield", type=float, default=0.013)
     p.add_argument("--out", required=True)

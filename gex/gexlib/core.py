@@ -69,7 +69,7 @@ class GexResult:
 
 
 def compute_gex(chain, spot, date, r=0.04, q=0.013, max_dte=45, min_oi=100,
-                min_iv=0.01, grid_pct=0.10, grid_n=401):
+                min_iv=0.01, grid_pct=0.10, grid_n=401, include_0dte=False):
     """Compute one day's GEX from a chain DataFrame.
 
     Required columns: expiration (datetime64), strike, right ('C'/'P'),
@@ -79,10 +79,13 @@ def compute_gex(chain, spot, date, r=0.04, q=0.013, max_dte=45, min_oi=100,
 
     df = chain.copy()
     d = pd.Timestamp(date)
-    # Time to expiry measured to the 4pm close on expiration day, floored at
-    # ~1 hour so 0DTE contracts don't blow up gamma at end-of-day snapshots.
-    df["T"] = ((pd.to_datetime(df["expiration"]) - d).dt.days.clip(lower=0) + 0.04) / 365.0
-    df = df[(df["T"] * 365 <= max_dte + 0.5) & (df["open_interest"] >= min_oi)]
+    # Time to expiry from a 15:45 snapshot to the 4pm close on expiration day.
+    # Same-day expiries are dropped by default: they are gone by the next
+    # session, which is the session these levels are used for.
+    dte = (pd.to_datetime(df["expiration"]) - d).dt.days
+    df["T"] = (dte.clip(lower=0) + 15.0 / 1440.0) / 365.0
+    min_dte = 0 if include_0dte else 1
+    df = df[(dte >= min_dte) & (dte <= max_dte) & (df["open_interest"] >= min_oi)]
     is_call = (df["right"].str.upper().str[0] == "C").to_numpy()
     K = df["strike"].to_numpy(float)
     T = df["T"].to_numpy(float)
