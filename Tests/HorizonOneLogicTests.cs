@@ -114,6 +114,12 @@ namespace MyFirstMod.Tests
                     if (e.ReservesUp.Possible) { var p = m; p.MonthsOfReserves = e.ReservesUp.Target; Assert.True(RatingEngine.EvaluateRating(p, false) < e.Rating); }
                 }
 
+                if (e.Rating == CreditRating.CCC)
+                {
+                    // The ratios bottom out at CCC; only a missed payment reaches D.
+                    Assert.Equal("Drops to D only if a payment is missed.", e.DownText);
+                    continue;
+                }
                 Assert.True(e.DscrDown.Possible || e.BurdenDown.Possible || e.ReservesDown.Possible,
                     string.Format("no margin shown for {0} at dscr={1} burden={2} reserves={3}", e.Rating, d, b, r));
                 if (e.DscrDown.Possible) { var p = m; p.DSCR = e.DscrDown.Target - 0.001f; Assert.True(RatingEngine.EvaluateRating(p, false) > e.Rating); }
@@ -177,10 +183,42 @@ namespace MyFirstMod.Tests
         [Fact]
         public void SpreadForFullCover_GivesCoverOfOne()
         {
-            float required = 0.02f, adj = 0.001f, fair = 0.045f, demand = 0.6f;
-            float spread = AuctionPricing.SpreadForFullCover(required, adj, fair, demand);
-            float offered = AuctionPricing.OfferedYield(required, adj, spread);
+            float fair = 0.045f, demand = 0.6f;
+            float spread = AuctionPricing.SpreadForFullCover(demand);
+            float offered = AuctionPricing.OfferedYield(fair, spread);
             Assert.Equal(1f, PrimaryAuction.EstimateCover(offered, fair, demand), 3);
+        }
+
+        // The auction pricing fix: offer and fair value share one basis, so at a
+        // zero player spread the cover depends on demand alone, whatever the
+        // city's credit, curve or pledge. A strong city is never priced out of its
+        // own auction by its own strength.
+        [Theory]
+        [InlineData(0.0020f, 0.9f)]   // AAA spread, strong demand
+        [InlineData(0.0160f, 0.9f)]   // BBB
+        [InlineData(0.0800f, 0.8f)]   // CCC
+        public void ZeroSpread_CoverEqualsDemand_AtAnyCredit(float creditSpread, float demand)
+        {
+            CurveTable t = CurveTable.Build(YieldCurve.FromShortRate(0.03f, 0.045f, 0f, 2f));
+            float fair = AuctionPricing.IssueFairYield(t, 0.03f, 24, creditSpread, 0f);
+            float offered = AuctionPricing.OfferedYield(fair, 0f);
+            Assert.Equal(demand / PrimaryAuction.NeutralDemand, PrimaryAuction.EstimateCover(offered, fair, demand), 4);
+        }
+
+        [Fact]
+        public void IssueFairYield_IsSpotPlusCreditPlusPledge()
+        {
+            CurveTable t = CurveTable.Build(YieldCurve.FromShortRate(0.03f, 0.045f, 0f, 2f));
+            float spot = AuctionPricing.FairYield(t, 0.03f, 60);
+            Assert.Equal(spot + 0.0160f - 0.005f, AuctionPricing.IssueFairYield(t, 0.03f, 60, 0.0160f, -0.005f), 6);
+        }
+
+        [Fact]
+        public void SpreadForFullCover_NaN_WithNoDemand_ZeroAtNeutral_NegativeAbove()
+        {
+            Assert.True(float.IsNaN(AuctionPricing.SpreadForFullCover(0f)));
+            Assert.Equal(0f, AuctionPricing.SpreadForFullCover(PrimaryAuction.NeutralDemand), 6);
+            Assert.True(AuctionPricing.SpreadForFullCover(0.8f) < 0f);
         }
 
         // ---- WO-37: maturity ladder ----

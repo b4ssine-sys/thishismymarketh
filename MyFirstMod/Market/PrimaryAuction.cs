@@ -18,18 +18,24 @@ namespace MyFirstMod
         public const float ConcessionScaleBp = 40f; // c0
         public const float CoverCap = 4.0f;
         public const float MinCover = 0.75f;
+        // Demand score at which a deal priced exactly at fair value is exactly
+        // covered: MODERATE on the demand scale. Stronger demand oversubscribes a
+        // fair-value deal, weaker demand needs a concession. A named calibration
+        // constant for Gate C. Without it a fair-value deal needed a demand score
+        // of 1.0 to cover, which no city reaches (healthy cities read ~0.7).
+        public const float NeutralDemand = 0.5f;
 
         private static float Clamp(float v, float lo, float hi)
         {
             return v < lo ? lo : (v > hi ? hi : v);
         }
 
-        // B-1: cover(c) = clamp( exp(c/c0) * demandScore, 0, coverCap ).
+        // B-1: cover(c) = clamp( exp(c/c0) * demandScore / neutralDemand, 0, coverCap ).
         // c is the concession in bp (offered yield - fair yield).
         public static float BidToCover(float concessionBp, float demandScore)
         {
             float d = Clamp(demandScore, 0f, 1f);
-            float cover = (float)Math.Exp(concessionBp / ConcessionScaleBp) * d;
+            float cover = (float)Math.Exp(concessionBp / ConcessionScaleBp) * d / NeutralDemand;
             return Clamp(cover, 0f, CoverCap);
         }
 

@@ -16,6 +16,11 @@ namespace MyFirstMod.HeadlessSim
     // HANDOFF.md.
     public static class Program
     {
+        // -log-city N [-log-strategy S]: print that run month by month, for
+        // diagnosing a single city.
+        private static int _logCity = -1;
+        private static string _logStrategy;
+
         private sealed class RunResult
         {
             public int City;
@@ -34,6 +39,8 @@ namespace MyFirstMod.HeadlessSim
             int years = IntArg(args, "-years", 20);
             string outDir = StrArg(args, "-out", "calibration");
             string traceDir = StrArg(args, "-traces", null);
+            _logCity = IntArg(args, "-log-city", -1);
+            _logStrategy = StrArg(args, "-log-strategy", null);
             Directory.CreateDirectory(outDir);
 
             var traces = new List<CityTrace>();
@@ -87,6 +94,8 @@ namespace MyFirstMod.HeadlessSim
                 h.Months(1);
 
                 s = h.Snap;
+                if (index == _logCity && (_logStrategy == null || _logStrategy == strategy.ToString()))
+                    LogMonth(index, strategy, m, tm, s);
                 if (s.Issued.Length > issuedBefore) r.Issues++;
                 if (s.Rating > r.WorstRating) r.WorstRating = s.Rating;
                 if (s.MonthsOfReserves < r.MinReserves) r.MinReserves = s.MonthsOfReserves;
@@ -96,6 +105,19 @@ namespace MyFirstMod.HeadlessSim
             }
             r.FinalRating = h.Snap.Rating;
             return r;
+        }
+
+        private static void LogMonth(int city, Strategy strategy, int m, TraceMonth tm, EngineSnapshot s)
+        {
+            var sb = new StringBuilder();
+            sb.AppendFormat(CultureInfo.InvariantCulture,
+                "c{0} {1} m{2,3} inc {3,8:F0} exp {4,8:F0} | {5,-3} dscr {6,6:F2} burden {7:F3} res {8,5:F2}m noi/yr {9,9:F0} ds/yr {10,8:F0} arrears {11}",
+                city, strategy, m, tm.Income, tm.Expense, s.Rating, s.Metrics.DSCR, s.Metrics.DebtBurden,
+                s.MonthsOfReserves, s.Metrics.AnnualNOI, s.Metrics.AnnualDebtService, s.HasArrears ? 1 : 0);
+            for (int i = 0; i < s.Issued.Length; i++)
+                sb.AppendFormat(CultureInfo.InvariantCulture, " [{0} {1} {2:F0}@{3:F2}% {4}p]", s.Issued[i].Name,
+                    s.Issued[i].State, s.Issued[i].OutstandingPrincipal, s.Issued[i].CouponRate * 100f, s.Issued[i].RemainingPeriods);
+            Console.WriteLine(sb.ToString());
         }
 
         private static void WriteRows(string path, List<RunResult> results)

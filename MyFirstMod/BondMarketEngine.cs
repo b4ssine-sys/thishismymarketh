@@ -222,6 +222,10 @@ namespace MyFirstMod
         private float _marketFloatingRate;  // swap / floating-rate settlement index
         private float _cityBorrowingRate;   // benchmark + fiscal adj + over-hedge penalty
         private float _requiredYield;
+        // The city's credit spread over the risk-free curve for a new issue: rating
+        // spread, fiscal and over-hedge loading, and the default spike. Auction
+        // fair value is the curve spot at the tenor plus this (AuctionPricing).
+        private float _issueCreditSpread;
         private float _portfolioValue;
 
         // Phase 4 (P1-4): mean-reverting short rate on a business cycle, and the
@@ -690,6 +694,7 @@ namespace MyFirstMod
             float baseYield = BondPricing.GetRequiredYield(_cityBorrowingRate, _rating);
             float defaultSpike = _defaultPenalty * DEFAULT_YIELD_SPIKE_PER_POINT;
             _requiredYield = baseYield + defaultSpike;
+            _issueCreditSpread = _requiredYield - _marketFloatingRate;
 
             float totalWealth = cashDisplay + _portfolioValue;
             float periodsInWindow = (float)WINDOW_SIZE / _measuredTicksPerPeriod;
@@ -735,8 +740,12 @@ namespace MyFirstMod
                 _debtBurden, _dscr, _defaultPenalty, _revenueVolatility);
             _citizenConfidence = CimDemandEngine.CalculateCitizenConfidence(
                 _happiness, _employmentRate, _populationGrowth);
+            // Appeal is what an investor earns over the benchmark for the city's
+            // credit: the same spread the auction prices a new issue on. It used
+            // the wealth-discounted required yield, which made a rich treasury's
+            // paper look unattractive and cut demand for exactly the safest city.
             _bondAppeal = CimDemandEngine.CalculateBondAppeal(
-                _requiredYield, _benchmarkRate, _defaultProbability);
+                _benchmarkRate + _issueCreditSpread, _benchmarkRate, _defaultProbability);
 
             _previousMarketState = _currentMarketState;
             _currentMarketState.CityVitals = _cityVitals;
@@ -807,6 +816,7 @@ namespace MyFirstMod
             s.BenchmarkRate = _benchmarkRate;
             s.CityBorrowingRate = _cityBorrowingRate;
             s.RequiredYield = _requiredYield;
+            s.IssueCreditSpread = _issueCreditSpread;
             s.Curve = _yieldCurve;
             s.CurveTable = _curveTable;
             s.PortfolioValue = _portfolioValue;
@@ -910,8 +920,7 @@ namespace MyFirstMod
                 s.Alerts[i] = _alertRing[(firstAlert + i) % ALERT_HISTORY];
             s.SpreadForFullCover = new float[IssueTemplates.Count];
             for (int t = 0; t < IssueTemplates.Count; t++)
-                s.SpreadForFullCover[t] = AuctionPricing.SpreadForFullCover(_requiredYield,
-                    s.TemplateYieldAdjustment[t], AuctionFairYield(IssueTemplates.TermPeriods(t)), _demandScore);
+                s.SpreadForFullCover[t] = AuctionPricing.SpreadForFullCover(_demandScore);
 
             s.Swaps = new SwapView[_activeSwaps.Count];
             for (int i = 0; i < _activeSwaps.Count; i++) s.Swaps[i] = SwapView.From(_activeSwaps[i]);
@@ -1610,9 +1619,10 @@ namespace MyFirstMod
             _curveTable = CurveTable.Build(curve);
         }
 
-        private float AuctionFairYield(int periods)
+        private float AuctionFairYield(int periods, float revenueAdjustment)
         {
-            return AuctionPricing.FairYield(_curveTable, _marketFloatingRate, periods);
+            return AuctionPricing.IssueFairYield(_curveTable, _marketFloatingRate, periods,
+                _issueCreditSpread, revenueAdjustment);
         }
 
         private float BondDurationYears(Bond b)
@@ -2020,8 +2030,8 @@ namespace MyFirstMod
             if (IssuedFaceTotal() + face > _absorptionCapacity)
                 return Fail(string.Format("the market cannot absorb another {0:N0}", face));
 
-            float offeredYield = AuctionPricing.OfferedYield(_requiredYield, RevenueYieldAdjustment(revSrc), yieldSpread);
-            float fairYield = AuctionFairYield(periods);
+            float fairYield = AuctionFairYield(periods, RevenueYieldAdjustment(revSrc));
+            float offeredYield = AuctionPricing.OfferedYield(fairYield, yieldSpread);
             AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, fairYield, _demandScore);
             if (!ar.Filled)
             {
@@ -2074,8 +2084,8 @@ namespace MyFirstMod
             if (face > remainingCapacity) face = remainingCapacity;
 
             int periods = IssueTemplates.PercentIssuePeriods;
-            float offeredYield = _requiredYield;
-            AuctionResult ar = PrimaryAuction.Evaluate(offeredYield, AuctionFairYield(periods), _demandScore);
+            float fairYield = AuctionFairYield(periods, 0f);
+            AuctionResult ar = PrimaryAuction.Evaluate(fairYield, fairYield, _demandScore);
             if (!ar.Filled)
             {
                 CommandResult failed = Fail(string.Format(

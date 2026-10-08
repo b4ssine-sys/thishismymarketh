@@ -300,6 +300,7 @@ namespace MyFirstMod
         public float BenchmarkRate;
         public float CityBorrowingRate;
         public float RequiredYield;
+        public float IssueCreditSpread;     // city spread over the curve for a new issue
         public YieldCurve Curve;
         public CurveTable CurveTable;       // WO-41: the period's curve, pre-evaluated
         public float PortfolioValue;
@@ -388,23 +389,37 @@ namespace MyFirstMod
         public int GetTemplatePeriods(int index) { return IssueTemplates.TermPeriods(index); }
         public RevenueSource GetTemplateRevenue(int index) { return IssueTemplates.Source(index); }
 
-        // Fair yield for a new issue of this tenor: the curve's spot rate.
-        public float AuctionFairYield(int periods)
+        // Risk-free curve spot for a tenor (charts and the Risk workspace).
+        public float CurveSpot(int periods)
         {
             return AuctionPricing.FairYield(CurveTable, BenchmarkRate, periods);
         }
 
-        // The offered yield the engine uses for a template when the player adds
-        // no spread of their own.
-        public float TemplateOfferedYield(int index)
+        private float TemplateAdjustment(int index)
         {
-            float adj = index >= 0 && index < TemplateYieldAdjustment.Length ? TemplateYieldAdjustment[index] : 0f;
-            return RequiredYield + adj;
+            return index >= 0 && index < TemplateYieldAdjustment.Length ? TemplateYieldAdjustment[index] : 0f;
         }
 
-        public float EstimateAuctionCover(int periods)
+        // Fair value of a new issue of this template: curve spot at its tenor plus
+        // the city's credit spread and the template's pledged-revenue adjustment.
+        public float TemplateFairYield(int index)
         {
-            return PrimaryAuction.EstimateCover(RequiredYield, AuctionFairYield(periods), DemandScore);
+            return AuctionPricing.IssueFairYield(CurveTable, BenchmarkRate,
+                IssueTemplates.TermPeriods(index), IssueCreditSpread, TemplateAdjustment(index));
+        }
+
+        // The offered yield the engine uses for a template when the player adds
+        // no spread of their own: exactly fair value.
+        public float TemplateOfferedYield(int index)
+        {
+            return TemplateFairYield(index);
+        }
+
+        // Cover at fair value, with no concession: the demand score, capped.
+        public float EstimateAuctionCover(int templateIndex)
+        {
+            float fair = TemplateFairYield(templateIndex);
+            return PrimaryAuction.EstimateCover(fair, fair, DemandScore);
         }
 
         public string CalculateRecommendedHedge() { return RecommendedHedge; }
@@ -416,9 +431,8 @@ namespace MyFirstMod
             IssuanceInputs x = new IssuanceInputs();
             x.Face = IssueTemplates.Face(templateIndex);
             x.Periods = IssueTemplates.TermPeriods(templateIndex);
-            float adj = templateIndex < TemplateYieldAdjustment.Length ? TemplateYieldAdjustment[templateIndex] : 0f;
-            x.OfferedYield = AuctionPricing.OfferedYield(RequiredYield, adj, playerSpread);
-            x.FairYield = AuctionFairYield(x.Periods);
+            x.FairYield = TemplateFairYield(templateIndex);
+            x.OfferedYield = AuctionPricing.OfferedYield(x.FairYield, playerSpread);
             x.DemandScore = DemandScore;
             x.RemainingCapacity = RemainingCapacity;
             x.CashBalance = CashBalance;

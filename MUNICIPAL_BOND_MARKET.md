@@ -152,7 +152,7 @@ Credit assessment uses a two-stage pipeline, both pure and unit-tested:
 | CCC    | (else)   | (else)          |
 | D      | Hard floor: active arrears or DSCR < 0.2 |
 
-A **liquidity notch** adjusts one grade: 6+ months of reserves upgrades; under 1 month downgrades. The base/notch path caps at CCC; D is reserved for the hard floor (active arrears or coverage collapse).
+A **liquidity notch** adjusts one grade: 6+ months of reserves upgrades; under 1 month downgrades. The base/notch path caps at CCC; D is reserved for default: a missed payment still in arrears. A coverage collapse (DSCR under 0.2) without one rates CCC, or B with six months of reserves.
 
 ### Interest Rate Model
 

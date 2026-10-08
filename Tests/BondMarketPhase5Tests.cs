@@ -115,9 +115,16 @@ namespace MyFirstMod.Tests
         // ---- P1-7: PrimaryAuction ----
 
         [Fact]
-        public void BidToCover_IsOneAtFairValue_WhenDemandFull()
+        public void BidToCover_IsOneAtFairValue_WhenDemandNeutral()
         {
-            Assert.Equal(1f, PrimaryAuction.BidToCover(0f, 1f), 3); // exp(0)*1 = 1
+            Assert.Equal(1f, PrimaryAuction.BidToCover(0f, PrimaryAuction.NeutralDemand), 3);
+        }
+
+        [Fact]
+        public void BidToCover_HealthyDemand_OversubscribesAtFairValue()
+        {
+            Assert.True(PrimaryAuction.BidToCover(0f, 0.7f) > 1f);
+            Assert.True(PrimaryAuction.BidToCover(0f, 0.3f) < PrimaryAuction.MinCover);
         }
 
         [Fact]
@@ -167,7 +174,7 @@ namespace MyFirstMod.Tests
         public void Auction_PartialFill_BetweenMinCoverAndOne()
         {
             float fair = 0.05f;
-            float demand = 0.85f;
+            float demand = 0.425f; // cover 0.85x at fair value
             var result = PrimaryAuction.Evaluate(fair, fair, demand);
 
             Assert.True(result.Filled);

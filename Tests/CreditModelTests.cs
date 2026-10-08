@@ -169,19 +169,24 @@ namespace MyFirstMod.Tests
             Assert.Equal(CreditRating.CCC, RatingEngine.EvaluateRating(m, false));
         }
 
-        // WO-18: coverage collapse only triggers D when there is debt to cover.
+        // D means a missed payment in arrears. A coverage collapse without one
+        // is CCC, lifted to B by six months of reserves; it is never D.
         [Fact]
-        public void WO18_CoverageCollapseRequiresDebt()
+        public void CoverageCollapse_WithoutArrears_IsNeverD()
         {
-            // With debt service: DSCR < 0.2 -> D
-            var withDebt = new CreditMetrics { DSCR = 0.1f, DebtBurden = 0.9f,
+            var thin = new CreditMetrics { DSCR = 0.1f, DebtBurden = 0.9f,
                 MonthsOfReserves = 0.5f, AnnualDebtService = 50000f };
-            Assert.Equal(CreditRating.D, RatingEngine.EvaluateRating(withDebt, false));
+            Assert.Equal(CreditRating.CCC, RatingEngine.EvaluateRating(thin, false));
 
-            // Without debt service: DSCR < 0.2 should NOT trigger D
+            var deep = new CreditMetrics { DSCR = -2.3f, DebtBurden = 0.005f,
+                MonthsOfReserves = 6.4f, AnnualDebtService = 40876f };
+            Assert.Equal(CreditRating.B, RatingEngine.EvaluateRating(deep, false));
+
             var noDebt = new CreditMetrics { DSCR = 0.1f, DebtBurden = 0f,
                 MonthsOfReserves = 0.5f, AnnualDebtService = 0f };
             Assert.NotEqual(CreditRating.D, RatingEngine.EvaluateRating(noDebt, false));
+
+            Assert.Equal(CreditRating.D, RatingEngine.EvaluateRating(thin, true));
         }
     }
 }

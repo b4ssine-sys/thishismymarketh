@@ -67,8 +67,7 @@ namespace MyFirstMod.EngineTests
             Assert.InRange(issued.OutstandingPrincipal, preview.PlacedFace - 1f, preview.PlacedFace + 1f);
         }
 
-        // The ticket lets a well-reserved AAA city borrow: paying the concession
-        // the ticket shows clears the auction that fails at the default price.
+        // The ticket's clearing-price spread fills a well-reserved AAA city's book.
         [Fact]
         public void Ticket_ClearsForWellReservedAaaCity_AtTheShownSpread()
         {
@@ -162,7 +161,7 @@ namespace MyFirstMod.EngineTests
             Assert.True(Run(AlertKind.FailedAuction, 2), "failed auction");
 
             // Downgrade: borrow at a clearing price, then let the operating surplus
-            // shrink to almost nothing so debt service coverage collapses.
+            // shrink to almost nothing so debt service coverage falls.
             h.Engine.Submit(EngineCommand.IssueBond(Note, h.Snap.SpreadForFullCover[Note] + 0.001f));
             h.Months(1);
             Collect(h, alerts);

@@ -10,11 +10,17 @@ namespace MyFirstMod
     {
         public static CreditRating EvaluateRating(CreditMetrics m, bool hasActiveArrears)
         {
-            // 1. Hard default floor: unresolved arrears, or coverage collapse
-            // when there is debt to cover. WO-18: an unlevered city (no debt
-            // service) cannot collapse — DSCR is undefined there.
+            // 1. D means default: a payment was missed and is still in arrears.
+            //
+            // A coverage collapse (DSCR under 0.2) used to force D as well. That
+            // rated a city holding six months of reserves D on its first bad
+            // quarter, the same as a city that had stopped paying, and locked it
+            // out of borrowing. Unlevered cities were exempt (WO-18), so a single
+            // bond was enough to expose a city to it. Coverage collapse now sits
+            // at the bottom of the grid (CCC), and the liquidity notch lifts a
+            // well-reserved city to B. If the city cannot pay, the debt book puts
+            // the bond in arrears and the rating goes to D then.
             if (hasActiveArrears) return CreditRating.D;
-            if (m.AnnualDebtService > 1f && m.DSCR < 0.2f) return CreditRating.D;
 
             // 2. Base rating from the core credit ratios.
             // 0=AAA 1=AA 2=A 3=BBB 4=BB 5=B 6=CCC 7=D
@@ -34,7 +40,7 @@ namespace MyFirstMod
             else if (m.MonthsOfReserves < 1.0f && baseNotch < 6)
                 baseNotch += 1;
 
-            // Base/notch path tops out at CCC; D is reserved for the hard floor.
+            // Base/notch path tops out at CCC; D is reserved for arrears.
             if (baseNotch > (int)CreditRating.CCC) baseNotch = (int)CreditRating.CCC;
             if (baseNotch < 0) baseNotch = 0;
             return (CreditRating)baseNotch;
